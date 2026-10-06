@@ -45,6 +45,13 @@ public final class DeepSkyView {
     // Struct of arrays: offset from the observer, precision matrix, column normalisation, payload.
     private final double[] vx, vy, vz, p00, p01, p02, p11, p12, p22, q, norm, er, eg, eb, dust;
     private final int[] cellStart, cellItems, global;
+    /** Continuous volumes (bound to this observer), their emission weights and their own angular index. */
+    private final NebulaField[] fields;
+    private final double[] fieldScale;
+    /** Per field, its coarse angular grid when it is marched coarser than the image, else null. */
+    private final CoarseFieldGrid[] fieldGrid;
+    private final int[] fieldCellStart, fieldCellItems, fieldGlobal;
+    private final double pixelAngle;
 
     /**
      * A view in which no cluster member is drawn as a star: every cluster glows with all of its
@@ -161,6 +168,66 @@ public final class DeepSkyView {
                 forEachCell(dirX[i], dirY[i], dirZ[i], capAng[i], c -> cellItems[fill[c]++] = item);
             }
         }
+
+        // Continuous volumes, indexed the same way by the cap of their bounding sphere.
+        this.pixelAngle = pixelAngle;
+        java.util.List<NebulaField> fl = new java.util.ArrayList<>();
+        java.util.List<Double> fs = new java.util.ArrayList<>();
+        for (DeepSkyObject o : objects) {
+            List<NebulaField> of = o.fields();
+            if (of.isEmpty()) continue;
+            double objectScale = o.type == DeepSkyType.EMISSION_NEBULA && !o.catalogued
+                    ? DeepSky.discreteHiiWeight(o.distanceTo(ox, oy, oz)) : 1;
+            for (NebulaField f : of) {
+                if (dustOnly ? !f.hasDust() : !f.hasDust() && objectScale <= 1e-4) continue;
+                fl.add(dustOnly ? f : f.bind(ox, oy, oz));
+                fs.add(dustOnly ? 0.0 : objectScale);
+            }
+        }
+        int nf = fl.size();
+        fields = fl.toArray(new NebulaField[0]);
+        fieldScale = new double[nf];
+        fieldGrid = new CoarseFieldGrid[nf];
+        boolean[] fGlobal = new boolean[nf];
+        double[][] fDir = new double[nf][];
+        double[] fCap = new double[nf];
+        int[] fCounts = new int[NLON * NLAT + 1];
+        int nfg = 0;
+        for (int i = 0; i < nf; i++) {
+            fieldScale[i] = fs.get(i);
+            NebulaField f = fields[i];
+            double x = f.cx - ox, y = f.cy - oy, z = f.cz - oz;
+            double dist = Math.sqrt(x * x + y * y + z * z);
+            int factor = dustOnly ? 1 : CoarseFieldGrid.factorFor(f, dist, pixelAngle);
+            if (factor > 1) fieldGrid[i] = new CoarseFieldGrid(f, ox, oy, oz, pixelAngle, factor, fieldScale[i]);
+            if (dist <= f.radius * 1.02) {
+                fGlobal[i] = true;
+                nfg++;
+            } else {
+                fDir[i] = new double[] {x / dist, y / dist, z / dist};
+                fCap[i] = Math.asin(f.radius / dist);
+                forEachCell(fDir[i][0], fDir[i][1], fDir[i][2], fCap[i], c -> fCounts[c + 1]++);
+            }
+        }
+        for (int c = 0; c < NLON * NLAT; c++) fCounts[c + 1] += fCounts[c];
+        fieldCellStart = fCounts.clone();
+        fieldCellItems = new int[fCounts[NLON * NLAT]];
+        int[] fFill = Arrays.copyOf(fCounts, NLON * NLAT);
+        fieldGlobal = new int[nfg];
+        int fg = 0;
+        for (int i = 0; i < nf; i++) {
+            if (fGlobal[i]) {
+                fieldGlobal[fg++] = i;
+            } else {
+                final int item = i;
+                forEachCell(fDir[i][0], fDir[i][1], fDir[i][2], fCap[i], c -> fieldCellItems[fFill[c]++] = item);
+            }
+        }
+    }
+
+    /** Number of continuous volumes in this view. */
+    public int fieldCount() {
+        return fields.length;
     }
 
     private interface CellSink {
@@ -240,7 +307,8 @@ public final class DeepSkyView {
 
         void sort() {
             if (count < 2) return;
-            if (count <= 48) {
+            // Field segments arrive already in order, so insertion sort stays near-linear well past 48.
+            if (count <= 160) {
                 for (int i = 1; i < count; i++) {
                     double tt = t[i], rr = r[i], gg = g[i], bb = b[i], aa = av[i];
                     int j = i - 1;
@@ -283,8 +351,31 @@ public final class DeepSkyView {
         int c = cellOf(dx, dy, dz);
         for (int k = cellStart[c], e = cellStart[c + 1]; k < e; k++) evaluate(cellItems[k], dx, dy, dz, ev);
         for (int i : global) evaluate(i, dx, dy, dz, ev);
+        if (fields.length > 0) {
+            int fs = fieldCellStart[c], fe = fieldCellStart[c + 1];
+            if (fs < fe || fieldGlobal.length > 0) {
+                double jitter = jitter(dx, dy, dz);
+                for (int k = fs; k < fe; k++) traceField(fieldCellItems[k], dx, dy, dz, jitter, ev);
+                for (int i : fieldGlobal) traceField(i, dx, dy, dz, jitter, ev);
+            }
+        }
         ev.sort();
         return ev;
+    }
+
+    private void traceField(int i, double dx, double dy, double dz, double jitter, RayEvents ev) {
+        if (fieldGrid[i] != null) fieldGrid[i].events(dx, dy, dz, ev);
+        else fields[i].march(ox, oy, oz, dx, dy, dz, pixelAngle, jitter, fieldScale[i], ev);
+    }
+
+    /**
+     * Per-ray sample offset in [0, 1): a hash of the direction quantised far below a pixel, so
+     * neighbouring pixels decorrelate (stratified sampling) and the same pixel is stable between bakes.
+     */
+    static double jitter(double dx, double dy, double dz) {
+        long h = dev.galactica.science.SeedRng.mix(Double.doubleToLongBits((float) dx) * 0x9E3779B97F4A7C15L
+                ^ Double.doubleToLongBits((float) dy) * 0xC2B2AE3D27D4EB4FL ^ Double.doubleToLongBits((float) dz));
+        return (h >>> 11) * 0x1.0p-53;
     }
 
     private void evaluate(int i, double dx, double dy, double dz, RayEvents ev) {
@@ -321,11 +412,18 @@ public final class DeepSkyView {
 
     /** Deep-sky V-band extinction (mag) from the observer to distance d along unit direction u. */
     public double extinction(double ux, double uy, double uz, double d) {
-        if (n == 0) return 0;
+        if (n == 0 && fields.length == 0) return 0;
         double total = 0;
         int c = cellOf(ux, uy, uz);
         for (int k = cellStart[c], e = cellStart[c + 1]; k < e; k++) total += extinctionOne(cellItems[k], ux, uy, uz, d);
         for (int i : global) total += extinctionOne(i, ux, uy, uz, d);
+        if (fields.length > 0) {
+            for (int k = fieldCellStart[c], e = fieldCellStart[c + 1]; k < e; k++) {
+                NebulaField f = fields[fieldCellItems[k]];
+                if (f.hasDust()) total += f.extinction(ox, oy, oz, ux, uy, uz, d);
+            }
+            for (int i : fieldGlobal) if (fields[i].hasDust()) total += fields[i].extinction(ox, oy, oz, ux, uy, uz, d);
+        }
         return total;
     }
 

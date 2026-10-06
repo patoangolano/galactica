@@ -95,14 +95,40 @@ public final class GalaxySkyBaker {
      * {@code out} holds width × height × 3 floats.
      */
     public void bakeEquirect(double ox, double oy, double oz, int width, int height, float[] out) {
+        bakeEquirectRadiance(ox, oy, oz, width, height, out);
+        compressHighlights(out, width, height, true);
+    }
+
+    /**
+     * {@link #bakeEquirect} without {@link #compressHighlights}: the physical radiance of every
+     * pixel (L☉ pc⁻² sr⁻¹), for measurements and tests.
+     */
+    public void bakeEquirectRadiance(double ox, double oy, double oz, int width, int height, float[] out) {
+        bakeEquirectRadiance(ox, oy, oz, width, height, out, MC_TO_GALACTIC);
+    }
+
+    /**
+     * Minecraft axes (x, y up, z) → galactic frame (x, −z, y): the layout of the space sky. Rows map
+     * an equirect direction ({@link #equirectDirection}) to the galactocentric ray direction.
+     */
+    public static final double[][] MC_TO_GALACTIC = {{1, 0, 0}, {0, 0, -1}, {0, 1, 0}};
+
+    /**
+     * Equirectangular radiance bake whose pixel directions ({@link #equirectDirection}) are rotated
+     * into galactocentric axes by {@code toGalactic} (rows of a rotation matrix): any sky frame,
+     * e.g. vanilla's star buffer for the Overworld sky, gets the two-scale bake.
+     */
+    public void bakeEquirectRadiance(double ox, double oy, double oz, int width, int height, float[] out, double[][] toGalactic) {
         DeepSkyView view = prepare(ox, oy, oz, 2 * Math.PI / width);
         if (width % 2 != 0 || height % 2 != 0 || width < 8 || height < 8) {
             java.util.stream.IntStream.range(0, height).parallel().forEach(j -> {
                 double[] dir = new double[3];
                 double[] rgb = new double[3];
+                double[] g = new double[3];
                 for (int i = 0; i < width; i++) {
                     equirectDirection((i + 0.5) / width, (j + 0.5) / height, dir);
-                    march(view, ox, oy, oz, dir[0], -dir[2], dir[1], rgb);
+                    rotate(toGalactic, dir, g);
+                    march(view, ox, oy, oz, g[0], g[1], g[2], rgb);
                     int k = (j * width + i) * 3;
                     out[k] = (float) rgb[0];
                     out[k + 1] = (float) rgb[1];
@@ -111,7 +137,148 @@ public final class GalaxySkyBaker {
             });
             return;
         }
-        bakeEquirectTwoScale(view, ox, oy, oz, width, height, out);
+        bakeEquirectTwoScale(view, ox, oy, oz, width, height, out, toGalactic);
+    }
+
+    private static void rotate(double[][] m, double[] v, double[] out) {
+        out[0] = m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2];
+        out[1] = m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2];
+        out[2] = m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2];
+    }
+
+    /** Angular scale (rad) of the local adaptation in {@link #compressHighlights}: 1.2°. */
+    public static final double ADAPT_SIGMA = Math.toRadians(1.2);
+    /** Strength of the highlight compression: a region γ-compressed as (mean / threshold)^−γ. */
+    public static final double ADAPT_GAMMA = 0.6;
+
+    /**
+     * Local adaptation (dodging and burning) of an equirectangular HDR sky, anchored to its own
+     * 99th-percentile luminance. See {@link #compressHighlights(float[], int, int, double, boolean, double)}.
+     */
+    public static void compressHighlights(float[] hdr, int w, int h, boolean equirect) {
+        int n = w * h;
+        int stride = Math.max(1, n / 200_000);
+        double[] lum = new double[(n + stride - 1) / stride];
+        int m = 0;
+        for (int p = 0; p < n; p += stride) lum[m++] = 0.2126 * hdr[p * 3] + 0.7152 * hdr[p * 3 + 1] + 0.0722 * hdr[p * 3 + 2];
+        java.util.Arrays.sort(lum, 0, m);
+        double p99 = lum[Math.min(m - 1, (int) (m * 0.99))];
+        compressHighlights(hdr, w, h, 2 * Math.PI / w, equirect, p99);
+    }
+
+    /**
+     * Brings bright extended regions (nebulae seen from nearby, the bulge from inside it) into a
+     * displayable range while keeping their internal contrast, the way astrophotographers
+     * composite exposures of M42: every pixel is scaled by (Ŷ/T)^−γ when its surroundings Ŷ (the
+     * luminance blurred over {@link #ADAPT_SIGMA}) exceed the threshold T, γ = {@link #ADAPT_GAMMA}.
+     * Structure finer than the blur (dark lanes, filaments, fronts) keeps its contrast, while the
+     * region as a whole is compressed. The surroundings used are min(Ŷ, max(T, 4Y)), so a faint
+     * pixel next to a bright region is never darkened (no dark halo) and the result stays
+     * monotonic in Y. Pixels in regions below T are untouched: the Milky Way band is unchanged.
+     * Display processing only; radiance is kept by {@link #bakeEquirectRadiance}.
+     *
+     * @param pixelAngle angular size of a pixel (rad), sets the blur in pixels
+     * @param wrapX      the image wraps horizontally (equirectangular; also widens the blur by
+     *                   1/cos latitude so it stays {@link #ADAPT_SIGMA} on the sky)
+     * @param threshold  luminance T above which regions are compressed
+     */
+    public static void compressHighlights(float[] hdr, int w, int h, double pixelAngle, boolean wrapX, double threshold) {
+        if (!(threshold > 0)) return;
+        double sigmaPx = ADAPT_SIGMA / pixelAngle;
+        int f = Math.max(1, (int) Math.floor(sigmaPx / 2.0));
+        int lw = Math.max(1, w / f), lh = Math.max(1, h / f);
+        double[] low = new double[lw * lh];
+        boolean any = false;
+        for (int j = 0; j < lh; j++) {
+            for (int i = 0; i < lw; i++) {
+                double s = 0;
+                int c = 0;
+                for (int y = j * f; y < Math.min(h, (j + 1) * f); y++) {
+                    for (int x = i * f; x < Math.min(w, (i + 1) * f); x++) {
+                        int p = (y * w + x) * 3;
+                        s += 0.2126 * hdr[p] + 0.7152 * hdr[p + 1] + 0.0722 * hdr[p + 2];
+                        c++;
+                    }
+                }
+                low[j * lw + i] = c > 0 ? s / c : 0;
+                if (low[j * lw + i] > threshold) any = true;
+            }
+        }
+        if (!any) return;
+        double sl = sigmaPx / f;
+        // Separable Gaussian: horizontal (wrapping, widened towards the poles), then vertical.
+        double[] tmp = new double[lw * lh];
+        for (int j = 0; j < lh; j++) {
+            double sx = sl;
+            if (wrapX) {
+                double lat = Math.PI / 2 - (j + 0.5) / lh * Math.PI;
+                sx = Math.min(lw / 4.0, sl / Math.max(0.05, Math.cos(lat)));
+            }
+            int r = (int) Math.ceil(3 * sx);
+            double[] k = gaussian(sx, r);
+            for (int i = 0; i < lw; i++) {
+                double s = 0, ws = 0;
+                for (int d = -r; d <= r; d++) {
+                    int x = i + d;
+                    if (wrapX) x = Math.floorMod(x, lw);
+                    else if (x < 0 || x >= lw) continue;
+                    s += k[d + r] * low[j * lw + x];
+                    ws += k[d + r];
+                }
+                tmp[j * lw + i] = s / ws;
+            }
+        }
+        int rv = (int) Math.ceil(3 * sl);
+        double[] kv = gaussian(sl, rv);
+        for (int i = 0; i < lw; i++) {
+            for (int j = 0; j < lh; j++) {
+                double s = 0, ws = 0;
+                for (int d = -rv; d <= rv; d++) {
+                    int y = j + d;
+                    if (y < 0 || y >= lh) continue;
+                    s += kv[d + rv] * tmp[y * lw + i];
+                    ws += kv[d + rv];
+                }
+                low[j * lw + i] = s / ws;
+            }
+        }
+        double t = threshold;
+        java.util.stream.IntStream.range(0, h).parallel().forEach(y -> {
+            double v = (y + 0.5) / f - 0.5;
+            int y0 = (int) Math.floor(v);
+            double fy = v - y0;
+            int ya = Math.max(0, Math.min(lh - 1, y0)), yb = Math.max(0, Math.min(lh - 1, y0 + 1));
+            for (int x = 0; x < w; x++) {
+                double u = (x + 0.5) / f - 0.5;
+                int x0 = (int) Math.floor(u);
+                double fx = u - x0;
+                int xa, xb;
+                if (wrapX) {
+                    xa = Math.floorMod(x0, lw);
+                    xb = Math.floorMod(x0 + 1, lw);
+                } else {
+                    xa = Math.max(0, Math.min(lw - 1, x0));
+                    xb = Math.max(0, Math.min(lw - 1, x0 + 1));
+                }
+                double yb2 = (1 - fx) * (1 - fy) * low[ya * lw + xa] + fx * (1 - fy) * low[ya * lw + xb]
+                        + (1 - fx) * fy * low[yb * lw + xa] + fx * fy * low[yb * lw + xb];
+                if (yb2 <= t) continue;
+                int p = (y * w + x) * 3;
+                double lumP = 0.2126 * hdr[p] + 0.7152 * hdr[p + 1] + 0.0722 * hdr[p + 2];
+                double around = Math.min(yb2, Math.max(t, 4 * lumP));
+                if (around <= t) continue;
+                float g = (float) Math.pow(around / t, -ADAPT_GAMMA);
+                hdr[p] *= g;
+                hdr[p + 1] *= g;
+                hdr[p + 2] *= g;
+            }
+        });
+    }
+
+    private static double[] gaussian(double sigma, int r) {
+        double[] k = new double[2 * r + 1];
+        for (int d = -r; d <= r; d++) k[d + r] = Math.exp(-0.5 * d * d / (sigma * sigma));
+        return k;
     }
 
     /** Knot distances (pc) at which half-resolution rays record their running integral; the last is the total. */
@@ -128,20 +295,72 @@ public final class GalaxySkyBaker {
      * is dimmed by the galaxy dust (read from the interpolated transmittance curve) in front of it.
      * Work is split into bands of half-resolution rows so the curves never exist for the whole sky.
      */
-    private void bakeEquirectTwoScale(DeepSkyView view, double ox, double oy, double oz, int width, int height, float[] out) {
+    private void bakeEquirectTwoScale(DeepSkyView view, double ox, double oy, double oz, int width, int height, float[] out,
+                                      double[][] toGalactic) {
+        bakeTwoScale(view, ox, oy, oz, width, height, out, new DirectionGrid() {
+            @Override
+            public void direction(double u, double v, double[] gal) {
+                double[] d = new double[3];
+                equirectDirection(u, v, d);
+                rotate(toGalactic, d, gal);
+            }
+
+            @Override
+            public boolean wrapsU() {
+                return true;
+            }
+        });
+    }
+
+    /**
+     * A regular image grid of view directions: (u, v) ∈ [0, 1]² → unit galactocentric direction.
+     * Directions must vary smoothly with (u, v) (the half-resolution galaxy is interpolated).
+     */
+    public interface DirectionGrid {
+        void direction(double u, double v, double[] galactic);
+
+        /** True when column u = 1 meets column u = 0 (a full turn of longitude). */
+        boolean wrapsU();
+    }
+
+    /**
+     * The two-scale bake of any direction grid, e.g. a gnomonic close-up of a nebula: the galaxy
+     * at half resolution with its knot curves, the deep-sky volumes of {@code view} (prepared for
+     * this observer at this grid's pixel scale) at full resolution. Rows run in parallel.
+     */
+    public void bakeGrid(DeepSkyView view, double ox, double oy, double oz, int width, int height, float[] out, DirectionGrid grid) {
+        if (width % 2 != 0 || height % 2 != 0 || width < 8 || height < 8) {
+            java.util.stream.IntStream.range(0, height).parallel().forEach(j -> {
+                double[] g = new double[3], rgb = new double[3];
+                for (int i = 0; i < width; i++) {
+                    grid.direction((i + 0.5) / width, (j + 0.5) / height, g);
+                    march(view, ox, oy, oz, g[0], g[1], g[2], rgb);
+                    int k = (j * width + i) * 3;
+                    out[k] = (float) rgb[0];
+                    out[k + 1] = (float) rgb[1];
+                    out[k + 2] = (float) rgb[2];
+                }
+            });
+            return;
+        }
+        bakeTwoScale(view, ox, oy, oz, width, height, out, grid);
+    }
+
+    private void bakeTwoScale(DeepSkyView view, double ox, double oy, double oz, int width, int height, float[] out, DirectionGrid grid) {
         int wl = width / 2, hl = height / 2;
+        boolean wrap = grid.wrapsU();
         int bands = (hl + BAND - 1) / BAND;
         java.util.stream.IntStream.range(0, bands).parallel().forEach(band -> {
             // Low-res rows needed: [jl0 - 1, jl1 + 1] clamped, for bilinear interpolation at band edges.
             int jl0 = band * BAND, jl1 = Math.min(hl - 1, jl0 + BAND - 1);
             int ja = Math.max(0, jl0 - 1), jb = Math.min(hl - 1, jl1 + 1);
             float[] curves = new float[(jb - ja + 1) * wl * KSTRIDE];
-            double[] dir = new double[3];
             double[] rgb = new double[3];
+            double[] g = new double[3];
             for (int jl = ja; jl <= jb; jl++) {
                 for (int il = 0; il < wl; il++) {
-                    equirectDirection((il + 0.5) / wl, (jl + 0.5) / hl, dir);
-                    integrate(null, true, ox, oy, oz, dir[0], -dir[2], dir[1], rgb, curves, ((jl - ja) * wl + il) * KSTRIDE);
+                    grid.direction((il + 0.5) / wl, (jl + 0.5) / hl, g);
+                    integrate(null, true, ox, oy, oz, g[0], g[1], g[2], rgb, curves, ((jl - ja) * wl + il) * KSTRIDE);
                 }
             }
             double[] c = new double[KSTRIDE];
@@ -154,15 +373,16 @@ public final class GalaxySkyBaker {
                     double u = (i + 0.5) / 2 - 0.5;
                     int i0 = (int) Math.floor(u);
                     double fu = u - i0;
-                    int c0 = Math.floorMod(i0, wl), c1 = Math.floorMod(i0 + 1, wl);
+                    int c0 = wrap ? Math.floorMod(i0, wl) : Math.max(0, Math.min(wl - 1, i0));
+                    int c1 = wrap ? Math.floorMod(i0 + 1, wl) : Math.max(0, Math.min(wl - 1, i0 + 1));
                     int a00 = (r0 * wl + c0) * KSTRIDE, a01 = (r0 * wl + c1) * KSTRIDE;
                     int a10 = (r1 * wl + c0) * KSTRIDE, a11 = (r1 * wl + c1) * KSTRIDE;
                     double w00 = (1 - fu) * (1 - fv), w01 = fu * (1 - fv), w10 = (1 - fu) * fv, w11 = fu * fv;
                     for (int q = 0; q < KSTRIDE; q++) {
                         c[q] = w00 * curves[a00 + q] + w01 * curves[a01 + q] + w10 * curves[a10 + q] + w11 * curves[a11 + q];
                     }
-                    equirectDirection((i + 0.5) / width, (j + 0.5) / height, dir);
-                    composite(view.trace(dir[0], -dir[2], dir[1]), c, rgb);
+                    grid.direction((i + 0.5) / width, (j + 0.5) / height, g);
+                    composite(view.trace(g[0], g[1], g[2]), c, rgb);
                     int k = (j * width + i) * 3;
                     out[k] = (float) rgb[0];
                     out[k + 1] = (float) rgb[1];

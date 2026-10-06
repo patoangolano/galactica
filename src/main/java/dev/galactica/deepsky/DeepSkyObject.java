@@ -19,6 +19,33 @@ public class DeepSkyObject {
     public final long seed;
     private final Function<DeepSkyObject, List<Blob>> builder;
     private volatile List<Blob> blobs;
+    private Function<DeepSkyObject, List<NebulaField>> fieldBuilder;
+    private volatile List<NebulaField> fields;
+
+    /**
+     * Gives the object continuous volumes ({@link NebulaField}s) in addition to its Gaussian blobs.
+     * Called once while the catalogue is built, before the object is published.
+     */
+    DeepSkyObject withFields(Function<DeepSkyObject, List<NebulaField>> builder) {
+        this.fieldBuilder = builder;
+        return this;
+    }
+
+    /** The object's continuous volumes, built once (empty for most objects). */
+    public List<NebulaField> fields() {
+        if (fieldBuilder == null) return List.of();
+        List<NebulaField> f = fields;
+        if (f == null) {
+            synchronized (this) {
+                f = fields;
+                if (f == null) {
+                    f = List.copyOf(fieldBuilder.apply(this));
+                    fields = f;
+                }
+            }
+        }
+        return f;
+    }
 
     protected DeepSkyObject(String id, String name, DeepSkyType type, double[] pos, double radiusPc,
                             boolean catalogued, long seed, Function<DeepSkyObject, List<Blob>> builder) {

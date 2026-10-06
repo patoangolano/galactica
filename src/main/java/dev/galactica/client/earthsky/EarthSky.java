@@ -16,10 +16,13 @@ import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.galactica.Galactica;
 import dev.galactica.client.sky.SkyTextures;
 import dev.galactica.sky.GalaxySkyBaker;
+import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.MoonPhase;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
@@ -44,8 +47,14 @@ import java.util.concurrent.ForkJoinWorkerThread;
  *       (and Iris' sun-path tilt) and before the sun and moon are drawn, so the band sits behind
  *       them and never dims them.</li>
  *   <li>{@link #renderStars} runs at HEAD of {@code SkyRenderer.renderStars} and replaces vanilla's
- *       stars. Both draw with {@link RenderPipelines#END_SKY} (Iris: {@code gbuffers_skytextured}).</li>
+ *       stars, then draws the atmosphere veil ({@link NightSkyModel}) over the whole night sky:
+ *       horizon extinction, airglow and the moonlit sky that washes the band out near a bright
+ *       Moon. All layers draw with {@link RenderPipelines#END_SKY} (Iris: {@code gbuffers_skytextured})
+ *       and carry their colour and opacity in textures, never in vertex colour.</li>
  * </ol>
+ * Brightness follows vanilla's {@code STAR_BRIGHTNESS} attribute normalised to its night value
+ * ({@value #NIGHT_STAR_BRIGHTNESS}), so the band and the stars reach their calibrated opacity at
+ * full night and fade through dusk and dawn.
  * Until the bake lands vanilla's stars are left untouched.
  */
 public final class EarthSky {
@@ -64,15 +73,25 @@ public final class EarthSky {
     public static volatile boolean seasons = true;
     public static volatile double yearLengthDays = 365.25;
 
+    /** 2048 × 1024 (0.18° per texel); larger bakes delay the first real night sky by several seconds. */
     public static final int SKY_WIDTH = 2048, SKY_HEIGHT = 1024;
-    /** Shells inside vanilla's star radius (100): the band behind, stars in front. */
-    private static final float R_GALAXY = 100f, R_STARS = 95f;
+    /** Shells inside vanilla's star radius (100): the band behind, stars in front, the veil in front of all. */
+    private static final float R_GALAXY = 100f, R_STARS = 95f, R_VEIL = 90f;
+    /** Vanilla's {@code STAR_BRIGHTNESS} through the night (Timelines: 0.5 from tick 13228 to 22772). */
+    public static final float NIGHT_STAR_BRIGHTNESS = 0.5f;
+    /** Size of the veil texture (world-fixed equirect) and how far the Moon may move before it is recomputed. */
+    private static final int VEIL_W = 128, VEIL_H = 64;
+    private static final double VEIL_REFRESH_DEG = 0.4;
 
     private static CompletableFuture<EarthSkyBake.Baked> pending;
     private static boolean ready;
     private static DynamicTexture galaxyTexture, starTexture;
-    private static GpuBuffer sphere, stars;
-    private static int sphereIndices, starIndices;
+    private static GpuBuffer sphere, stars, veil;
+    private static int sphereIndices, starIndices, veilIndices;
+    private static DynamicTexture veilTexture;
+    private static CompletableFuture<int[]> veilJob;
+    private static double veilMoonDeg = Double.NaN;
+    private static int veilPhase = -1;
 
     public static void initClient() {
         realNightSky = !"false".equalsIgnoreCase(System.getProperty("galactica.realNightSky", "true"));
@@ -126,9 +145,47 @@ public final class EarthSky {
             pending = CompletableFuture.completedFuture(null);
         }
         if (ready) {
+            updateVeil(mc);
             // Grow the shared index buffer now, not inside the pass.
-            RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS).getBuffer(Math.max(sphereIndices, starIndices));
+            RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS).getBuffer(Math.max(veilIndices, Math.max(sphereIndices, starIndices)));
         }
+    }
+
+    /**
+     * Keeps the atmosphere veil in step with the Moon: when vanilla's moon angle has moved more than
+     * {@value #VEIL_REFRESH_DEG}° or the phase changed, a new texture is computed on a worker; a
+     * finished one is uploaded here, before the sky pass opens.
+     */
+    private static void updateVeil(Minecraft mc) {
+        if (veilJob != null && veilJob.isDone()) {
+            int[] px = veilJob.getNow(null);
+            veilJob = null;
+            if (px != null) {
+                NativeImage img = veilTexture.getPixels();
+                if (img != null) {
+                    for (int i = 0; i < px.length; i++) img.setPixel(i % VEIL_W, i / VEIL_W, px[i]);
+                    veilTexture.upload();
+                }
+            }
+        }
+        if (veilJob != null) return;
+        Camera cam = mc.gameRenderer.mainCamera();
+        float pt = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+        Float moonDeg = cam.attributeProbe().getValue(EnvironmentAttributes.MOON_ANGLE, pt);
+        MoonPhase phase = cam.attributeProbe().getValue(EnvironmentAttributes.MOON_PHASE, pt);
+        double deg = moonDeg != null ? moonDeg : 0;
+        int ph = phase != null ? phase.index() : 4;
+        if (ph == veilPhase && !Double.isNaN(veilMoonDeg) && Math.abs(deg - veilMoonDeg) < VEIL_REFRESH_DEG) return;
+        veilMoonDeg = deg;
+        veilPhase = ph;
+        double[] moonDir = NightSkyModel.moonDirection(Math.toRadians(deg));
+        double phaseAngle = NightSkyModel.phaseAngle(ph);
+        veilJob = CompletableFuture.supplyAsync(() -> NightSkyModel.veilTexture(VEIL_W, VEIL_H, moonDir, phaseAngle));
+    }
+
+    /** STAR_BRIGHTNESS normalised to full night: 1 at night, fading to 0 by day. */
+    static float night(float starBrightness) {
+        return Math.max(0f, Math.min(1f, starBrightness / NIGHT_STAR_BRIGHTNESS));
     }
 
     /**
@@ -140,7 +197,7 @@ public final class EarthSky {
         if (starBrightness <= 0f || !active()) return;
         Matrix4f modelView = new Matrix4f(RenderSystem.getModelViewStack()).mul(poseStack.last().pose()).rotateX(starAngle);
         seasonal(modelView);
-        Vector4f colour = new Vector4f(1f, 1f, 1f, Math.min(1f, starBrightness));
+        Vector4f colour = new Vector4f(1f, 1f, 1f, night(starBrightness));
         draw(pass, modelView, sphere, sphereIndices, galaxyTexture.getTextureView(), SkyTextures.linearWrapU(), colour, "Milky Way (Earth)");
     }
 
@@ -154,8 +211,14 @@ public final class EarthSky {
         if (stars != null) {
             Matrix4f modelView = new Matrix4f(RenderSystem.getModelViewStack()).mul(poseStack.last().pose());
             seasonal(modelView);
-            Vector4f colour = new Vector4f(1f, 1f, 1f, Math.min(1f, starBrightness));
+            Vector4f colour = new Vector4f(1f, 1f, 1f, night(starBrightness));
             draw(pass, modelView, stars, starIndices, starTexture.getTextureView(), SkyTextures.linearClamp(), colour, "Real stars");
+        }
+        if (veil != null && veilPhase >= 0) {
+            // World-fixed: the camera's rotation only, none of the sky's turning.
+            Matrix4f view = new Matrix4f(RenderSystem.getModelViewStack());
+            draw(pass, view, veil, veilIndices, veilTexture.getTextureView(), SkyTextures.linearWrapU(),
+                    new Vector4f(1f, 1f, 1f, night(starBrightness)), "Night sky atmosphere");
         }
         return true;
     }
@@ -192,7 +255,11 @@ public final class EarthSky {
     private static void upload(EarthSkyBake.Baked baked) {
         galaxyTexture = texture("galactica:earth_milky_way", baked.width(), baked.height(), baked.galaxyArgb());
         starTexture = texture("galactica:earth_star_atlas", StarAtlas.WIDTH, StarAtlas.HEIGHT, StarAtlas.pixels());
-        buildSphere();
+        sphere = buildSphere(R_GALAXY, "Galactica Earth Milky Way");
+        sphereIndices = lastSphereIndices;
+        veil = buildSphere(R_VEIL, "Galactica night sky atmosphere");
+        veilIndices = lastSphereIndices;
+        veilTexture = texture("galactica:earth_night_atmosphere", VEIL_W, VEIL_H, new int[VEIL_W * VEIL_H], false);
         buildStars(baked);
     }
 
@@ -202,14 +269,22 @@ public final class EarthSky {
      * closes its NativeImage right after {@code writeToTexture}.
      */
     private static DynamicTexture texture(String label, int w, int h, int[] argb) {
+        return texture(label, w, h, argb, true);
+    }
+
+    /** @param release swap the CPU copy for 1×1 after upload (false keeps it for later {@code upload()}s) */
+    private static DynamicTexture texture(String label, int w, int h, int[] argb, boolean release) {
         NativeImage img = new NativeImage(w, h, true);
         for (int i = 0; i < argb.length; i++) img.setPixel(i % w, i / w, argb[i]);
         DynamicTexture t = new DynamicTexture(() -> label, img);
-        t.setPixels(new NativeImage(1, 1, true));
+        if (release) t.setPixels(new NativeImage(1, 1, true));
         return t;
     }
 
-    private static void buildSphere() {
+    private static int lastSphereIndices;
+
+    /** A latitude–longitude shell of {@code radius} whose UVs are the equirect layout of {@link GalaxySkyBaker#equirectDirection}. */
+    private static GpuBuffer buildSphere(float radius, String label) {
         int lon = 96, lat = 48;
         try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(lon * lat * 4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
             BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
@@ -221,14 +296,14 @@ public final class EarthSky {
                     float[][] uv = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};
                     for (int k = 0; k < 4; k++) {
                         GalaxySkyBaker.equirectDirection(uv[k][0], uv[k][1], d);
-                        v[k] = new float[] {(float) d[0] * R_GALAXY, (float) d[1] * R_GALAXY, (float) d[2] * R_GALAXY, uv[k][0], uv[k][1]};
+                        v[k] = new float[] {(float) d[0] * radius, (float) d[1] * radius, (float) d[2] * radius, uv[k][0], uv[k][1]};
                     }
                     emitInwardQuad(b, v);
                 }
             }
             try (MeshData mesh = b.buildOrThrow()) {
-                sphereIndices = mesh.drawState().indexCount();
-                sphere = RenderSystem.getDevice().createBuffer(() -> "Galactica Earth Milky Way", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+                lastSphereIndices = mesh.drawState().indexCount();
+                return RenderSystem.getDevice().createBuffer(() -> label, GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
             }
         }
     }
