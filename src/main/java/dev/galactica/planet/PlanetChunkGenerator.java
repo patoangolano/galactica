@@ -68,12 +68,19 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
                 case SMOOTH_BASALT -> Blocks.SMOOTH_BASALT;
                 case WATER -> Blocks.WATER;
                 case LAVA -> Blocks.LAVA;
+                case COARSE_DIRT -> Blocks.COARSE_DIRT;
             }).defaultBlockState();
         }
     }
 
-    static BlockState state(TerrainSampler.Material m) {
+    /** Block state a palette material generates as; also read by the client clipmap for map colours. */
+    public static BlockState state(TerrainSampler.Material m) {
         return STATES[m.ordinal()];
+    }
+
+    /** Map colour (0xRRGGBB) of a palette material's block, as a filled map would draw it. */
+    public static int mapColour(TerrainSampler.Material m) {
+        return state(m).getMapColor(net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO).col;
     }
 
     private final int slot;

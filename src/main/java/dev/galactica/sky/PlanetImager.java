@@ -1,5 +1,6 @@
 package dev.galactica.sky;
 
+import dev.galactica.planet.PlanetMacro;
 import dev.galactica.science.Blackbody;
 import dev.galactica.science.Noise;
 import dev.galactica.science.SeedRng;
@@ -18,6 +19,11 @@ import dev.galactica.system.BodyType;
  * gap (Cuzzi et al. 2009). Limb haze uses Rayleigh plus Henyey–Greenstein phase functions, so a
  * backlit hazy world shows a bright forward-scattering ring.
  *
+ * <p>Surface geography of solid bodies (continents, seas, deserts, ice caps, maria, basins) comes
+ * from {@link PlanetMacro}, the same fields the surface generator builds terrain from, in the
+ * body-fixed frame of {@link dev.galactica.planet.BodyFrame} (prime meridian {@code ref × pole}),
+ * so the coast you see from orbit is the coast you land on.
+ *
  * <p>Thread-safe; all per-render state lives in a thread-local scratch, nothing is allocated per pixel.
  */
 public final class PlanetImager {
@@ -28,18 +34,12 @@ public final class PlanetImager {
     private static final double PLAIN_EXTENT = 1.35;
     private static final int RING_BINS = 512;
     /** Camera exposure: a planet of albedo ~0.6 under a white star reaches display white. */
-    private static final double EXPOSURE = 1.6;
+    public static final double EXPOSURE = 1.6;
     private static final int ENCODE_BINS = 4096;
     /** linear → 8-bit sRGB, indexed by sqrt(linear) so the dark end keeps full precision. */
     private static final int[] ENCODE = new int[ENCODE_BINS];
     private static final float[] LAVA_RGB = new float[3];
     private static final double RING_SCALE = RING_BINS / (RING_OUTER - RING_INNER);
-    /**
-     * Fixed rotation (axis (0.48, 0.60, 0.64), 1.1 rad) applied before every noise octave, so the
-     * value-noise lattice never lines up with the body axes or with the previous octave: no square
-     * cloud corners or rectangular coastlines under steep thresholds.
-     */
-    private static final double M00, M01, M02, M10, M11, M12, M20, M21, M22;
 
     static {
         for (int i = 0; i < ENCODE_BINS; i++) {
@@ -47,10 +47,6 @@ public final class PlanetImager {
             ENCODE[i] = (int) Math.round(255 * Blackbody.encode(s * s));
         }
         Blackbody.linearRgb(1400, LAVA_RGB); // basaltic lava, ~1100–1200 °C
-        double ax = 0.48, ay = 0.60, az = 0.64, c = Math.cos(1.1), s = Math.sin(1.1), k = 1 - c;
-        M00 = c + ax * ax * k;      M01 = ax * ay * k - az * s; M02 = ax * az * k + ay * s;
-        M10 = ay * ax * k + az * s; M11 = c + ay * ay * k;      M12 = ay * az * k - ax * s;
-        M20 = az * ax * k - ay * s; M21 = az * ay * k + ax * s; M22 = c + az * az * k;
     }
 
     /**
@@ -89,6 +85,7 @@ public final class PlanetImager {
         double hjR, hjG, hjB;
         // up to three layers per pixel: depth, premultiplied rgb, alpha
         final double[] ld = new double[3], lr = new double[3], lg = new double[3], lb = new double[3], la = new double[3];
+        final PlanetMacro.Sample macro = new PlanetMacro.Sample();
     }
 
     private static final ThreadLocal<Scratch> SCRATCH = ThreadLocal.withInitial(Scratch::new);
@@ -104,16 +101,14 @@ public final class PlanetImager {
         Scratch s = SCRATCH.get();
         BodyType type = b.type();
         long seed = b.terrainSeed();
+        PlanetMacro macro = PlanetMacro.of(b);
         double ext = extent(b), ps = 2 * ext / size;
         double[] F = v.forward, R = v.right, U = v.up, L = v.toStar, S = v.spinAxis;
 
         // Body-fixed basis (b1, b2, S): rotating it by +θ carries surface features prograde.
-        double rx = Math.abs(S[1]) < 0.9 ? 0 : 1, ry = Math.abs(S[1]) < 0.9 ? 1 : 0;
-        double d0 = rx * S[0] + ry * S[1];
-        double e1x = rx - d0 * S[0], e1y = ry - d0 * S[1], e1z = -d0 * S[2];
-        double inv = 1 / Math.sqrt(e1x * e1x + e1y * e1y + e1z * e1z);
-        e1x *= inv; e1y *= inv; e1z *= inv;
-        double e2x = S[1] * e1z - S[2] * e1y, e2y = S[2] * e1x - S[0] * e1z, e2z = S[0] * e1y - S[1] * e1x;
+        double[] e1 = new double[3], e2 = new double[3];
+        primeMeridian(S, e1, e2);
+        double e1x = e1[0], e1y = e1[1], e1z = e1[2], e2x = e2[0], e2y = e2[1], e2z = e2[2];
         double cr = Math.cos(v.rotationRad), sr = Math.sin(v.rotationRad);
         double b1x = cr * e1x + sr * e2x, b1y = cr * e1y + sr * e2y, b1z = cr * e1z + sr * e2z;
         double b2x = -sr * e1x + cr * e2x, b2y = -sr * e1y + cr * e2y, b2z = -sr * e1z + cr * e2z;
@@ -207,7 +202,7 @@ public final class PlanetImager {
                     double qx = na * b1R + nb * b1U - z * b1F;
                     double qy = na * b2R + nb * b2U - z * b2F;
                     double qz = na * sR + nb * sU - z * sF;
-                    shade(type, b, seed, qx, qy, qz, s);
+                    shade(type, b, seed, macro, qx, qy, qz, true, s);
                     double mu0 = na * lR + nb * lU - z * lF, mu = z;
                     double direct;
                     if (mu0 <= 0) direct = 0;
@@ -332,31 +327,31 @@ public final class PlanetImager {
 
     /**
      * Procedural surface at body-fixed unit vector (x, y, z), z along the spin axis. Writes linear
-     * albedo, exposed emission and a specular water mask into {@code o}.
+     * albedo, exposed emission and a specular water mask into {@code o}; clouds only if asked.
      */
-    private static void shade(BodyType t, Body b, long seed, double x, double y, double z, Scratch o) {
+    private static void shade(BodyType t, Body b, long seed, PlanetMacro macro, double x, double y, double z,
+                              boolean withClouds, Scratch o) {
         double r, g, bl, er = 0, eg = 0, eb = 0, water = 0;
         double lat = Math.abs(z);
+        PlanetMacro.Sample ms = o.macro;
+        if (t.solidSurface) macro.sample(x, y, z, ms);
         switch (t) {
             case TERRAN, OCEAN -> {
-                double h = fbmRot(seed, x * 1.6, y * 1.6, z * 1.6, 6);
-                double m = fbmRot(seed ^ 0x5EED_0001L, x * 3.1, y * 3.1, z * 3.1, 3);
-                double sea = t == BodyType.OCEAN ? 0.30 : 0.05;
-                if (h < sea) {
+                double h = ms.base, m = ms.moisture;
+                double sea = macro.seaThreshold();
+                if (ms.sea) {
                     double dep = smooth(0, 0.14, sea - h);
                     r = lerp(dep, 0.020, 0.008); g = lerp(dep, 0.075, 0.025); bl = lerp(dep, 0.110, 0.075);
                     water = 1;
                 } else {
                     double e = h - sea;
-                    if (b.life() != Body.Life.NONE) {
-                        // Hadley-cell desert belts near ±25°, wetter tropics and mid-latitudes.
-                        double arid = 0.9 * Math.exp(-sq((lat - 0.42) / 0.13)) - 1.5 * m + 0.05;
-                        double dry = smooth(0.15, 0.6, arid);
+                    if (macro.life()) {
+                        double dry = ms.aridity;
                         r = lerp(dry, 0.040, 0.33); g = lerp(dry, 0.080, 0.25); bl = lerp(dry, 0.028, 0.15);
                         double boreal = smooth(0.55, 0.75, lat);
                         r = lerp(boreal, r, 0.05); g = lerp(boreal, g, 0.07); bl = lerp(boreal, bl, 0.045);
                     } else {
-                        double w = smooth(-0.3, 0.3, m);
+                        double w = ms.aridity;
                         r = lerp(w, 0.20, 0.12); g = lerp(w, 0.15, 0.10); bl = lerp(w, 0.10, 0.08);
                     }
                     // Bare rock and snow only on the highest ~10 % / ~5 % of the surface (h spans ±0.75).
@@ -365,87 +360,69 @@ public final class PlanetImager {
                     double snow = smooth(0.48, 0.58, e + lat * 0.25);
                     r = lerp(snow, r, 0.72); g = lerp(snow, g, 0.75); bl = lerp(snow, bl, 0.80);
                 }
-                double ice = smooth(0.80 + 0.07 * m, 0.86 + 0.07 * m, lat);
+                double ice = ms.iceCap;
                 r = lerp(ice, r, 0.70); g = lerp(ice, g, 0.74); bl = lerp(ice, bl, 0.78);
                 water *= 1 - ice;
-                // Domain-warped clouds (curling fronts, no lattice blocks), stretched along latitude by
-                // zonal winds: lower frequency across the spin axis.
-                double wx = fbmRot(seed ^ 0xC10D_0003L, x * 2.2, y * 2.2, z * 2.2, 2);
-                double wy = fbmRot(seed ^ 0xC10D_0004L, x * 2.2, y * 2.2, z * 2.2, 2);
-                double wz = fbmRot(seed ^ 0xC10D_0005L, x * 2.2, y * 2.2, z * 2.2, 2);
-                double cx = x + 0.35 * wx + 0.25 * m, cy = y + 0.35 * wy, cz = z + 0.35 * wz;
-                double c = fbmRot(seed ^ 0xC10D_0002L, cx * 2.6, cy * 2.6, cz * 5.2, 5);
-                double cov = smooth(0.0, 0.55, c) * 0.78;
-                r = lerp(cov, r, 0.78); g = lerp(cov, g, 0.78); bl = lerp(cov, bl, 0.80);
-                water *= 1 - cov;
+                if (withClouds) {
+                    double cov = cloudCover(seed, m, x, y, z);
+                    r = lerp(cov, r, 0.78); g = lerp(cov, g, 0.78); bl = lerp(cov, bl, 0.80);
+                    water *= 1 - cov;
+                }
             }
             case DESERT -> {
-                double h = fbmRot(seed, x * 2.0, y * 2.0, z * 2.0, 5);
-                double big = fbmRot(seed ^ 0xDE5E_0003L, x * 0.9, y * 0.9, z * 0.9, 3);
-                double w = smooth(-0.3, 0.3, h);
+                double w = ms.aridity;
                 r = lerp(w, 0.26, 0.44); g = lerp(w, 0.11, 0.26); bl = lerp(w, 0.05, 0.13);
-                double maria = 0.75 * smooth(-0.02, -0.25, big);
+                double maria = ms.mare;
                 r = lerp(maria, r, 0.10); g = lerp(maria, g, 0.065); bl = lerp(maria, bl, 0.04);
-                double k = 1 + 0.6 * craters(seed ^ 0xC4A7_0004L, x * 7, y * 7, z * 7);
+                double k = 1 + ms.craters;
                 r *= k; g *= k; bl *= k;
-                double cap = smooth(0.92, 0.95, lat + 0.02 * h);
+                double cap = ms.iceCap;
                 r = lerp(cap, r, 0.75); g = lerp(cap, g, 0.73); bl = lerp(cap, bl, 0.70);
             }
             case GREENHOUSE -> {
-                double w = fbmRot(seed, x * 2, y * 2, z * 2, 3);
+                double w = ms.base;
                 double band = 0.5 + 0.5 * Math.sin(z * 10 + w * 2.5);
                 double k = 0.94 + 0.08 * band;
-                double streak = 0.25 * smooth(0.1, 0.4, fbmRot(seed ^ 0x6EE0_0005L, x * 4, y * 4, z * 1.5, 2));
+                double streak = 0.25 * smooth(0.1, 0.4, PlanetMacro.fbmRot(seed ^ 0x6EE0_0005L, x * 4, y * 4, z * 1.5, 2));
                 r = lerp(streak, 0.80, 0.70) * k; g = lerp(streak, 0.70, 0.58) * k; bl = lerp(streak, 0.46, 0.36) * k;
             }
             case ICE -> {
                 // Low-albedo ice moons (Callisto, Ganymede) are dirty: blend toward dark silicate.
-                double dirt = clamp((0.62 - b.albedo()) / 0.4, 0, 1);
-                double tone = fbmRot(seed, x * 1.5, y * 1.5, z * 1.5, 3);
-                double k = 0.9 + 0.2 * tone;
+                double dirt = ms.dirt;
+                double k = 0.9 + 0.2 * ms.base;
                 r = lerp(dirt, 0.72, 0.26) * k; g = lerp(dirt, 0.77, 0.23) * k; bl = lerp(dirt, 0.82, 0.21) * (k + 0.05);
-                double r1 = 1 - Math.abs(fbmRot(seed ^ 0x1CE0_0006L, x * 5, y * 5, z * 5, 1));
-                double r2 = 1 - Math.abs(fbmRot(seed ^ 0x1CE0_0007L, x * 11, y * 11, z * 11, 1));
-                double crack = 0.75 * smooth(0.90, 0.985, Math.max(r1, r2 * 0.98)) * (1 - 0.6 * dirt);
+                double crack = ms.crack;
                 r = lerp(crack, r, 0.38); g = lerp(crack, g, 0.24); bl = lerp(crack, bl, 0.15);
                 if (dirt > 0) {
-                    double kc = 1 + dirt * 1.2 * craters(seed ^ 0xC4A7_0008L, x * 6, y * 6, z * 6);
+                    double kc = 1 + ms.craters;
                     r *= kc; g *= kc; bl *= kc;
                 }
             }
             case BARREN -> {
-                double mare = smooth(-0.05, -0.30, fbmRot(seed, x * 1.2, y * 1.2, z * 1.2, 4));
+                double mare = ms.mare;
                 r = lerp(mare, 0.17, 0.075); g = lerp(mare, 0.16, 0.072); bl = lerp(mare, 0.15, 0.070);
-                double k = (0.92 + 0.16 * fbmRot(seed ^ 0xBA4E_0009L, x * 8, y * 8, z * 8, 2))
-                        * Math.max(0.2, 1 + craters(seed ^ 0xC4A7_000AL, x * 4, y * 4, z * 4)
-                        + 0.6 * craters(seed ^ 0xC4A7_000BL, x * 11, y * 11, z * 11));
+                double k = (0.92 + 0.16 * ms.moisture) * Math.max(0.2, 1 + ms.craters);
                 r *= k; g *= k; bl *= k;
             }
             case LAVA -> {
-                double tone = fbmRot(seed, x * 2.5, y * 2.5, z * 2.5, 3);
-                double glow;
+                double tone = ms.base;
+                double glow = ms.glow;
                 if (b.albedo() > 0.4) { // Io: sulfur plains, SO₂ frost, dark hot paterae
                     double w = smooth(-0.3, 0.3, tone);
                     r = lerp(w, 0.62, 0.78); g = lerp(w, 0.40, 0.66); bl = lerp(w, 0.14, 0.32);
-                    double frost = smooth(0.25, 0.45, fbmRot(seed ^ 0x50F2_000CL, x * 3, y * 3, z * 3, 2));
+                    double frost = ms.moisture;
                     r = lerp(frost, r, 0.80); g = lerp(frost, g, 0.80); bl = lerp(frost, bl, 0.74);
-                    double pat = smooth(-0.05, -0.25, craters(seed ^ 0xC4A7_000DL, x * 5, y * 5, z * 5));
+                    double pat = ms.mare;
                     r = lerp(pat, r, 0.04); g = lerp(pat, g, 0.03); bl = lerp(pat, bl, 0.025);
-                    glow = 0.6 * pat * pat;
                 } else {
                     double k = 0.8 + 0.4 * tone;
                     r = 0.040 * k; g = 0.035 * k; bl = 0.032 * k;
-                    double c1 = 1 - Math.abs(fbmRot(seed ^ 0x1A7A_000EL, x * 4, y * 4, z * 4, 1));
-                    double c2 = 1 - Math.abs(fbmRot(seed ^ 0x1A7A_000FL, x * 9, y * 9, z * 9, 1));
-                    double crack = smooth(0.93, 0.995, Math.max(c1, c2 * 0.985));
-                    double lake = smooth(0.38, 0.52, tone);
-                    glow = Math.max(crack, lake);
                 }
                 er = LAVA_RGB[0] * glow * 0.9; eg = LAVA_RGB[1] * glow * 0.9; eb = LAVA_RGB[2] * glow * 0.9;
                 r *= 1 - 0.7 * glow; g *= 1 - 0.7 * glow; bl *= 1 - 0.7 * glow;
             }
             case GAS_GIANT, HOT_JUPITER, ICE_GIANT, SUB_NEPTUNE -> {
-                double w = fbmRot(seed, x * 2.2, y * 2.2, z * 3.0, 3);
+                double w = PlanetMacro.fbmRot(seed, x * 2.2, y * 2.2, z * 3.0, 3);
                 double f1 = 7 + (seed & 7), f2 = 15 + ((seed >>> 3) & 7), p2 = ((seed >>> 6) & 0xFF) / 40.0;
                 double band = 0.5 + 0.5 * Math.sin(z * f1 + w * 1.6);
                 double band2 = 0.5 + 0.5 * Math.sin(z * f2 + w * 2.6 + p2);
@@ -479,22 +456,6 @@ public final class PlanetImager {
     }
 
     /**
-     * fBm of value noise with the lattice rotated by M before every octave (Quilez's rotated-octave
-     * trick): kills the axis-aligned blockiness of trilinear value noise under steep thresholds.
-     */
-    private static double fbmRot(long seed, double x, double y, double z, int octaves) {
-        double sum = 0, amp = 0.5, norm = 0;
-        for (int i = 0; i < octaves; i++) {
-            double nx = M00 * x + M01 * y + M02 * z, ny = M10 * x + M11 * y + M12 * z, nz = M20 * x + M21 * y + M22 * z;
-            sum += amp * Noise.value(seed + i * 31L, nx, ny, nz);
-            norm += amp;
-            amp *= 0.5;
-            x = nx * 2.03; y = ny * 2.03; z = nz * 2.03;
-        }
-        return sum / norm;
-    }
-
-    /**
      * Mean ring τ over radii [rho − w, rho + w], zero outside the rings: a box prefilter from the
      * prefix sums, so ringlets, gaps and fine structure narrower than a pixel average out instead of
      * aliasing into dotted dashes, and the edges antialias.
@@ -525,29 +486,69 @@ public final class PlanetImager {
     }
 
     /**
-     * Worley-cell craters: albedo modulation, dark bowl floor (−0.3), bright raised rim (+0.25) and
-     * faint ejecta. Radii up to 0.42 cell so a 3×3×3 neighbourhood covers every crater.
+     * Domain-warped cloud cover (curling fronts, no lattice blocks), stretched along latitude by zonal
+     * winds: lower frequency across the spin axis. 0 … 0.78.
      */
-    private static double craters(long seed, double x, double y, double z) {
-        long cx = (long) Math.floor(x), cy = (long) Math.floor(y), cz = (long) Math.floor(z);
-        double acc = 0;
-        for (long i = cx - 1; i <= cx + 1; i++)
-            for (long j = cy - 1; j <= cy + 1; j++)
-                for (long k = cz - 1; k <= cz + 1; k++) {
-                    long h = SeedRng.mix(seed ^ (i * 0x8DA6B343L) ^ (j * 0xD8163841L) ^ (k * 0xCB1AB31FL));
-                    if ((h & 3) == 0) continue; // a quarter of cells empty: irregular spacing
-                    double rad = 0.10 + 0.32 * sq(((h >>> 2) & 0x3F) / 63.0); // many small, few large
-                    double dx = x - (i + ((h >>> 8) & 0xFFFF) / 65536.0);
-                    double dy = y - (j + ((h >>> 24) & 0xFFFF) / 65536.0);
-                    double dz = z - (k + ((h >>> 40) & 0xFFFF) / 65536.0);
-                    double d2 = dx * dx + dy * dy + dz * dz, reach = rad * 2.2;
-                    if (d2 > reach * reach) continue;
-                    double t = Math.sqrt(d2) / rad;
-                    if (t < 0.85) acc -= 0.30 * (1 - sq(t / 0.85));
-                    acc += 0.25 * Math.exp(-sq((t - 1) / 0.12));
-                    if (t > 1) acc += 0.06 * (2.2 - t) / 1.2;
-                }
-        return acc;
+    private static double cloudCover(long seed, double m, double x, double y, double z) {
+        double wx = PlanetMacro.fbmRot(seed ^ 0xC10D_0003L, x * 2.2, y * 2.2, z * 2.2, 2);
+        double wy = PlanetMacro.fbmRot(seed ^ 0xC10D_0004L, x * 2.2, y * 2.2, z * 2.2, 2);
+        double wz = PlanetMacro.fbmRot(seed ^ 0xC10D_0005L, x * 2.2, y * 2.2, z * 2.2, 2);
+        double cx = x + 0.35 * wx + 0.25 * m, cy = y + 0.35 * wy, cz = z + 0.35 * wz;
+        double c = PlanetMacro.fbmRot(seed ^ 0xC10D_0002L, cx * 2.6, cy * 2.6, cz * 5.2, 5);
+        return smooth(0.0, 0.55, c) * 0.78;
+    }
+
+    /** Cloud cover the imager paints at body-fixed unit direction (x, y, z): 0 on cloudless bodies. */
+    public static double cloudCover(Body b, double x, double y, double z) {
+        if (b.type() != BodyType.TERRAN && b.type() != BodyType.OCEAN) return 0;
+        long seed = b.terrainSeed();
+        double m = PlanetMacro.fbmRot(seed ^ 0x5EED_0001L, x * 3.1, y * 3.1, z * 3.1, 3);
+        return cloudCover(seed, m, x, y, z);
+    }
+
+    /**
+     * True where the imager paints sea (open or under polar ice) rather than land at body-fixed unit
+     * direction (x, y, z), clouds ignored: the orbital land/sea map the surface generator must match.
+     */
+    public static boolean isSea(Body b, double x, double y, double z) {
+        if (!b.type().solidSurface) return false;
+        Scratch s = SCRATCH.get();
+        PlanetMacro.of(b).sample(x, y, z, s.macro);
+        return s.macro.sea;
+    }
+
+    /**
+     * Surface albedo as painted from orbit without clouds, linear sRGB, plus emission (lava glow,
+     * already exposed): {@code out = {r, g, b, er, eg, eb}}.
+     */
+    public static void surfaceAlbedo(Body b, double x, double y, double z, double[] out) {
+        Scratch s = SCRATCH.get();
+        shade(b.type(), b, b.terrainSeed(), PlanetMacro.of(b), x, y, z, false, s);
+        out[0] = Math.max(0, s.ar); out[1] = Math.max(0, s.ag); out[2] = Math.max(0, s.ab);
+        out[3] = s.er; out[4] = s.eg; out[5] = s.eb;
+    }
+
+    /**
+     * Prime-meridian basis of a body whose unit spin axis (Minecraft axes) is {@code spin}:
+     * {@code e1 = ref × spin} normalised and {@code e2 = spin × e1}, with ref = +y (galactic north)
+     * unless the axis is within 26° of it, then +x. The same construction as
+     * {@link dev.galactica.planet.BodyFrame#meridianZero}, carried through the proper rotation
+     * galactic → Minecraft, so longitude 0 in the image is longitude 0 on the surface map.
+     */
+    public static void primeMeridian(double[] spin, double[] e1, double[] e2) {
+        double rx, ry, rz;
+        if (Math.abs(spin[1]) < 0.9) { rx = 0; ry = 1; rz = 0; } else { rx = 1; ry = 0; rz = 0; }
+        double x = ry * spin[2] - rz * spin[1], y = rz * spin[0] - rx * spin[2], z = rx * spin[1] - ry * spin[0];
+        double n = Math.sqrt(x * x + y * y + z * z);
+        e1[0] = x / n; e1[1] = y / n; e1[2] = z / n;
+        e2[0] = spin[1] * e1[2] - spin[2] * e1[1];
+        e2[1] = spin[2] * e1[0] - spin[0] * e1[2];
+        e2[2] = spin[0] * e1[1] - spin[1] * e1[0];
+    }
+
+    /** Linear → 8-bit sRGB with the imager's encoder (sqrt-indexed table). */
+    public static int encode8(double linear) {
+        return enc(linear);
     }
 
     /** Radial τ and albedo profile, cached per body in the thread's scratch. */
