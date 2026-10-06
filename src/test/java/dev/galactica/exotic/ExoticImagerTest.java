@@ -204,6 +204,51 @@ class ExoticImagerTest {
     }
 
     @Test
+    void lensIsTransparentOutsideItsBand() {
+        ExoticObject o = hole(ExoticObject.Accretion.NONE, 0);
+        double dist = 1e6;
+        double rsOverD = 1 / dist;
+        double thetaE = ExoticImager.einsteinAngle(o.rsMetres(), dist * o.rsMetres());
+        // Close in, the 3 θE band is the limit; far out, the one-pixel deflection radius is.
+        assertEquals(3 * thetaE, ExoticImager.lensExtent(rsOverD, 1e7), 1e-15);
+        assertEquals(2 * rsOverD * 885, ExoticImager.lensExtent(rsOverD, 885), 1e-15);
+
+        ExoticImager.View v = view(o, dist, 0, 0);
+        v.halfAngle = 3 * thetaE;
+        v.pxPerRad = 1e7;
+        v.lensOuter = 1.5 * thetaE;
+        int[] img = new int[N * N];
+        ExoticImager.render(o, v, N, img, WHITE);
+        double tanH = Math.tan(v.halfAngle);
+        int row = N / 2;
+        int inPx = (int) Math.round((Math.tan(thetaE) / tanH + 1) / 2 * N - 0.5);
+        int outPx = (int) Math.round((Math.tan(2.5 * thetaE) / tanH + 1) / 2 * N - 0.5);
+        assertTrue((img[row * N + inPx] >>> 24) > 0, "lensed sky inside the band is painted");
+        assertEquals(0, img[row * N + outPx] >>> 24, "outside the band the star layer shows through");
+
+        // Where the deflection is under one pixel nothing is painted either.
+        v.lensOuter = Double.POSITIVE_INFINITY;
+        v.pxPerRad = 0.5 / ExoticImager.deflection(2.5 * thetaE / rsOverD);
+        ExoticImager.render(o, v, N, img, WHITE);
+        assertEquals(0, img[row * N + outPx] >>> 24);
+    }
+
+    @Test
+    void pulsarWithoutSteadyCoreOnlyAddsTheBeams() {
+        Star ns = new Star(5, "PSR", 1, 2, 3, StarKind.NEUTRON_STAR, 1.4, 1.7e-5, 1e-4, 8e5, 1, 0, 777L, false);
+        ExoticObject p = ExoticObject.of(ns);
+        ExoticImager.View v = view(p, 1, 1, 70);
+        v.halfAngle = 0.02;
+        v.timeAveraged = true;
+        int[] with = new int[64 * 64], without = new int[64 * 64];
+        ExoticImager.render(p, v, 64, with, null);
+        v.steadyCore = false;
+        ExoticImager.render(p, v, 64, without, null);
+        int c = 32 * 64 + 32;
+        assertTrue(luminance(with[c]) > luminance(without[c]), "the steady point is left to the star layer");
+    }
+
+    @Test
     void writesPreviewSheet() throws IOException {
         File dir = new File("build/exotic-previews");
         assertTrue(dir.isDirectory() || dir.mkdirs());

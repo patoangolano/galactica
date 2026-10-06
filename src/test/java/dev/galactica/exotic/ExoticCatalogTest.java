@@ -18,11 +18,16 @@ class ExoticCatalogTest {
     @Test
     void s2PeriapsisAndKeplerPeriod() {
         SkyOrbit s2 = ExoticCatalog.S2;
-        // GRAVITY 2020: r_peri = a(1 − e) ≈ 120 AU.
+        // GRAVITY 2022 table B.1 elements.
+        assertEquals(0.88441, s2.e(), 1e-9);
+        assertEquals(134.70, s2.iDeg(), 1e-9);
+        assertEquals(228.19, s2.nodeDeg(), 1e-9);
+        assertEquals(66.25, s2.periDeg(), 1e-9);
+        // r_peri = a(1 − e) ≈ 120 AU.
         assertEquals(120, s2.periapsisAu(), 1.0);
-        // Kepler's third law with M = 4.297e6 M☉ reproduces the measured 16.05 yr within 1 %.
+        // Kepler's third law with M = 4.297e6 M☉ reproduces the measured 16.0455 yr (GRAVITY 2020) within 1 %.
         double p = SkyOrbit.keplerPeriodYears(s2.aAu(), ExoticCatalog.SGR_A_MASS);
-        assertEquals(16.05, p, 0.01 * 16.05);
+        assertEquals(16.0455, p, 0.01 * 16.0455);
     }
 
     @Test
@@ -55,7 +60,7 @@ class ExoticCatalogTest {
 
     @Test
     void s2PeriapsisRadialVelocityIsReceding() {
-        // At periapsis v_z ∝ sin i · cos ω · (1 + e) > 0 for i = 133.8°, ω = 66.1°: S2 receded
+        // At periapsis v_z ∝ sin i · cos ω · (1 + e) > 0 for i = 134.70°, ω = 66.25°: S2 receded
         // at its 2018 periapsis passage (redshift peak, GRAVITY 2018 A&A 615, L15).
         SkyOrbit s2 = ExoticCatalog.S2;
         double tp = SkyOrbit.epochToSeconds(s2.tPeriYear());

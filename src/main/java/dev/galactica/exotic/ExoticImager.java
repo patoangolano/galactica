@@ -96,6 +96,16 @@ public final class ExoticImager {
         public double timeSeconds;
         /** For pulsars spinning faster than the frame rate: draw the beams averaged over a turn. */
         public boolean timeAveraged;
+        /**
+         * Angular radius (rad) beyond which the lensed background is left transparent, so the real
+         * star layer behind the sprite shows through; see {@link #lensExtent}. Infinite = no limit.
+         */
+        public double lensOuter = Double.POSITIVE_INFINITY;
+        /**
+         * Pulsars: paint the steady surface point. Off when the star layer already draws the
+         * star, so the sprite only adds the beams and the flash.
+         */
+        public boolean steadyCore = true;
     }
 
     /** Deflection angle (radians) of a ray with impact parameter b (in Rs); infinite when captured. */
@@ -109,6 +119,15 @@ public final class ExoticImager {
     /** Einstein angle (radians) for a background at infinity: √(2Rs/D). */
     public static double einsteinAngle(double rsMetres, double distanceMetres) {
         return Math.sqrt(2 * rsMetres / distanceMetres);
+    }
+
+    /**
+     * Angular radius (rad) inside which the painted lens is worth drawing: the smaller of 3 θ<sub>E</sub>
+     * (outside it the point-lens magnification is below 1.02, μ(3) ≈ 1.017) and the radius where the
+     * weak-field deflection 2R<sub>s</sub>/b drops to one screen pixel, θ = 2 (R<sub>s</sub>/D)·pxPerRad.
+     */
+    public static double lensExtent(double rsOverD, double pxPerRad) {
+        return Math.min(3 * Math.sqrt(2 * rsOverD), 2 * rsOverD * pxPerRad);
     }
 
     /** Point-lens magnification μ(u) = (u² + 2)/(u√(u² + 4)). */
@@ -251,7 +270,12 @@ public final class ExoticImager {
                     ba = 1;
                 } else if (sky != null) {
                     double alpha = deflection(b);
-                    ba = Math.max(0, Math.min(1, alpha * v.pxPerRad - 0.25));
+                    // Opaque only where the bending moves the sky by more than a pixel, and only
+                    // inside lensOuter (fading over its outer third), so the real stars beyond it
+                    // stay visible; the bake behind holds only the diffuse Milky Way.
+                    double band = Double.isInfinite(v.lensOuter) ? 1
+                            : Math.max(0, Math.min(1, (v.lensOuter - theta) / (v.lensOuter / 3)));
+                    ba = Math.max(0, Math.min(1, alpha * v.pxPerRad - 1)) * band;
                     if (ba > 0) {
                         double ts = theta - alpha;
                         double cs = Math.cos(ts), ss = Math.sin(ts);
@@ -314,7 +338,7 @@ public final class ExoticImager {
         Blackbody.linearRgb(Math.max(1000, o.surfaceTempK()), surf);
         Blackbody.linearRgb(40_000, beam);
         double sigma = 0.05 + 0.10 * flash;
-        double coreGain = 0.7 + 2.5 * flash;
+        double coreGain = (v.steadyCore ? 0.7 : 0) + 2.5 * flash;
         double dz = 2.0 / BEAM_STEPS;
 
         for (int py = 0; py < size; py++) {

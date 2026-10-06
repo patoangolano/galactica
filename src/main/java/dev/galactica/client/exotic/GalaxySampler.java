@@ -11,6 +11,11 @@ import dev.galactica.science.Blackbody;
  * lens sprites show the same sky that is drawn behind them. Directions are Minecraft axes and map to
  * the equirectangular layout of {@code GalaxySkyBaker.equirectDirection}: u is the longitude around
  * +Y starting at −Z, v runs from the zenith to the nadir. Bilinear, sRGB decoded to linear.
+ *
+ * <p>Construct on the render thread (it may create the galaxy texture); {@link #sample} is then
+ * called from the exotic imager's worker thread. That is safe because the galaxy
+ * {@link NativeImage} is created once and never closed, and re-bakes overwrite it in place: a paint
+ * racing a re-bake at worst mixes old and new sky for one image, which the 3 s halo refresh replaces.
  */
 final class GalaxySampler implements ExoticImager.SkySampler {
     private static final float[] DECODE = new float[256];
