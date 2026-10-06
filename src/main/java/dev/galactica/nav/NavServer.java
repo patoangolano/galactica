@@ -50,7 +50,11 @@ public final class NavServer {
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {
             boolean inSpace = p.level().dimension() == Galactica.SPACE;
             applyZeroG(p, inSpace);
-            if (inSpace) tickInSpace(p);
+            dev.galactica.planet.PlanetEntry.tickSurface(p);
+            if (inSpace) {
+                tickInSpace(p);
+                if (p.level().dimension() == Galactica.SPACE) dev.galactica.planet.PlanetEntry.tryEnter(p);
+            }
         }
         NEIGHBOURHOODS.keySet().removeIf(u -> server.getPlayerList().getPlayer(u) == null);
     }
@@ -64,6 +68,8 @@ public final class NavServer {
             p.onUpdateAbilities();
         }
         p.resetFallDistance();
+        // Passengers ride in the pilot's frame; Starship.carryCrew moves their origin with the pilot's.
+        if (dev.galactica.ship.Starship.isCrew(p)) return;
 
         GalacticPos here = Frames.playerPos(nav, p.getX(), p.getY(), p.getZ());
         double speed = nav.speed();
@@ -72,7 +78,7 @@ public final class NavServer {
         var input = p.getLastClientInput();
         if (input.shift()) {
             speed = 0;
-        } else if (input.sprint() && p.getAbilities().flying) {
+        } else if (input.sprint() && (p.getAbilities().flying || dev.galactica.ship.Starship.isPiloting(p))) {
             Vec3 look = p.getLookAngle();
             double[] dir = Frames.mcToGalactic(look.x, look.y, look.z);
             double governor = Math.max(SPOOL_MIN, 0.5 * neighbourhood(p).distanceToNearestSurfaceAhead(here, t, dir));
@@ -80,6 +86,8 @@ public final class NavServer {
         } else {
             speed = speed < SPOOL_MIN ? 0 : speed * 0.8; // drop out of warp over ~1 s
         }
+
+        if (speed > 0 && !dev.galactica.ship.Starship.consumeWarpFuel(p, speed)) speed = 0;
 
         GalacticPos origin = nav.origin();
         if (speed > 0) {
@@ -93,14 +101,22 @@ public final class NavServer {
         if (Math.abs(p.getX()) > ORIGIN_LIMIT || Math.abs(p.getY()) > ORIGIN_LIMIT || Math.abs(p.getZ()) > ORIGIN_LIMIT) {
             double[] g = Frames.mcToGalactic(p.getX(), p.getY(), p.getZ());
             origin = origin.plusMetres(g[0], g[1], g[2]);
-            p.teleport(new TeleportTransition(p.level(), Vec3.ZERO, p.getDeltaMovement(), p.getYRot(), p.getXRot(),
-                    TeleportTransition.DO_NOTHING));
+            if (p.getVehicle() instanceof dev.galactica.ship.Starship) {
+                // The ship carries its crew: move ship and passengers together.
+                if (dev.galactica.ship.Starship.isPiloting(p)) {
+                    dev.galactica.ship.Starship.shiftWithOrigin(p, new Vec3(-p.getX(), -p.getY(), -p.getZ()));
+                }
+            } else {
+                p.teleport(new TeleportTransition(p.level(), Vec3.ZERO, p.getDeltaMovement(), p.getYRot(), p.getXRot(),
+                        TeleportTransition.DO_NOTHING));
+            }
         }
 
         NavState next = new NavState(origin, speed, nav.maxSpeed(), t);
         // Attachment writes are synced to the owner, so only write when something a client can see changed.
         if (speed != 0 || nav.speed() != 0 || !origin.equals(nav.origin()) || (p.tickCount % 20) == 0) {
             p.setAttached(Galactica.NAV, next);
+            dev.galactica.ship.Starship.carryCrew(p, nav.origin(), next);
         }
     }
 

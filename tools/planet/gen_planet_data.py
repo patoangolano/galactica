@@ -19,9 +19,11 @@ TYPE_LABEL = {
 SKIES = {
     "blue": ("#78a7ff", "#c0d8ff", None),
     "butterscotch": ("#c9a37a", "#d9b48f", "#00000000"),
-    "orange": ("#d2873a", "#c0782f", "#a0b0703a"),
-    "yellow": ("#e6d8a2", "#e9ddb0", "#c0e8dcb0"),
-    "steam": ("#d9dcdf", "#e4e6e8", None),
+    # Opaque decks (Venus, steam worlds, Titan's haze) are a continuous overcast: the sky colour carries it,
+    # and vanilla's cubic clouds would only draw stray cells (seen black from below at 92 bar).
+    "orange": ("#d2873a", "#c0782f", "#00000000"),
+    "yellow": ("#e6d8a2", "#e9ddb0", "#00000000"),
+    "steam": ("#d9dcdf", "#e4e6e8", "#00000000"),
     "black": ("#000000", "#050505", "#00000000"),
 }
 SKY_LABEL = {
@@ -138,5 +140,13 @@ msgs = {
 for k, (e, p) in msgs.items():
     en[k] = e
     pt[k] = p
-write(os.path.join(ASSETS, "lang/parts/planet.json"), {"en_us": en, "pt_br": pt})
+# Merge into the game's lang files (other areas own the rest of their keys).
+for code, entries in (("en_us", en), ("pt_br", pt)):
+    path = os.path.join(ASSETS, "lang", code + ".json")
+    merged = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+    merged.update(entries)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(merged, fh, indent=2, ensure_ascii=False)
+        fh.write("
+")
 print(len(biome_ids), "biomes,", SLOTS, "dimensions")

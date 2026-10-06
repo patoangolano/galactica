@@ -80,6 +80,7 @@ public final class Hyperdrive {
                 crew.setAttached(Galactica.NAV, nav.withOrigin(origin).withSpeed(0));
             }
         }
+        pilot.removeAttached(dev.galactica.nav.JumpTargets.TYPE); // the star reached is no longer a target
         pilot.sendOverlayMessage(Component.translatable("hud.galactica.hyperjump.complete", t.name()));
     }
 

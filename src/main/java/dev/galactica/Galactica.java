@@ -43,6 +43,30 @@ public final class Galactica implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        // Content first: the ship and planet areas look items up by id, and the tab lists everyone's items.
+        dev.galactica.content.GalacticaComponents.init();
+        dev.galactica.content.GalacticaItems.init();
+        dev.galactica.ship.ShipEntities.init();
+        dev.galactica.nav.JumpTargets.init();
+        dev.galactica.content.GalacticaTab.init();
+        dev.galactica.survival.LifeSupport.init();
+        dev.galactica.planet.PlanetEntry.init();
+
+        // The galaxy map's chosen star feeds the hyperdrive; without one it jumps to the nearest star.
+        dev.galactica.ship.Hyperdrive.setTargetSource(p -> {
+            var t = p.getAttached(dev.galactica.nav.JumpTargets.TYPE);
+            return t != null ? new dev.galactica.ship.JumpTargetInfo(t.name(), t.xPc(), t.yPc(), t.zPc())
+                    : dev.galactica.ship.HyperjumpTargetSource.NEAREST_STAR.target(p);
+        });
+        // Planet surfaces answer for their own air, pressure and ground temperature.
+        dev.galactica.survival.SurvivalEnvironment.provider = p -> {
+            var e = dev.galactica.planet.PlanetEntry.environmentOf(p);
+            if (e == null || p.level().dimension() == SPACE) return null;
+            return new dev.galactica.survival.Environment(e.pressureBar(), e.tempK(), e.breathable());
+        };
+        // Ships feel the real surface gravity of the planet they are on (space handles its own).
+        dev.galactica.ship.Starship.setGravityModel(level -> 9.80665 * dev.galactica.planet.PlanetGravity.scale(level));
+
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, selection) -> GalacticaCommands.register(dispatcher));
         ServerTickEvents.END_SERVER_TICK.register(NavServer::tick);
         LOG.info("Galactica: {} pc of procedural Milky Way ready (seed {})", 60_000, Long.toHexString(Frames.GALAXY_SEED));

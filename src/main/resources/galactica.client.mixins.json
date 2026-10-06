@@ -4,7 +4,10 @@
   "package": "dev.galactica.mixin.client",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "SkyRendererMixin"
+    "SkyRendererMixin",
+    "ship.CameraShipMixin",
+    "ship.EntityTurnShipMixin",
+    "ship.LocalPlayerShipInputMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -13,7 +13,8 @@
     "client": ["dev.galactica.client.GalacticaClient"]
   },
   "mixins": [
-    {"config": "galactica.client.mixins.json", "environment": "client"}
+    {"config": "galactica.client.mixins.json", "environment": "client"},
+    "galactica.planet.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${fabric_loader_version}",

@@ -9,6 +9,10 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 public final class GalacticaClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
+        dev.galactica.client.hud.LifeSupportHud.initClient();
+        dev.galactica.client.ship.ShipClient.initClient();
+        dev.galactica.client.map.GalaxyMapClient.initClient();
+        dev.galactica.client.planet.PlanetClient.initClient();
         dev.galactica.client.dev.AutoTest.install();
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("nav_hud"), NavHud::extract);
     }

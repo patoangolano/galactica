@@ -213,6 +213,15 @@ public class Starship extends VehicleEntity {
             if (onGround()) setDeltaMovement(getDeltaMovement().multiply(0.7, 1.0, 0.7)); // landing-skid friction
         }
         if (!level().isClientSide()) serverStep();
+        // A powered ship lands under thrust, so height lost while descending is not a fall: without this the
+        // vanilla vehicle rules hand the accumulated fall distance to the crew on touchdown and kill them.
+        resetFallDistance();
+        for (Entity e : getPassengers()) e.resetFallDistance();
+    }
+
+    @Override
+    public boolean causeFallDamage(double fallDistance, float multiplier, net.minecraft.world.damagesource.DamageSource source) {
+        return false;
     }
 
     /** Client-side prediction for the local pilot. */

@@ -35,6 +35,11 @@ import java.util.List;
  * /galactica coords &lt;x&gt; &lt;y&gt; &lt;z&gt;      galactocentric parsecs (the Sun is at 8178 0 20.8)
  * /galactica system                   planets and moons of the current system
  * /galactica orbit &lt;body&gt;              park on the day side of a planet or moon of this system
+ * /galactica land &lt;body&gt;               descend to a planet or moon's surface
+ * /galactica ship                     deploy a fuelled starship and board it
+ * /galactica kit                      wear a full EVA suit and carry a full oxygen tank
+ * /galactica ground                   drop straight down to the ground (descent shortcut)
+ * /galactica fuel &lt;hydrogen&gt; &lt;exotic&gt; refuel the ship you are piloting
  * /galactica maxwarp &lt;pc/s&gt;          drive limit
  * </pre>
  */
@@ -66,6 +71,17 @@ public final class GalacticaCommands {
                 .then(Commands.literal("goto")
                         .then(Commands.argument("star", StringArgumentType.greedyString()).executes(GalacticaCommands::gotoStar)))
                 .then(Commands.literal("system").executes(GalacticaCommands::system))
+                .then(Commands.literal("land")
+                        .then(Commands.argument("body", StringArgumentType.greedyString()).executes(c ->
+                                dev.galactica.planet.PlanetEntry.forceLand(c.getSource().getPlayerOrException(),
+                                        StringArgumentType.getString(c, "body")) ? 1 : 0)))
+                .then(Commands.literal("ship").executes(GalacticaCommands::ship))
+                .then(Commands.literal("kit").executes(GalacticaCommands::kit))
+                .then(Commands.literal("ground").executes(GalacticaCommands::ground))
+                .then(Commands.literal("fuel")
+                        .then(Commands.argument("hydrogen", DoubleArgumentType.doubleArg(0, dev.galactica.ship.Starship.MAX_HYDROGEN))
+                                .then(Commands.argument("exotic", IntegerArgumentType.integer(0, dev.galactica.ship.Starship.MAX_EXOTIC))
+                                        .executes(GalacticaCommands::fuel))))
                 .then(Commands.literal("orbit")
                         .then(Commands.argument("body", StringArgumentType.greedyString()).executes(GalacticaCommands::orbit)))
                 .then(Commands.literal("coords")
@@ -157,7 +173,7 @@ public final class GalacticaCommands {
             c.getSource().sendFailure(Component.literal("Only " + stars.size() + " stars charted in this neighbourhood"));
             return 0;
         }
-        arriveAt(p, stars.get(n - 1));
+        dev.galactica.ship.Hyperdrive.arriveAt(p, stars.get(n - 1));
         say(c, "Hyperjump complete: " + stars.get(n - 1).name() + " (" + stars.get(n - 1).spectralType() + ")");
         return 1;
     }
@@ -176,26 +192,9 @@ public final class GalacticaCommands {
             c.getSource().sendFailure(Component.literal("Unknown catalog star: " + name));
             return 0;
         }
-        arriveAt(p, s);
+        dev.galactica.ship.Hyperdrive.arriveAt(p, s);
         say(c, "Arrived at " + s.name() + " (" + s.spectralType() + ")");
         return 1;
-    }
-
-    /**
-     * Drops out of hyperspace where the star appears ~10° across — a safe, dramatic arrival —
-     * and never closer than 0.05 AU; black holes are approached to 40 Schwarzschild radii.
-     */
-    static void arriveAt(ServerPlayer p, Star s) {
-        double r = s.radiusMetres();
-        double d = s.kind() == dev.galactica.star.StarKind.BLACK_HOLE ? 40 * r : Math.max(0.05 * Units.AU, r / Math.tan(Math.toRadians(5)));
-        GalacticPos sp = Neighbourhood.starPos(s);
-        // Arrive on the side facing where we came from, slightly above the plane.
-        double[] from = here(p).metresFrom(sp);
-        double len = Math.sqrt(from[0] * from[0] + from[1] * from[1] + from[2] * from[2]);
-        double ux = len > 0 ? from[0] / len : 1, uy = len > 0 ? from[1] / len : 0, uz = len > 0 ? from[2] / len : 0;
-        uz += 0.3;
-        double n = Math.sqrt(ux * ux + uy * uy + uz * uz);
-        NavServer.moveTo(p, sp.plusMetres(ux / n * d, uy / n * d, uz / n * d));
     }
 
     private static int system(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
@@ -256,6 +255,63 @@ public final class GalacticaCommands {
         }
         c.getSource().sendFailure(Component.literal("No body named " + name + " in " + s.name() + " (try /galactica system)"));
         return 0;
+    }
+
+    /** Deploys a fuelled starship 6 blocks ahead of the player. */
+    private static int ship(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer p = c.getSource().getPlayerOrException();
+        var ship = dev.galactica.ship.ShipEntities.SHIP.create(p.level(), net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+        if (ship == null) return 0;
+        net.minecraft.world.phys.Vec3 at = p.getEyePosition().add(p.getLookAngle().scale(6));
+        ship.setPos(at.x, at.y - 1, at.z);
+        ship.setYRot(p.getYRot());
+        ship.setHydrogen(dev.galactica.ship.Starship.MAX_HYDROGEN);
+        ship.setExotic(16);
+        p.level().addFreshEntity(ship);
+        p.startRiding(ship);
+        say(c, "Starship deployed and boarded. W/S thrust, mouse to steer, Q/E roll, C flight assist, J hyperjump, M galaxy map.");
+        return 1;
+    }
+
+    /** Suits the player up: EVA set worn (suit torso full of O₂) plus one full spare tank. */
+    private static int kit(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer p = c.getSource().getPlayerOrException();
+        p.setItemSlot(net.minecraft.world.entity.EquipmentSlot.HEAD, new net.minecraft.world.item.ItemStack(dev.galactica.content.GalacticaItems.EVA_HELMET));
+        p.setItemSlot(net.minecraft.world.entity.EquipmentSlot.CHEST, new net.minecraft.world.item.ItemStack(dev.galactica.content.GalacticaItems.EVA_SUIT));
+        p.setItemSlot(net.minecraft.world.entity.EquipmentSlot.LEGS, new net.minecraft.world.item.ItemStack(dev.galactica.content.GalacticaItems.EVA_LEGGINGS));
+        p.setItemSlot(net.minecraft.world.entity.EquipmentSlot.FEET, new net.minecraft.world.item.ItemStack(dev.galactica.content.GalacticaItems.EVA_BOOTS));
+        p.getInventory().add(new net.minecraft.world.item.ItemStack(dev.galactica.content.GalacticaItems.OXYGEN_TANK));
+        say(c, "EVA suit sealed, oxygen tank stowed.");
+        return 1;
+    }
+
+    /** Leaves any vehicle and stands on the highest solid block below (generating the column if needed). */
+    private static int ground(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer p = c.getSource().getPlayerOrException();
+        if (p.level().dimension() == Galactica.SPACE) {
+            c.getSource().sendFailure(Component.literal("There is no ground in space"));
+            return 0;
+        }
+        p.stopRiding();
+        int x = net.minecraft.util.Mth.floor(p.getX()), z = net.minecraft.util.Mth.floor(p.getZ());
+        int y = p.level().getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, x, z);
+        p.teleport(new net.minecraft.world.level.portal.TeleportTransition(p.level(), new net.minecraft.world.phys.Vec3(x + 0.5, y + 0.1, z + 0.5),
+                net.minecraft.world.phys.Vec3.ZERO, p.getYRot(), p.getXRot(), net.minecraft.world.level.portal.TeleportTransition.DO_NOTHING));
+        p.resetFallDistance();
+        say(c, "Touchdown at y=" + y);
+        return 1;
+    }
+
+    private static int fuel(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer p = c.getSource().getPlayerOrException();
+        if (!(p.getVehicle() instanceof dev.galactica.ship.Starship s)) {
+            c.getSource().sendFailure(Component.literal("Board a starship first"));
+            return 0;
+        }
+        s.setHydrogen((float) DoubleArgumentType.getDouble(c, "hydrogen"));
+        s.setExotic(IntegerArgumentType.getInteger(c, "exotic"));
+        say(c, String.format("Fuel: %.0f hydrogen, %d exotic matter", s.hydrogen(), s.exotic()));
+        return 1;
     }
 
     private static void say(CommandContext<CommandSourceStack> c, String s) {

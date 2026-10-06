@@ -18,7 +18,7 @@
       },
       "modifier": "overlay"
     },
-    "minecraft:visual/cloud_color": "#c0e8dcb0"
+    "minecraft:visual/cloud_color": "#00000000"
   },
   "carvers": [],
   "downfall": 0.0,

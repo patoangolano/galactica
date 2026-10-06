@@ -34,12 +34,28 @@ public final class AutoTest {
     public static void install() {
         if (!Boolean.getBoolean("galactica.autotest")) return;
         Galactica.LOG.info("[autotest] enabled{}", TAG.isEmpty() ? "" : " (" + TAG + ")");
+        if ("venus".equals(System.getProperty("galactica.autotest.mode"))) {
+            cmd(0, "galactica kit");
+            cmd(10, "galactica launch");
+            cmd(40, "galactica goto Sol");
+            STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Venus")));
+            STEPS.add(new Step(40, () -> Minecraft.getInstance().player.connection.sendCommand("galactica ground")));
+            for (int yaw = 0; yaw < 360; yaw += 60) {
+                look(yaw == 0 ? 80 : 10, yaw, -20);
+                shot(5, "venus_yaw" + yaw);
+            }
+            look(10, 30, 5); shot(5, "venus_repro");
+            STEPS.add(new Step(20, () -> Minecraft.getInstance().stop()));
+            ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+            return;
+        }
         if ("showcase".equals(System.getProperty("galactica.autotest.mode"))) {
             showcase();
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
-        cmd(0, "galactica launch");
+        cmd(0, "galactica kit"); // unsuited, life support (correctly) kills the test pilot in seconds
+        cmd(10, "galactica launch");
         look(160, 90, 0);   shot(5, "01_earth_orbit_towards_gc");
         look(20, -90, 0);   shot(5, "02_earth_orbit_anticentre");
         lookAtNearest(20);  shot(5, "03_earth_orbit_sun");
@@ -75,8 +91,68 @@ public final class AutoTest {
         cmd(20, "galactica jump 1");
         lookAtNearest(200); shot(5, "16_random_neighbour");
         cmd(20, "galactica system");
+        // M3: starship. Deploy and board near Earth, burn the main engine for 5 s, then a hyperjump.
+        cmd(20, "galactica goto Sol");
+        cmd(40, "galactica ship");
+        look(40, 90, 10);   shot(5, "17_ship_boarded");
+        key(5, "keyUp", true);
+        shot(100, "18_ship_thrust");
+        key(5, "keyUp", false);
+        cmd(20, "galactica where");
+        cmd(20, "galactica nearest 3");
+        STEPS.add(new Step(20, () -> Minecraft.getInstance().player.connection.sendCommand("galactica fuel 400 16")));
+        STEPS.add(new Step(20, () -> {
+            Galactica.LOG.info("[autotest] opening galaxy map");
+            dev.galactica.client.map.GalaxyMapClient.open();
+        }));
+        shot(200, "19_galaxy_map");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(null)));
+        // M4: planets. Land on Mars and Earth, check gravity, then climb back to space.
+        cmd(20, "galactica goto Sol");
+        STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Mars")));
+        look(200, 0, -10);  shot(5, "20_mars_descent");
+        STEPS.add(new Step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Mars", 0.38)));
+        cmd(5, "galactica ground");
+        look(80, 30, 8);    shot(5, "21_mars_ground");
+        look(20, 210, 5);   shot(5, "21b_mars_ground_back");
+        cmd(20, "galactica goto Sol");
+        STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Earth")));
+        look(200, 0, -10);  shot(5, "22_earth_descent");
+        STEPS.add(new Step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Earth", 1.0)));
+        cmd(5, "galactica ground");
+        look(80, 30, 8);    shot(5, "22b_earth_ground");
+        cmd(20, "galactica goto Sol");
+        STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Moon")));
+        look(200, 0, -15);  shot(5, "23_moon_descent");
+        STEPS.add(new Step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Moon", 0.165)));
+        cmd(5, "galactica ground");
+        look(80, 30, -12);  shot(5, "23b_moon_ground");
+        cmd(20, "galactica goto Sol");
+        STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Venus")));
+        STEPS.add(new Step(40, () -> Minecraft.getInstance().player.connection.sendCommand("galactica ground")));
+        look(80, 30, 5);    shot(5, "24_venus_ground");
         STEPS.add(new Step(60, () -> Minecraft.getInstance().stop()));
         ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+    }
+
+    /** Presses or releases a key mapping inside the game (no OS input). */
+    private static void key(int wait, String mapping, boolean down) {
+        STEPS.add(new Step(wait, () -> {
+            var o = Minecraft.getInstance().options;
+            var k = switch (mapping) {
+                case "keyUp" -> o.keyUp;
+                case "keyDown" -> o.keyDown;
+                case "keyJump" -> o.keyJump;
+                default -> throw new IllegalArgumentException(mapping);
+            };
+            Galactica.LOG.info("[autotest] key {} {}", mapping, down ? "down" : "up");
+            if (down) {
+                perTick = perTick.andThen(m -> k.setDown(true));
+            } else {
+                k.setDown(false);
+                perTick = m -> {};
+            }
+        }));
     }
 
     /**
@@ -84,7 +160,8 @@ public final class AutoTest {
      * outside the game with um win record.
      */
     private static void showcase() {
-        STEPS.add(new Step(0, () -> {
+        cmd(0, "galactica kit");
+        STEPS.add(new Step(5, () -> {
             var hud = Minecraft.getInstance().gui.hud;
             if (!hud.isHidden()) hud.toggle();
         }));
@@ -131,6 +208,7 @@ public final class AutoTest {
     }
 
     private static void tick(Minecraft mc) {
+        mc.options.tutorialStep = net.minecraft.client.tutorial.TutorialSteps.NONE;
         mc.options.pauseOnLostFocus = false; // the run must not stall when the window is in the background
         if (mc.player == null || mc.level == null || index >= STEPS.size()) return;
         perTick.accept(mc);

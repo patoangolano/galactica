@@ -399,6 +399,9 @@ public class GalaxyMapScreen extends Screen {
      * exotic matter here instead.
      */
     private int exoticCarried() {
+        if (minecraft != null && minecraft.player != null && minecraft.player.getVehicle() instanceof dev.galactica.ship.Starship s) {
+            return s.exotic();
+        }
         if (minecraft == null || minecraft.player == null || !BuiltInRegistries.ITEM.containsKey(EXOTIC_MATTER)) return 0;
         return minecraft.player.getInventory().countItem(BuiltInRegistries.ITEM.getValue(EXOTIC_MATTER));
     }
