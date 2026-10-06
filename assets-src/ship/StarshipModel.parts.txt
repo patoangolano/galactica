@@ -1,0 +1,24 @@
+hull:fuselage_front: .texOffs(0, 0).addBox(-6.0F, -5.0F, 0.0F, 12.0F, 10.0F, 28.0F), PartPose.ZERO
+hull:fuselage_rear: .texOffs(0, 0).addBox(-6.0F, -5.0F, -28.0F, 12.0F, 10.0F, 28.0F), PartPose.ZERO
+hull:nose: .texOffs(0, 102).addBox(-4.0F, -3.0F, 28.0F, 8.0F, 7.0F, 8.0F), PartPose.ZERO
+hull:nose_tip: .texOffs(32, 86).addBox(-2.0F, -1.5F, 36.0F, 4.0F, 4.0F, 4.0F), PartPose.ZERO
+hull:canopy: .texOffs(48, 82).addBox(-4.0F, -9.0F, 4.0F, 8.0F, 4.0F, 16.0F), PartPose.ZERO
+hull:spine: .texOffs(0, 65).addBox(-3.0F, -8.0F, -14.0F, 6.0F, 3.0F, 18.0F), PartPose.ZERO
+hull:fin: .texOffs(96, 82).addBox(-1.0F, -16.0F, -26.0F, 2.0F, 8.0F, 12.0F), PartPose.ZERO
+hull:belly: .texOffs(54, 38).addBox(-4.0F, 5.0F, -16.0F, 8.0F, 2.0F, 20.0F), PartPose.ZERO
+hull:wing_left: .texOffs(54, 60).addBox(-22.0F, 1.0F, -20.0F, 16.0F, 2.0F, 20.0F), PartPose.ZERO
+hull:wing_right: .texOffs(54, 60).addBox(6.0F, 1.0F, -20.0F, 16.0F, 2.0F, 20.0F), PartPose.ZERO
+hull:wingtip_left: .texOffs(80, 0).addBox(-24.0F, 0.0F, -21.0F, 2.0F, 4.0F, 20.0F), PartPose.ZERO
+hull:wingtip_right: .texOffs(80, 0).addBox(22.0F, 0.0F, -21.0F, 2.0F, 4.0F, 20.0F), PartPose.ZERO
+hull:engine_left: .texOffs(0, 38).addBox(-14.0F, -2.0F, -34.0F, 7.0F, 7.0F, 20.0F), PartPose.ZERO
+hull:engine_right: .texOffs(0, 38).addBox(7.0F, -2.0F, -34.0F, 7.0F, 7.0F, 20.0F), PartPose.ZERO
+hull:strut_front: .texOffs(32, 94).addBox(-1.0F, 5.0F, 20.0F, 2.0F, 6.0F, 2.0F), PartPose.ZERO
+hull:strut_left: .texOffs(32, 94).addBox(-11.0F, 5.0F, -24.0F, 2.0F, 6.0F, 2.0F), PartPose.ZERO
+hull:strut_right: .texOffs(32, 94).addBox(9.0F, 5.0F, -24.0F, 2.0F, 6.0F, 2.0F), PartPose.ZERO
+hull:foot_front: .texOffs(44, 102).addBox(-2.0F, 11.0F, 19.0F, 4.0F, 1.0F, 4.0F), PartPose.ZERO
+hull:foot_left: .texOffs(44, 102).addBox(-12.0F, 11.0F, -25.0F, 4.0F, 1.0F, 4.0F), PartPose.ZERO
+hull:foot_right: .texOffs(44, 102).addBox(8.0F, 11.0F, -25.0F, 4.0F, 1.0F, 4.0F), PartPose.ZERO
+glow:nozzle_left: .texOffs(32, 102).addBox(-13.0F, -1.0F, -35.0F, 5.0F, 5.0F, 1.0F), PartPose.ZERO
+glow:nozzle_right: .texOffs(32, 102).addBox(8.0F, -1.0F, -35.0F, 5.0F, 5.0F, 1.0F), PartPose.ZERO
+glow:plume_left: .texOffs(0, 86).addBox(-2.0F, -2.0F, -12.0F, 4.0F, 4.0F, 12.0F), PartPose.offset(-10.5F, 1.5F, -35.0F)
+glow:plume_right: .texOffs(0, 86).addBox(-2.0F, -2.0F, -12.0F, 4.0F, 4.0F, 12.0F), PartPose.offset(10.5F, 1.5F, -35.0F)
