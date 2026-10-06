@@ -19,6 +19,7 @@ import dev.galactica.nav.Frames;
 import dev.galactica.nav.GalacticPos;
 import dev.galactica.nav.NavState;
 import dev.galactica.nav.Neighbourhood;
+import dev.galactica.planet.AtmosphereGradient;
 import dev.galactica.planet.BodyFrame;
 import dev.galactica.planet.PlanetAddress;
 import dev.galactica.planet.PlanetEntry;
@@ -27,6 +28,7 @@ import dev.galactica.planet.SkyAlignment;
 import dev.galactica.planet.SurfaceAtmosphere;
 import dev.galactica.planet.SurfaceGrid;
 import dev.galactica.planet.SurfaceState;
+import dev.galactica.planet.TerrainSampler;
 import dev.galactica.science.Blackbody;
 import dev.galactica.science.Units;
 import dev.galactica.sky.GalaxySkyBaker;
@@ -62,6 +64,12 @@ import java.util.OptionalDouble;
  * <p>Same technique as the space sky: vanilla {@code END_SKY} pipeline, our own textures on
  * Sampler0, every texture resolved before the pass opens.
  *
+ * <p><b>Altitude.</b> The sky itself is a dome painted from {@link AtmosphereGradient} (calibrated to
+ * the biome sky colour at the ground), so climbing towards the space switch darkens it towards
+ * black exactly as the space side shows it, and daylight washout of stars and planets falls with
+ * the air above. Beyond render distance {@link FarTerrainRenderer} draws the real terrain to the
+ * curved horizon once the camera is high.
+ *
  * <p>Per frame only the cheap part runs: positions from cached orbits. The system's body list is
  * generated once per landing, and the vertex buffers are rebuilt only when something moved by more
  * than {@link #MOVE_EPS} (a third of a pixel at normal FOV): the sky turns 0.015° a tick, so that is
@@ -80,7 +88,11 @@ public final class SurfaceSkyOverlay {
     private record Quad(float dx, float dy, float dz, double size, int argb) {}
     private record Painted(long id, float dx, float dy, float dz, double halfAngle, double distance, DynamicTexture texture, float brightness) {}
 
-    private static GpuBuffer sphere, quads, painted;
+    private static GpuBuffer sphere, quads, painted, dome;
+    private static int domeIndices;
+    private static final int DOME_LAT = 24, DOME_LON = 48;
+    private static long atmBody = Long.MIN_VALUE;
+    private static AtmosphereGradient atm = AtmosphereGradient.NONE;
     private static int sphereIndices, quadIndices;
     private static final List<Painted> PAINTED = new ArrayList<>();
     private static List<Quad> builtQuads = List.of();
@@ -130,6 +142,14 @@ public final class SurfaceSkyOverlay {
         cached = null;
         cachedSystem = List.of();
         SurfaceSprites.clear();
+        if (dome != null) dome.close();
+        dome = null;
+        domeIndices = 0;
+        atmBody = Long.MIN_VALUE;
+        FarTerrainRenderer.release();
+        Minecraft mc = Minecraft.getInstance();
+        // In space the near-planet renderer keeps using the clipmap; anywhere else it is dead weight.
+        if (mc.level == null || mc.level.dimension() != Galactica.SPACE) SurfaceClipmap.releaseAll();
     }
 
     /** Call after vanilla's sky pass has closed, with the frame's extracted sky state. */
@@ -163,7 +183,16 @@ public final class SurfaceSkyOverlay {
         double[] m = SkyAlignment.matrix(toStar, mc(BodyFrame.pole(star, here)), sun);
         SurfaceAtmosphere.SkyClass skyClass = SurfaceAtmosphere.skyClass(here);
         double day = clamp(sun[1] * 3 + 0.3, 0, 1);
-        double washout = day * skyClass.daylightOpacity;
+        if (atmBody != here.id()) {
+            atmBody = here.id();
+            atm = AtmosphereGradient.of(here);
+        }
+        // Real altitude: the map is compressed horizontally by metresPerBlock, and so is height.
+        double altitudeM = Math.max(0, (cam.y - TerrainSampler.SEA_LEVEL) * grid.metresPerBlock());
+        double airAbove = atm.vacuum() ? 1 : Math.min(1, atm.brightness(altitudeM));
+        double washout = day * skyClass.daylightOpacity * airAbove;
+        rebuildDome(sun, altitudeM, state.rainBrightness);
+        FarTerrainRenderer.prepare(here, cam, sun, mc.options.getEffectiveRenderDistance());
         float rain = state.rainBrightness;
 
         SurfaceSprites.beginFrame();
@@ -202,6 +231,7 @@ public final class SurfaceSkyOverlay {
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder()
                 .createRenderPass(() -> "Galactica surface sky", rt.getColorTextureView(), Optional.empty(), rt.getDepthTextureView(), OptionalDouble.empty())) {
             RenderSystem.bindDefaultUniforms(pass);
+            if (dome != null) draw(pass, idx, modelView, dome, domeIndices, 0, SurfaceClipmap.white().getTextureView(), clamp, new Vector4f(1, 1, 1, 1));
             if (galaxyAlpha > 0.01f) draw(pass, idx, galaxyView4, sphere, sphereIndices, 0, galaxyView, wrapU, new Vector4f(1, 1, 1, galaxyAlpha));
             if (quads != null) draw(pass, idx, modelView, quads, quadIndices, 0, discView, clamp, new Vector4f(1, 1, 1, 1));
             for (int i = 0; i < PAINTED.size(); i++) {
@@ -209,6 +239,8 @@ public final class SurfaceSkyOverlay {
                 draw(pass, idx, modelView, painted, 6, i * 4, p.texture().getTextureView(), clamp,
                         new Vector4f(p.brightness(), p.brightness(), p.brightness(), (float) ((1 - 0.6 * washout) * rain)));
             }
+            // Ground beyond render distance last: it hides bodies that have set below the horizon.
+            FarTerrainRenderer.draw(pass, idx, modelView);
         }
     }
 
@@ -326,6 +358,68 @@ public final class SurfaceSkyOverlay {
             try (MeshData mesh = b.buildOrThrow()) {
                 painted = RenderSystem.getDevice().createBuffer(() -> "Galactica surface sky planets", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
             }
+        }
+    }
+
+    /**
+     * Sky dome coloured by {@link AtmosphereGradient} for the camera's real altitude and the sun's
+     * position, alpha-encoded so it adds over vanilla's sky (which carries the night and weather).
+     * Rebuilt every frame: 1 152 quads.
+     */
+    private static void rebuildDome(double[] sun, double altitudeM, float rain) {
+        if (dome != null) {
+            dome.close();
+            dome = null;
+            domeIndices = 0;
+        }
+        if (atm.vacuum()) return;
+        try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(DOME_LAT * DOME_LON * 4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
+            BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
+            float[][] v = new float[4][];
+            int[] c = new int[4];
+            double[] rgb = new double[3];
+            for (int j = 0; j < DOME_LAT; j++) {
+                for (int i = 0; i < DOME_LON; i++) {
+                    for (int k = 0; k < 4; k++) {
+                        int jj = j + (k >= 2 ? 1 : 0), ii = i + (k == 1 || k == 2 ? 1 : 0);
+                        // Rows dense near the horizon, where the gradient changes fastest.
+                        double f = jj / (double) DOME_LAT;
+                        double el = Math.PI / 2 - Math.PI * (f < 0.5 ? 0.5 * Math.pow(2 * f, 0.6) : 1 - 0.5 * Math.pow(2 - 2 * f, 0.6));
+                        double az = 2 * Math.PI * ii / DOME_LON;
+                        double dx = Math.cos(el) * Math.cos(az), dy = Math.sin(el), dz = Math.cos(el) * Math.sin(az);
+                        atm.sky(dy, dx * sun[0] + dy * sun[1] + dz * sun[2], sun[1], altitudeM, rgb);
+                        v[k] = new float[] {(float) dx * (R_GALAXY + 1), (float) dy * (R_GALAXY + 1), (float) dz * (R_GALAXY + 1), 0.5f, 0.5f};
+                        c[k] = additive(rgb, rain);
+                    }
+                    emitInwardQuad(b, v, c);
+                }
+            }
+            try (MeshData mesh = b.buildOrThrow()) {
+                domeIndices = mesh.drawState().indexCount();
+                dome = RenderSystem.getDevice().createBuffer(() -> "Galactica surface sky dome", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+            }
+        }
+    }
+
+    /** Linear light added over what is behind: a = brightest display channel, rgb = display/a. */
+    private static int additive(double[] linear, float rain) {
+        double r = AtmosphereGradient.encode(linear[0]), g = AtmosphereGradient.encode(linear[1]), b = AtmosphereGradient.encode(linear[2]);
+        double a = Math.min(1, Math.max(r, Math.max(g, b)));
+        if (a < 1e-4) return 0;
+        return (int) Math.round(a * rain * 255) << 24 | (int) Math.round(r / a * 255) << 16 | (int) Math.round(g / a * 255) << 8
+                | (int) Math.round(b / a * 255);
+    }
+
+    private static void emitInwardQuad(BufferBuilder b, float[][] v, int[] argb) {
+        float ax = v[1][0] - v[0][0], ay = v[1][1] - v[0][1], az = v[1][2] - v[0][2];
+        float bx = v[2][0] - v[0][0], by = v[2][1] - v[0][1], bz = v[2][2] - v[0][2];
+        float nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+        float cx = v[0][0] + v[2][0], cy = v[0][1] + v[2][1], cz = v[0][2] + v[2][2];
+        boolean outward = nx * cx + ny * cy + nz * cz > 0;
+        for (int k = 0; k < 4; k++) {
+            int i = outward ? 3 - k : k;
+            float[] p = v[i];
+            b.addVertex(p[0], p[1], p[2]).setUv(p[3], p[4]).setColor(argb[i]);
         }
     }
 
