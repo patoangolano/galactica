@@ -1,6 +1,5 @@
 package dev.galactica.content;
 
-import dev.galactica.survival.LifeSupportModel;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
@@ -53,7 +52,7 @@ public class OxygenTankItem extends Item {
     public void appendHoverText(ItemStack stack, TooltipContext ctx, TooltipDisplay display, Consumer<Component> out, TooltipFlag flag) {
         int s = oxygen(stack);
         out.accept(Component.translatable("tooltip.galactica.oxygen", clock(s), clock(capacity)).withStyle(ChatFormatting.AQUA));
-        if (capacity == LifeSupportModel.SUIT_CAPACITY) {
+        if (this == GalacticaItems.EVA_SUIT) {
             out.accept(Component.translatable("tooltip.galactica.eva_suit").withStyle(ChatFormatting.GRAY));
         }
     }

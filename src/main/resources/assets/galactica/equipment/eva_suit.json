@@ -9,6 +9,11 @@
       {
         "texture": "galactica:eva_suit"
       }
+    ],
+    "humanoid_baby": [
+      {
+        "texture": "galactica:eva_suit"
+      }
     ]
   }
 }

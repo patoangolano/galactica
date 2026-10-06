@@ -11,6 +11,8 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 
@@ -29,7 +31,10 @@ import java.util.List;
  *   1 fire damage per 2 s.</li>
  *   <li><b>Pressure.</b> Unsuited above 10 bar: 1 cramming ("squished") damage per second.</li>
  * </ul>
- * Creative and spectator players see the HUD but take no hazards and spend no oxygen.
+ * Hazards are dealt with the damage cooldown cleared first: each is an independent environmental process, and
+ * vanilla's 10-tick invulnerability window would otherwise drop or shrink a second hazard landing inside it.
+ * Creative players see the environment on the HUD but take no hazards, see no hazard warnings and draw no tank
+ * oxygen. Spectators carry no status at all.
  */
 public final class LifeSupport {
     private LifeSupport() {}
@@ -42,6 +47,10 @@ public final class LifeSupport {
     /** Vanilla drowning: at −20 air, reset to 0 and deal 2 damage. */
     private static final int DROWN_AT = -20;
     private static final float DROWN_DAMAGE = 2.0F;
+    /** Entity event the client turns into the drowning bubble burst ({@code LivingEntity.handleEntityEvent}). */
+    private static final byte DROWN_BUBBLES = 67;
+    private static final int HAZARD_FLAGS = LifeSupportStatus.F_SUFFOCATING | LifeSupportStatus.F_COLD
+            | LifeSupportStatus.F_HOT | LifeSupportStatus.F_CRUSHED;
 
     /** Registers the tick and the status attachment. Call once from the main initializer, after the items. */
     public static void init() {
@@ -53,7 +62,11 @@ public final class LifeSupport {
     }
 
     public static void tick(ServerPlayer p) {
-        if (p.isSpectator() || !p.isAlive()) return;
+        if (p.isSpectator()) {
+            if (p.hasAttached(STATUS)) p.removeAttached(STATUS);
+            return;
+        }
+        if (!p.isAlive()) return;
         boolean hazards = !p.isCreative();
         ServerLevel level = p.level();
         Environment env = SurvivalEnvironment.of(p);
@@ -67,11 +80,13 @@ public final class LifeSupport {
         if (secondTick && !suit.isEmpty()) exchangeOxygen(p, env, a, suit, suitO2, hazards);
 
         if (hazards) {
-            if (a.suffocating()) {
+            // Eyes under water: vanilla already drains air and drowns the player, so a second drain would double it.
+            if (a.suffocating() && !p.isEyeInFluid(FluidTags.WATER)) {
                 int air = p.getAirSupply() - VACUUM_AIR_STEP;
                 if (air <= DROWN_AT) {
                     p.setAirSupply(0);
-                    p.hurtServer(level, level.damageSources().drown(), DROWN_DAMAGE);
+                    level.broadcastEntityEvent(p, DROWN_BUBBLES);
+                    hazard(p, level.damageSources().drown(), DROWN_DAMAGE);
                 } else {
                     p.setAirSupply(air);
                 }
@@ -80,19 +95,20 @@ public final class LifeSupport {
             }
             if (a.cold()) {
                 p.setTicksFrozen(Math.min(p.getTicksFrozen() + 3, p.getTicksRequiredToFreeze() - 1));
-                if (p.tickCount % 40 == 0) p.hurtServer(level, level.damageSources().freeze(), 1.0F);
+                if (p.tickCount % 40 == 0) hazard(p, level.damageSources().freeze(), 1.0F);
             }
             if (a.hot() && p.tickCount % 40 == 0 && !p.fireImmune()) {
-                p.hurtServer(level, level.damageSources().onFire(), 1.0F);
+                hazard(p, level.damageSources().onFire(), 1.0F);
             }
             if (a.crushed() && secondTick) {
-                p.hurtServer(level, level.damageSources().cramming(), 1.0F);
+                hazard(p, level.damageSources().cramming(), 1.0F);
             }
         }
 
         // Attachment writes sync to the owner, so write on a hazard change or once per second.
         LifeSupportStatus prev = p.getAttached(STATUS);
         int flags = LifeSupportStatus.flags(env, a, fullSuit, cabin);
+        if (!hazards) flags &= ~HAZARD_FLAGS;
         if (prev == null || prev.flags() != flags || secondTick) {
             int shownSuit = suit.isEmpty() ? 0 : OxygenTankItem.oxygen(suit);
             int reserve = secondTick || prev == null ? LifeSupportModel.reserve(shownSuit, tankLevels(tanks(p))) : prev.reserveO2();
@@ -101,7 +117,16 @@ public final class LifeSupport {
         }
     }
 
-    /** One second of suit bookkeeping. Writes item components only when a value changed. */
+    /** One hazard hit with the damage cooldown cleared, so simultaneous hazards each land in full. */
+    private static void hazard(ServerPlayer p, DamageSource source, float amount) {
+        p.damageCooldownTime = 0;
+        p.hurtServer(p.level(), source, amount);
+    }
+
+    /**
+     * One second of suit bookkeeping. Writes item components only when a value changed. With {@code spend} false
+     * (creative) nothing is drawn from tanks; the suit may still recharge from breathable air.
+     */
     private static void exchangeOxygen(ServerPlayer p, Environment env, LifeSupportModel.Assessment a, ItemStack suit,
                                       int suitO2, boolean spend) {
         List<ItemStack> tanks = tanks(p);
@@ -112,7 +137,7 @@ public final class LifeSupport {
             nextSuit = LifeSupportModel.breatheOneSecond(suitO2, levels);
         } else if (LifeSupportModel.canRecharge(env)) {
             nextSuit = LifeSupportModel.rechargeOneSecond(suitO2, levels);
-        } else if (suitO2 < LifeSupportModel.SUIT_CAPACITY) {
+        } else if (spend && suitO2 < LifeSupportModel.SUIT_CAPACITY) {
             nextSuit = LifeSupportModel.refillSuit(suitO2, levels);
         }
         if (nextSuit != suitO2) suit.set(GalacticaComponents.OXYGEN, nextSuit);

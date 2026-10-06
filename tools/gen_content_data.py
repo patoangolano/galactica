@@ -19,7 +19,8 @@ for n in ITEMS:
     w(f"{A}/models/item/{n}.json", {"parent": "minecraft:item/generated", "textures": {"layer0": f"galactica:item/{n}"}})
 
 w(f"{A}/equipment/eva_suit.json",
-  {"layers": {"humanoid": [{"texture": "galactica:eva_suit"}], "humanoid_leggings": [{"texture": "galactica:eva_suit"}]}})
+  {"layers": {"humanoid": [{"texture": "galactica:eva_suit"}], "humanoid_leggings": [{"texture": "galactica:eva_suit"}],
+             "humanoid_baby": [{"texture": "galactica:eva_suit"}]}})
 
 
 def shaped(n, cat, pat, key, count=1):
