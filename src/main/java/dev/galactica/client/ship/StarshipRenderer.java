@@ -48,7 +48,7 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
         state.spool = ship.isSpooling() ? 1F - (ship.spoolTicks() - partialTicks) / DriveRules.SPOOL_TICKS : 0F;
     }
 
-    /** The model reaches 2.9 blocks fore and aft of the 3 × 1.5 box; cull on the real extent. */
+    /** The model reaches 2.9 blocks fore and aft of the 3 × 2 box; cull on the real extent. */
     @Override
     protected AABB getBoundingBoxForCulling(Starship ship, float partialTicks) {
         return ship.getBoundingBox().inflate(1.5, 1.0, 1.5);

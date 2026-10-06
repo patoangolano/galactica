@@ -148,4 +148,28 @@ class ShipFlightModelTest {
         assertEquals(0.0, DriveRules.warpHydrogenPerTick(999 * dev.galactica.science.Units.C));
         assertEquals(1.0, DriveRules.warpHydrogenPerTick(2e3 * dev.galactica.science.Units.C) * 200, 1e-12, "1 per 10 s");
     }
+
+    @Test
+    void serverAcceptsTurnsWithinTheCap() {
+        Quaterniond reported = new Quaterniond().rotateY(Math.toRadians(20));
+        Quaterniond out = clampAttitude(new Quaterniond(), reported, 1);
+        assertEquals(0.0, out.difference(reported, new Quaterniond()).angle(), 1e-6, "20° in one tick is under 3 × 9°");
+    }
+
+    @Test
+    void serverClampsTeleportingAttitude() {
+        Quaterniond out = clampAttitude(new Quaterniond(), new Quaterniond().rotateX(Math.toRadians(170)), 1);
+        assertEquals(3 * MAX_TURN_PER_TICK + 1, Math.toDegrees(out.angle()), 1e-6, "slerped to the per-tick limit");
+        Quaterniond flipped = new Quaterniond().rotateY(Math.toRadians(10));
+        flipped.set(-flipped.x, -flipped.y, -flipped.z, -flipped.w);
+        assertEquals(10.0, Math.toDegrees(clampAttitude(new Quaterniond(), flipped, 1).angle()), 1e-6, "−q is q: no long way round");
+        assertEquals(170.0, Math.toDegrees(clampAttitude(new Quaterniond(), new Quaterniond().rotateX(Math.toRadians(170)), 10).angle()), 1e-6,
+                "a late report covers all elapsed ticks");
+    }
+
+    @Test
+    void mainEngineAllowanceOnlyWhenBurning() {
+        assertEquals((MAIN_ACCEL + Math.sqrt(3) * RCS_ACCEL) * TICK, maxDeltaVPerTick(true, 0), 1e-12);
+        assertEquals(Math.sqrt(3) * RCS_ACCEL * TICK, maxDeltaVPerTick(false, 0), 1e-12);
+    }
 }

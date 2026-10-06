@@ -2,6 +2,8 @@ package dev.galactica.ship;
 
 import dev.galactica.Galactica;
 import dev.galactica.nav.Frames;
+import dev.galactica.nav.GalacticPos;
+import dev.galactica.nav.NavServer;
 import dev.galactica.nav.NavState;
 import dev.galactica.science.Units;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -64,6 +66,8 @@ public class Starship extends VehicleEntity {
     private static final EntityDataAccessor<Boolean> DATA_COUPLED = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Float> DATA_THRUST = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.FLOAT);
     private static final EntityDataAccessor<Integer> DATA_SPOOL = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.INT);
+    /** World-frame gravity, m/s²: computed by the server (only it knows the pilot's galactic frame), used by the pilot's prediction. */
+    private static final EntityDataAccessor<Vector3fc> DATA_GRAVITY = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.VECTOR3);
 
     public static final float MAX_HYDROGEN = 400F, MAX_HULL = 100F;
     public static final int MAX_EXOTIC = 64;
@@ -77,10 +81,10 @@ public class Starship extends VehicleEntity {
     private static final double PIVOT = 0.75;
 
     /**
-     * Gravity at the ship, m/s², per level. Space is free fall (the Neighbourhood's GM/r² is ~10⁻³ m/s² even
-     * in low orbit at block scale and is left out); other levels default to Earth. Planet surfaces replace this.
+     * Downward gravity, m/s², for levels other than space (space uses {@link ShipGravity} in the pilot's frame).
+     * Defaults to Earth; the planet area plugs in each world's surface gravity.
      */
-    private static ToDoubleFunction<Level> gravityModel = l -> l.dimension() == Galactica.SPACE ? 0.0 : Units.EARTH_GRAVITY;
+    private static ToDoubleFunction<Level> gravityModel = l -> Units.EARTH_GRAVITY;
 
     private final Quaternionf attitude = new Quaternionf(), attitudeO = new Quaternionf();
     // Pilot-side prediction inputs, fed by the client every tick before the entity ticks.
@@ -90,7 +94,7 @@ public class Starship extends VehicleEntity {
     private float localThrottle;
     // Server-side bookkeeping.
     private @Nullable JumpTargetInfo pendingJump;
-    private int lastReportTick;
+    private int lastReportTick, lastMainBurnTick = Integer.MIN_VALUE / 2;
 
     public Starship(EntityType<? extends Starship> type, Level level) {
         super(type, level);
@@ -101,8 +105,29 @@ public class Starship extends VehicleEntity {
         gravityModel = model;
     }
 
+    /** Surface gravity outside space, m/s². */
     public static double gravityAt(Level level) {
         return gravityModel.applyAsDouble(level);
+    }
+
+    /** Gravity acting on this ship, m/s², world (block) frame, as last computed by the server. */
+    public Vector3fc gravity() {
+        return entityData.get(DATA_GRAVITY);
+    }
+
+    /**
+     * Server: GM/r² toward the dominant body in the pilot's galactic frame when in space; the level's surface
+     * gravity elsewhere. An unpiloted ship in space has no frame of its own (block space is shared by every
+     * player's floating origin), so it coasts in free fall.
+     */
+    private Vector3f computeGravity(@Nullable ServerPlayer pilot) {
+        if (level().dimension() != Galactica.SPACE) return new Vector3f(0F, (float) -gravityAt(level()), 0F);
+        if (pilot == null) return new Vector3f();
+        NavState nav = pilot.getAttachedOrCreate(Galactica.NAV);
+        GalacticPos here = Frames.playerPos(nav, getX(), getY(), getZ());
+        double[] g = ShipGravity.pull(ShipGravity.attractors(NavServer.neighbourhood(pilot), here, nav.timeSeconds()));
+        double[] mc = Frames.galacticToMc(g[0], g[1], g[2]);
+        return new Vector3f((float) mc[0], (float) mc[1], (float) mc[2]);
     }
 
     // ---------------------------------------------------------------- synced state
@@ -117,6 +142,7 @@ public class Starship extends VehicleEntity {
         b.define(DATA_COUPLED, true);
         b.define(DATA_THRUST, 0F);
         b.define(DATA_SPOOL, 0);
+        b.define(DATA_GRAVITY, new Vector3f(0F, (float) -Units.EARTH_GRAVITY, 0F));
     }
 
     @Override
@@ -203,7 +229,8 @@ public class Starship extends VehicleEntity {
         mouseYaw = mousePitch = 0;
         Quaterniond q = new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w);
         Vector3d v = toMetres(getDeltaMovement());
-        ShipFlightModel.step(q, v, c, new Vector3d(0, -gravityAt(level()), 0), hydrogen(), ShipFlightModel.TICK);
+        Vector3fc g = gravity();
+        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK);
         attitude.set((float) q.x, (float) q.y, (float) q.z, (float) q.w);
         localThrottle = hydrogen() > 0 ? (float) c.thrust() : 0F;
         setDeltaMovement(v.x * ShipFlightModel.TICK, v.y * ShipFlightModel.TICK, v.z * ShipFlightModel.TICK);
@@ -213,17 +240,21 @@ public class Starship extends VehicleEntity {
     /** Nobody at the controls (server): free fall plus whatever velocity it had. */
     private void coastStep() {
         Vec3 d = getDeltaMovement();
-        double g = gravityAt(level()) * ShipFlightModel.TICK * ShipFlightModel.TICK;
-        setDeltaMovement(d.x, onGround() ? Math.max(0, d.y) - g : d.y - g, d.z);
+        Vector3fc g = gravity();
+        double k = ShipFlightModel.TICK * ShipFlightModel.TICK;
+        double vy = onGround() && g.y() < 0 ? Math.max(0, d.y) : d.y;
+        setDeltaMovement(d.x + g.x() * k, vy + g.y() * k, d.z + g.z() * k);
         entityData.set(DATA_THRUST, 0F);
     }
 
     private void serverStep() {
         ServerPlayer pilot = getControllingPassenger() instanceof ServerPlayer sp ? sp : null;
+        entityData.set(DATA_GRAVITY, computeGravity(pilot));
         if (pilot != null) {
             Input in = pilot.getLastClientInput();
             float throttle = (in.forward() ? 1F : 0F) - (in.backward() ? 1F : 0F);
             if (hydrogen() <= 0) throttle = 0;
+            if (throttle != 0) lastMainBurnTick = tickCount;
             if (throttle != 0) setHydrogen(hydrogen() - Math.abs(throttle) * (float) (ShipFlightModel.TICK / ShipFlightModel.MAIN_SECONDS_PER_HYDROGEN));
             if (entityData.get(DATA_THRUST) != throttle) entityData.set(DATA_THRUST, throttle);
         }
@@ -266,9 +297,11 @@ public class Starship extends VehicleEntity {
     // ---------------------------------------------------------------- server validation of pilot reports
 
     /**
-     * Accepts the pilot's predicted attitude and velocity, clamped to what 2.5 MN + RCS + gravity could do in
-     * the ticks since the last report. The server keeps the velocity so vanilla's "moved too quickly" check
-     * compares the reported move against the ship's real speed, not against zero.
+     * Accepts the pilot's predicted attitude and velocity, clamped to the turn-rate cap and to what the engines
+     * plus gravity could do in the ticks since the last report. The main engine only counts while the server is
+     * burning hydrogen for it (W/S held within that window), so a modified client gets no free thrust. The
+     * server keeps the velocity so vanilla's "moved too quickly" check compares the reported move against the
+     * ship's real speed, not against zero.
      */
     void acceptPilotReport(ServerPlayer pilot, Quaternionfc q, Vector3fc velocity, boolean assist) {
         if (!q.isFinite() || !velocity.isFinite() || q.lengthSquared() < 1e-6) return;
@@ -278,12 +311,15 @@ public class Starship extends VehicleEntity {
 
         Vector3d v = new Vector3d(velocity.x(), velocity.y(), velocity.z());
         Vector3d prev = toMetres(getDeltaMovement());
-        double maxDv = ShipFlightModel.maxDeltaVPerTick(hydrogen() > 0, gravityAt(level())) * ticks * 1.1 + 0.5;
+        boolean mainBurning = hydrogen() > 0 && tickCount - lastMainBurnTick <= ticks + 1;
+        double maxDv = ShipFlightModel.maxDeltaVPerTick(mainBurning, gravity().length()) * ticks * 1.1 + 0.5;
         Vector3d dv = new Vector3d(v).sub(prev);
         if (dv.length() > maxDv) v.set(prev).fma(maxDv / dv.length(), dv);
         if (v.length() > ShipFlightModel.MAX_SPEED) v.mul(ShipFlightModel.MAX_SPEED / v.length());
 
-        attitude.set(q).normalize();
+        Quaterniond turned = ShipFlightModel.clampAttitude(new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w),
+                new Quaterniond(q.x(), q.y(), q.z(), q.w()), ticks);
+        attitude.set((float) turned.x, (float) turned.y, (float) turned.z, (float) turned.w).normalize();
         entityData.set(DATA_ATTITUDE, new Quaternionf(attitude));
         coupled = assist;
         entityData.set(DATA_COUPLED, assist);
@@ -295,6 +331,8 @@ public class Starship extends VehicleEntity {
 
     @Override
     public InteractionResult interact(Player player, InteractionHand hand, Vec3 location) {
+        // A rider's eye sits inside the hull box, where vanilla's pick finds this ship at distance 0.
+        if (player.getVehicle() == this) return InteractionResult.PASS;
         InteractionResult r = super.interact(player, hand, location);
         if (r != InteractionResult.PASS) return r;
         ItemStack stack = player.getItemInHand(hand);
@@ -327,6 +365,12 @@ public class Starship extends VehicleEntity {
     /** Content items are looked up by id so this area compiles without the content area's classes. */
     private static Item item(String path) {
         return BuiltInRegistries.ITEM.getValue(Galactica.id(path));
+    }
+
+    /** Crew never hit their own hull: their eye is inside its box. */
+    @Override
+    public boolean skipAttackInteraction(Entity attacker) {
+        return hasPassenger(attacker);
     }
 
     @Override
@@ -366,8 +410,13 @@ public class Starship extends VehicleEntity {
 
     @Override
     protected void removePassenger(Entity passenger) {
+        boolean wasPilot = getControllingPassenger() == passenger;
         super.removePassenger(passenger);
-        if (!level().isClientSide() && getControllingPassenger() == null) cancelSpool();
+        // The jump is the pilot's order: it dies with their leaving, even if the passenger slides into the seat.
+        if (!level().isClientSide() && wasPilot && pendingJump != null) {
+            cancelSpool();
+            if (passenger instanceof ServerPlayer sp) sp.sendOverlayMessage(Component.translatable("hud.galactica.hyperjump.aborted"));
+        }
     }
 
     public static boolean isPiloting(Player p) {
@@ -392,23 +441,49 @@ public class Starship extends VehicleEntity {
         return true;
     }
 
+    /** A player aboard a ship but not at its controls: their galactic frame is driven by the pilot's. */
+    public static boolean isCrew(Player p) {
+        return p.getVehicle() instanceof Starship s && s.getControllingPassenger() != p;
+    }
+
+    /**
+     * Keeps everyone aboard in the pilot's frame. NavServer calls this right after writing the pilot's NavState
+     * (warp step, floating-origin recentre): every other player aboard gets the same origin displacement plus
+     * the pilot's warp speed and clock, so the crew sees the same sky and arrives together. NavServer skips crew
+     * in its own drive logic ({@link #isCrew}), so in space this is their only frame update.
+     */
+    public static void carryCrew(ServerPlayer pilot, GalacticPos oldOrigin, NavState pilotNow) {
+        if (!(pilot.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != pilot) return;
+        double[] d = pilotNow.origin().metresFrom(oldOrigin);
+        for (Entity e : ship.getPassengers()) {
+            if (e instanceof ServerPlayer crew && crew != pilot) {
+                NavState nav = crew.getAttachedOrCreate(Galactica.NAV);
+                crew.setAttached(Galactica.NAV, new NavState(nav.origin().plusMetres(d[0], d[1], d[2]),
+                        pilotNow.speed(), nav.maxSpeed(), pilotNow.timeSeconds()));
+            }
+        }
+    }
+
     /**
      * Floating-origin recentre for a pilot: NavServer folds {@code -delta} into the pilot's galactic origin and
      * calls this instead of teleporting the player (a plain player teleport would dismount them). The ship moves
-     * by {@code delta} with its riders, and every other player aboard gets the same origin shift so the crew
-     * stays in one frame.
+     * by {@code delta} carrying all its riders; the crew's origins follow through {@link #carryCrew}, which
+     * NavServer calls with the same origin change.
      */
     public static void shiftWithOrigin(ServerPlayer p, Vec3 delta) {
         if (!(p.getVehicle() instanceof Starship ship) || !(ship.level() instanceof ServerLevel level)) return;
-        double[] g = Frames.mcToGalactic(-delta.x, -delta.y, -delta.z);
-        for (Entity e : ship.getPassengers()) {
-            if (e instanceof ServerPlayer crew && crew != p) {
-                NavState nav = crew.getAttachedOrCreate(Galactica.NAV);
-                crew.setAttached(Galactica.NAV, nav.withOrigin(nav.origin().plusMetres(g[0], g[1], g[2])));
-            }
-        }
         ship.teleport(new TeleportTransition(level, ship.position().add(delta), ship.getDeltaMovement(),
                 ship.getYRot(), ship.getXRot(), TeleportTransition.DO_NOTHING));
+    }
+
+    /**
+     * The pilot's eye in world space: seat and eye height both rotate with the hull, so a rolled or inverted
+     * ship keeps the first-person view inside the canopy.
+     */
+    public Vec3 pilotEyePosition(Entity pilot, float partialTick, float eyeHeight) {
+        Vector3f eye = getAttitude(partialTick, new Quaternionf()).transform(new Vector3f(PILOT_SEAT).add(0F, eyeHeight, 0F));
+        Vec3 attach = pilot.getVehicleAttachmentPoint(this);
+        return getPosition(partialTick).add(eye.x - attach.x, PIVOT + eye.y - attach.y, eye.z - attach.z);
     }
 
     // ---------------------------------------------------------------- damage

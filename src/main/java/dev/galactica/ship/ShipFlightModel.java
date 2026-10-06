@@ -34,7 +34,11 @@ public final class ShipFlightModel {
     public static final double TICK = 0.05;
     /** Keyboard yaw (A/D) and roll (Q/E) rates, degrees per second. */
     public static final double KEY_YAW_RATE = 45.0, KEY_ROLL_RATE = 90.0;
-    /** Hard cap on any single-axis turn per tick, 180 °/s: bounds mouse spikes and what the server accepts. */
+    /**
+     * Hard cap on any single-axis turn per tick, 180 °/s. Yaw, pitch and roll each obey it, so one tick turns the
+     * ship by at most 3 × this angle (a composed rotation never exceeds the sum of its parts):
+     * {@link #clampAttitude} holds pilot reports to that.
+     */
     public static final double MAX_TURN_PER_TICK = 9.0;
 
     /**
@@ -96,6 +100,20 @@ public final class ShipFlightModel {
      */
     public static double maxDeltaVPerTick(boolean fuelled, double gravity) {
         return ((fuelled ? MAIN_ACCEL : 0) + Math.sqrt(3) * RCS_ACCEL + gravity) * TICK;
+    }
+
+    /**
+     * The server's bound on a reported attitude: {@code reported} if it lies within {@code 3 × MAX_TURN_PER_TICK}
+     * per elapsed tick of {@code current} (plus 1° of float slack), otherwise the slerp toward it that turns
+     * exactly that far. Writes into {@code current}.
+     */
+    public static Quaterniond clampAttitude(Quaterniond current, Quaterniond reported, int ticks) {
+        Quaterniond r = new Quaterniond(reported).normalize();
+        if (current.dot(r) < 0) r.set(-r.x, -r.y, -r.z, -r.w); // q and −q are the same rotation: take the short way
+        double angle = 2 * Math.acos(Math.min(1, Math.abs(current.dot(r))));
+        double max = Math.toRadians(3 * MAX_TURN_PER_TICK * Math.max(1, ticks) + 1);
+        if (angle <= max) return current.set(r);
+        return current.slerp(r, max / angle).normalize();
     }
 
     private static double clamp(double x, double lim) {
