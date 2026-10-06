@@ -54,6 +54,7 @@ public final class AutoTest {
     }
 
     private static void tick(Minecraft mc) {
+        mc.options.pauseOnLostFocus = false; // the run must not stall when the window is in the background
         if (mc.player == null || mc.level == null || index >= STEPS.size()) return;
         if (--countdown > 0) return;
         Step s = STEPS.get(index++);
@@ -91,7 +92,8 @@ public final class AutoTest {
             double[] m = Frames.galacticToMc(g[0], g[1], g[2]);
             double h = Math.sqrt(m[0] * m[0] + m[2] * m[2]);
             var p = Minecraft.getInstance().player;
-            p.setYRot((float) Math.toDegrees(Math.atan2(-m[0], m[2])));
+            // 2° off-axis so the target is not hidden behind the crosshair.
+            p.setYRot((float) Math.toDegrees(Math.atan2(-m[0], m[2])) + 2f);
             p.setXRot((float) -Math.toDegrees(Math.atan2(m[1], h)));
             Galactica.LOG.info("[autotest] aiming at {} ({})", s.name(), s.spectralType());
         }));
