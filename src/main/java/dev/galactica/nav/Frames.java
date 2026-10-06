@@ -2,6 +2,7 @@ package dev.galactica.nav;
 
 import dev.galactica.galaxy.StarCatalog;
 import dev.galactica.science.Units;
+import dev.galactica.system.SystemFrame;
 
 /**
  * Axis conventions. The galactic frame has z towards the north galactic pole; Minecraft has y up.
@@ -22,7 +23,7 @@ public final class Frames {
 
     /**
      * 100 000 km sunward of Earth at time t (seconds since J2000) — Earth fills ~7° of the sky there.
-     * System orbital planes are laid in the galactic plane for now (see MODLOG: system orientation).
+     * Earth's J2000 ecliptic orbit is rotated onto the galactic frame by {@link SystemFrame}.
      */
     public static GalacticPos nearEarth(double t) {
         var earth = dev.galactica.system.SolarSystem.planets().get(2);
@@ -30,7 +31,8 @@ public final class Frames {
         earth.orbit().positionAt(t, p);
         double r = Math.sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
         double k = (r - 1.0e8) / r;
-        double[] g = mcToGalactic(p[0] * k, p[1] * k, p[2] * k);
+        double[] g = new double[3];
+        SystemFrame.toGalactic(StarCatalog.SOL, p[0] * k, p[1] * k, p[2] * k, g);
         return SOL_POS.plusMetres(g[0], g[1], g[2]);
     }
 

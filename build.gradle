@@ -63,6 +63,20 @@ loom {
             vmArgs '-Xmx4G', '-Dgalactica.autotest=true'
             programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
         }
+        autotestIris {
+            client()
+            configName = 'Galactica Autotest (Iris)'
+            runDir 'runs/client-iris'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.tag=iris'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
+        showcase {
+            client()
+            configName = 'Galactica Showcase take'
+            runDir 'runs/client-iris'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=showcase'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1920', '--height', '1080'
+        }
         server {
             server()
             configName = 'Galactica Server'

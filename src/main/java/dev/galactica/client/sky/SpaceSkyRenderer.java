@@ -18,6 +18,7 @@ import dev.galactica.nav.Neighbourhood;
 import dev.galactica.science.Blackbody;
 import dev.galactica.science.Units;
 import dev.galactica.sky.GalaxySkyBaker;
+import dev.galactica.sky.PlanetImager;
 import dev.galactica.sky.Starfield;
 import dev.galactica.star.Star;
 import dev.galactica.star.StarKind;
@@ -63,6 +64,16 @@ public final class SpaceSkyRenderer {
     private static GpuBuffer near;
     private static int nearIndices;
     private static float galaxyDim = 1f;
+    private static GpuBuffer planets;
+    private static final List<Resolved> RESOLVED = new ArrayList<>();
+    /** On-screen pixels per radian at the default 70° FOV on a 1080-line window. */
+    private static final double PX_PER_RAD = 885.0;
+    /** Bodies wider than this (radians) are painted by PlanetImager instead of drawn as a dot (~4 px). */
+    private static final double RESOLVE_RAD = 0.0045;
+
+    /** A planet or moon big enough on screen to be painted, with the texture made for this frame. */
+    private record Resolved(float dx, float dy, float dz, double halfAngle, double distance,
+                            net.minecraft.client.renderer.texture.DynamicTexture texture, float brightness) {}
 
     public static boolean active() {
         Minecraft mc = Minecraft.getInstance();
@@ -78,7 +89,10 @@ public final class SpaceSkyRenderer {
         SkyManager.BakedStars st = mgr.takeStars();
         if (st != null) rebuildStars(st.stars());
         if (sphere == null) buildSphere();
+        PlanetSprites.beginFrame();
         rebuildNear(mgr);
+        rebuildPlanets();
+        PlanetSprites.evict();
 
         // Resolve every texture first: creating a DynamicTexture uploads it, and uploads are
         // commands that are illegal while a render pass is open.
@@ -102,6 +116,20 @@ public final class SpaceSkyRenderer {
             if (near != null && nearIndices > 0) {
                 draw(pass, quads, modelView, near, nearIndices, discView, clamp,
                         new Vector4f(1, 1, 1, 1), "Near bodies");
+            }
+            // Resolved planets, far to near, each with its own painted texture.
+            for (int i = 0; i < RESOLVED.size(); i++) {
+                Resolved r = RESOLVED.get(i);
+                GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(modelView,
+                        new Vector4f(r.brightness(), r.brightness(), r.brightness(), 1f));
+                pass.pushDebugGroup(() -> "Planet");
+                pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.END_SKY));
+                pass.setUniform("DynamicTransforms", transforms);
+                pass.setUniform("Sampler0", r.texture().getTextureView(), clamp);
+                pass.setVertexBuffer(0, planets.slice());
+                pass.setIndexBuffer(quads.getBuffer(6), quads.type());
+                pass.drawIndexed(6, 1, 0, i * 4, 0);
+                pass.popDebugGroup();
             }
         }
     }
@@ -175,6 +203,7 @@ public final class SpaceSkyRenderer {
             nearIndices = 0;
         }
         galaxyDim = 1f;
+        RESOLVED.clear();
         GalacticPos eye = mgr.viewer();
         if (eye == null) return;
         Neighbourhood nb = mgr.neighbourhood();
@@ -186,6 +215,7 @@ public final class SpaceSkyRenderer {
 
         List<NearQuad> quads = new ArrayList<>();
         float[] rgb = new float[3];
+        RESOLVED.clear();
         double t = mgr.nav() != null ? mgr.nav().timeSeconds() : 0;
 
         // Star: disc at its true angular size, or a PSF-sized dot when unresolved.
@@ -210,6 +240,10 @@ public final class SpaceSkyRenderer {
             double ratio = b.albedo() * b.radiusMetres() * b.radiusMetres() * dStar * dStar / (2 * Math.PI * a * a * d * d) * 0.5;
             double mag = magStar - 2.5 * Math.log10(Math.max(1e-30, ratio));
             if (lStar <= 0 || mag > 7.0 && ang < STAR_SPRITE) continue;
+            if (ang * 2 * PlanetImager.extent(b) > RESOLVE_RAD) {
+                resolve(l, star, sp, eye, d, ang, a, rgb, t);
+                continue;
+            }
             float alpha = (float) Math.min(1.0, 0.35 * Math.pow(10, -0.4 * (mag - 6.5)));
             double size = Math.max(ang * 2.0, STAR_SPRITE);
             int c = bodyColour(b.type());
@@ -224,6 +258,87 @@ public final class SpaceSkyRenderer {
                 near = RenderSystem.getDevice().createBuffer(() -> "Galactica near bodies", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
             }
         }
+    }
+
+    /**
+     * Sets up the imager view for a body and queues it for painting. The quad basis is the same one
+     * {@link #spriteQuad} builds, so the painted image lands exactly on the quad.
+     */
+    private static void resolve(Neighbourhood.Located l, Star star, GalacticPos starPos, GalacticPos eye, double d,
+                                double ang, double orbitRadius, float[] starRgb, double t) {
+        Body b = l.body();
+        double[] g = l.pos().metresFrom(eye);
+        double[] f = Frames.galacticToMc(g[0], g[1], g[2]);
+        normalize(f);
+        double[] ls = starPos.metresFrom(l.pos());
+        double[] toStar = Frames.galacticToMc(ls[0], ls[1], ls[2]);
+        normalize(toStar);
+        Vector3f[] basis = quadBasis((float) f[0], (float) f[1], (float) f[2]);
+        PlanetImager.View v = new PlanetImager.View();
+        v.forward = f;
+        v.up = new double[] {basis[1].x, basis[1].y, basis[1].z};
+        v.right = cross(f, v.up); // imager convention: right = forward × up
+        v.toStar = toStar;
+        Blackbody.linearRgb(Math.max(1000, star.temperature()), starRgb);
+        v.starR = starRgb[0];
+        v.starG = starRgb[1];
+        v.starB = starRgb[2];
+        // Spin axis: the system normal tipped by the axial tilt, expressed in Minecraft axes.
+        double tilt = Math.toRadians(b.axialTiltDeg());
+        double[] spinG = new double[3];
+        dev.galactica.system.SystemFrame.toGalactic(star, Math.sin(tilt), Math.cos(tilt), 0, spinG);
+        v.spinAxis = Frames.galacticToMc(spinG[0], spinG[1], spinG[2]);
+        normalize(v.spinAxis);
+        double period = b.rotationHours() * 3600.0;
+        v.rotationRad = period == 0 ? 0 : (2 * Math.PI * (t / period)) % (2 * Math.PI);
+
+        double extent = PlanetImager.extent(b);
+        double halfAngle = Math.min(1.2, Math.atan(extent * Math.tan(ang)));
+        double pixels = 2 * halfAngle * PX_PER_RAD;
+        var tex = PlanetSprites.get(b, v, pixels);
+        // Exposure: the painted image is exposed for Earth-like insolation; far from the star it dims,
+        // compressed (^0.3) the way a camera with auto-exposure would show a dim outer planet.
+        double flux = star.luminosity() / Math.max(1e-12, Math.pow(orbitRadius / Units.AU, 2));
+        float brightness = (float) Math.max(0.2, Math.min(1.0, Math.pow(flux, 0.3)));
+        RESOLVED.add(new Resolved((float) f[0], (float) f[1], (float) f[2], halfAngle, d, tex, brightness));
+    }
+
+    private static void rebuildPlanets() {
+        if (planets != null) {
+            planets.close();
+            planets = null;
+        }
+        if (RESOLVED.isEmpty()) return;
+        RESOLVED.sort((x, y) -> Double.compare(y.distance(), x.distance()));
+        try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(RESOLVED.size() * 4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
+            BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
+            for (Resolved r : RESOLVED) spriteQuad(b, r.dx(), r.dy(), r.dz(), R_NEAR - 1f, r.halfAngle(), 0xFFFFFFFF);
+            try (MeshData mesh = b.buildOrThrow()) {
+                planets = RenderSystem.getDevice().createBuffer(() -> "Galactica planets", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+            }
+        }
+    }
+
+    private static void normalize(double[] v) {
+        double n = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (n > 0) {
+            v[0] /= n;
+            v[1] /= n;
+            v[2] /= n;
+        }
+    }
+
+    private static double[] cross(double[] a, double[] b) {
+        return new double[] {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    }
+
+    /** Tangent basis {t1, t2} of a sprite facing the origin along dir; shared by sprites and planets. */
+    private static Vector3f[] quadBasis(float dx, float dy, float dz) {
+        Vector3f dir = new Vector3f(dx, dy, dz).normalize();
+        Vector3f up = Math.abs(dir.y) > 0.99f ? new Vector3f(1, 0, 0) : new Vector3f(0, 1, 0);
+        Vector3f t1 = new Vector3f(dir).cross(up).normalize();
+        Vector3f t2 = new Vector3f(dir).cross(t1).normalize();
+        return new Vector3f[] {t1, t2};
     }
 
     private record NearQuad(float dx, float dy, float dz, double size, int argb) {}
@@ -257,9 +372,8 @@ public final class SpaceSkyRenderer {
     /** A camera-facing quad centred on direction (dx, dy, dz) at the given shell radius; angular size in radians. */
     private static void spriteQuad(BufferBuilder b, float dx, float dy, float dz, float radius, double angularSize, int argb) {
         Vector3f dir = new Vector3f(dx, dy, dz).normalize();
-        Vector3f up = Math.abs(dir.y) > 0.99f ? new Vector3f(1, 0, 0) : new Vector3f(0, 1, 0);
-        Vector3f t1 = new Vector3f(dir).cross(up).normalize();
-        Vector3f t2 = new Vector3f(dir).cross(t1).normalize();
+        Vector3f[] basis = quadBasis(dx, dy, dz);
+        Vector3f t1 = basis[0], t2 = basis[1];
         float h = (float) (Math.tan(Math.min(1.2, angularSize)) * radius);
         Vector3f c = new Vector3f(dir).mul(radius);
         float[][] v = new float[4][];

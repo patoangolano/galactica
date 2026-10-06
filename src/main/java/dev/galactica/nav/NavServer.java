@@ -21,10 +21,10 @@ import java.util.UUID;
 /**
  * Server side of space travel.
  *
- * <p><b>Warp drive.</b> Flying in space and holding sprint spools the drive: speed grows 15 % per
+ * <p><b>Warp drive.</b> Flying in space and holding the sprint key spools the drive: speed grows 15 % per
  * tick from 1 km/s, so full warp (10 pc/s) is ~12 s away. A governor caps speed at half the
- * distance to the nearest surface per second, so the ship always decelerates smoothly on arrival,
- * as in Elite's supercruise. Sneaking cuts the drive. While warping only the galactic origin moves;
+ * distance per second to the nearest surface ahead (35° cone), so the ship decelerates smoothly on
+ * arrival, as in Elite's supercruise, while leaving a planet is unrestricted. Sneaking cuts the drive. While warping only the galactic origin moves;
  * the player's block position is untouched.
  *
  * <p><b>Floating origin.</b> Any player more than {@link #ORIGIN_LIMIT} blocks from block (0,0,0)
@@ -67,10 +67,15 @@ public final class NavServer {
 
         GalacticPos here = Frames.playerPos(nav, p.getX(), p.getY(), p.getZ());
         double speed = nav.speed();
-        if (p.isShiftKeyDown()) {
+        // Raw key state, not isSprinting(): vanilla only counts as sprinting while moving forward,
+        // and the drive should spool with the key alone, whatever direction the player drifts.
+        var input = p.getLastClientInput();
+        if (input.shift()) {
             speed = 0;
-        } else if (p.isSprinting() && p.getAbilities().flying) {
-            double governor = Math.max(SPOOL_MIN, 0.5 * neighbourhood(p).distanceToNearestSurface(here, t));
+        } else if (input.sprint() && p.getAbilities().flying) {
+            Vec3 look = p.getLookAngle();
+            double[] dir = Frames.mcToGalactic(look.x, look.y, look.z);
+            double governor = Math.max(SPOOL_MIN, 0.5 * neighbourhood(p).distanceToNearestSurfaceAhead(here, t, dir));
             speed = Math.min(Math.min(nav.maxSpeed(), governor), Math.max(SPOOL_MIN, speed * SPOOL_RATE));
         } else {
             speed = speed < SPOOL_MIN ? 0 : speed * 0.8; // drop out of warp over ~1 s

@@ -22,7 +22,7 @@ public final class SolarSystem {
 
     private static List<Body> build() {
         double sun = Units.SOLAR_MASS;
-        Body earth = planet(3, "Earth", BodyType.TERRAN, 1.00000, 0.01671, 0.000, 0.0, 114.207, 357.517, sun,
+        Body earth = planet(3, "Earth", BodyType.TERRAN, 1.00000, 0.01671, 0.000, -11.26064, 114.207, 357.517, sun,
                 1.0, 1.0, 0.306, 255, 288, 1.013, Body.Atmosphere.N2_O2, 23.934, 23.44, false, Body.Life.COMPLEX);
         Body mars = planet(4, "Mars", BodyType.DESERT, 1.52366, 0.09341, 1.850, 49.558, 286.502, 19.393, sun,
                 0.107, 0.532, 0.25, 210, 210, 0.006, Body.Atmosphere.TRACE_CO2, 24.623, 25.19, false, Body.Life.NONE);

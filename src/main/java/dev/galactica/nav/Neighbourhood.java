@@ -6,6 +6,7 @@ import dev.galactica.galaxy.StarCatalog;
 import dev.galactica.science.Units;
 import dev.galactica.star.Star;
 import dev.galactica.system.Body;
+import dev.galactica.system.SystemFrame;
 import dev.galactica.system.SystemGenerator;
 
 import java.util.ArrayList;
@@ -94,22 +95,23 @@ public final class Neighbourhood {
         return systemBodies;
     }
 
-    /** Every planet and moon of the current system at time t, as galactic positions. */
+    /** Every planet and moon of the current system at time t, as galactic positions, through the system's {@link SystemFrame}. */
     public List<Located> locateBodies(GalacticPos p, double t) {
         Star s = systemStar(p);
         if (s == null) return List.of();
         GalacticPos sp = starPos(s);
         List<Located> out = new ArrayList<>();
-        double[] buf = new double[3];
+        double[] buf = new double[3], g = new double[3];
         for (Body planet : systemBodies) {
             planet.orbit().positionAt(t, buf);
-            double[] g = Frames.mcToGalactic(buf[0], buf[1], buf[2]);
+            SystemFrame.toGalactic(s, buf[0], buf[1], buf[2], g);
             GalacticPos pp = sp.plusMetres(g[0], g[1], g[2]);
             out.add(new Located(planet, null, pp));
+            // Moons share the system frame until planetary obliquities exist (M2).
             for (Body moon : planet.moons()) {
                 moon.orbit().positionAt(t, buf);
-                double[] gm = Frames.mcToGalactic(buf[0], buf[1], buf[2]);
-                out.add(new Located(moon, planet, pp.plusMetres(gm[0], gm[1], gm[2])));
+                SystemFrame.toGalactic(s, buf[0], buf[1], buf[2], g);
+                out.add(new Located(moon, planet, pp.plusMetres(g[0], g[1], g[2])));
             }
         }
         return out;
@@ -120,12 +122,30 @@ public final class Neighbourhood {
      * governor caps speed to a fraction of it, so travel always slows down on arrival.
      */
     public double distanceToNearestSurface(GalacticPos p, double t) {
-        Star s = nearestStar(p);
+        return distanceToNearestSurfaceAhead(p, t, null);
+    }
+
+    /**
+     * Like {@link #distanceToNearestSurface} but only counts bodies inside a 35° cone around
+     * {@code dirGal} (unit, galactic frame), plus anything already within 3 radii. Leaving a planet
+     * is therefore unrestricted while approaching one still brakes. {@code dirGal == null} counts all.
+     */
+    public double distanceToNearestSurfaceAhead(GalacticPos p, double t, double[] dirGal) {
         double best = Double.MAX_VALUE;
-        if (s != null) best = starPos(s).distanceMetres(p) - s.radiusMetres();
-        for (Located l : locateBodies(p, t)) {
-            best = Math.min(best, l.pos().distanceMetres(p) - l.body().radiusMetres());
-        }
+        Star s = nearestStar(p);
+        if (s != null) best = Math.min(best, aheadDistance(starPos(s), s.radiusMetres(), p, dirGal));
+        for (Located l : locateBodies(p, t)) best = Math.min(best, aheadDistance(l.pos(), l.body().radiusMetres(), p, dirGal));
         return Math.max(0, best);
+    }
+
+    private static final double CONE_COS = Math.cos(Math.toRadians(35));
+
+    private static double aheadDistance(GalacticPos target, double radius, GalacticPos p, double[] dir) {
+        double[] d = target.metresFrom(p);
+        double len = Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        double surface = len - radius;
+        if (dir == null || surface < 3 * radius) return surface;
+        double cos = (d[0] * dir[0] + d[1] * dir[1] + d[2] * dir[2]) / Math.max(1e-30, len);
+        return cos >= CONE_COS ? surface : Double.MAX_VALUE;
     }
 }

@@ -34,6 +34,7 @@ import java.util.List;
  * /galactica goto &lt;star name&gt;        catalog stars: Sol, Sirius A, Betelgeuse, Sagittarius A* ...
  * /galactica coords &lt;x&gt; &lt;y&gt; &lt;z&gt;      galactocentric parsecs (the Sun is at 8178 0 20.8)
  * /galactica system                   planets and moons of the current system
+ * /galactica orbit &lt;body&gt;              park on the day side of a planet or moon of this system
  * /galactica maxwarp &lt;pc/s&gt;          drive limit
  * </pre>
  */
@@ -65,6 +66,8 @@ public final class GalacticaCommands {
                 .then(Commands.literal("goto")
                         .then(Commands.argument("star", StringArgumentType.greedyString()).executes(GalacticaCommands::gotoStar)))
                 .then(Commands.literal("system").executes(GalacticaCommands::system))
+                .then(Commands.literal("orbit")
+                        .then(Commands.argument("body", StringArgumentType.greedyString()).executes(GalacticaCommands::orbit)))
                 .then(Commands.literal("coords")
                         .then(Commands.argument("x", DoubleArgumentType.doubleArg(-60_000, 60_000))
                                 .then(Commands.argument("y", DoubleArgumentType.doubleArg(-60_000, 60_000))
@@ -217,6 +220,42 @@ public final class GalacticaCommands {
                     b.moons().isEmpty() ? "" : " · " + b.moons().size() + " moons"));
         }
         return bodies.size();
+    }
+
+    /**
+     * Parks the player on the star-facing side of a body, at a distance where it spans ~40 degrees of
+     * sky (rings included), offset 25 degrees off the star line so the terminator shows.
+     */
+    private static int orbit(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer p = c.getSource().getPlayerOrException();
+        GalacticPos g = here(p);
+        Neighbourhood n = NavServer.neighbourhood(p);
+        Star s = n.systemStar(g);
+        String name = StringArgumentType.getString(c, "body");
+        if (s == null) {
+            c.getSource().sendFailure(Component.literal("Interstellar space: no system within 0.6 pc"));
+            return 0;
+        }
+        double t = p.getAttachedOrCreate(Galactica.NAV).timeSeconds();
+        for (Neighbourhood.Located l : n.locateBodies(g, t)) {
+            Body b = l.body();
+            boolean match = b.name().equalsIgnoreCase(name) || b.name().equalsIgnoreCase(s.name() + " " + name);
+            if (!match) continue;
+            double extent = b.rings() ? 2.4 : 1.0;
+            double d = b.radiusMetres() * extent / Math.tan(Math.toRadians(20));
+            double[] toStar = Neighbourhood.starPos(s).metresFrom(l.pos());
+            double len = Math.sqrt(toStar[0] * toStar[0] + toStar[1] * toStar[1] + toStar[2] * toStar[2]);
+            double ux = toStar[0] / len, uy = toStar[1] / len, uz = toStar[2] / len;
+            // Rotate the star direction 25 degrees about galactic z so the view shows a gibbous phase, not a flat full disc.
+            double a = Math.toRadians(25), ca = Math.cos(a), sa = Math.sin(a);
+            double vx = ux * ca - uy * sa, vy = ux * sa + uy * ca, vz = uz + 0.15;
+            double vn = Math.sqrt(vx * vx + vy * vy + vz * vz);
+            NavServer.moveTo(p, l.pos().plusMetres(vx / vn * d, vy / vn * d, vz / vn * d));
+            say(c, String.format("In orbit of %s (%s), altitude %s", b.name(), b.type().label, distance(d - b.radiusMetres())));
+            return 1;
+        }
+        c.getSource().sendFailure(Component.literal("No body named " + name + " in " + s.name() + " (try /galactica system)"));
+        return 0;
     }
 
     private static void say(CommandContext<CommandSourceStack> c, String s) {

@@ -47,7 +47,7 @@ Loader API (Fabric) + Mixins pontuais no render do céu. O núcleo científico (
 4. Num dimension_type com `has_fixed_time`, sem `default_clock` o `/time` quebra.
 
 ## Simplificações conhecidas (próximos marcos)
-- Os planos orbitais dos sistemas estão no plano galáctico (a eclíptica real está inclinada ~60°).
+- (resolvido em M2: SystemFrame dá a eclíptica real a 60,19° e orientação isotrópica aos demais sistemas)
 - Planetas são discos com cor por tipo: sem fase, atmosfera nem pouso (M2–M4).
 - Vizinhança densa (bojo): só o sector atual é varrido para achar a estrela mais próxima.
 
