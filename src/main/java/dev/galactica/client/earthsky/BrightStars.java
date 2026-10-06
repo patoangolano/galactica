@@ -13,14 +13,28 @@ import java.util.List;
  * Star Catalogue, 5th ed. (Hoffleit &amp; Warren 1991); combined light is used for unresolved
  * doubles (α Cen, Mizar, γ Leo) and the mean for variables (Betelgeuse, γ Cas).
  *
- * <p>The procedural galaxy also produces stars around the Sun; {@link EarthSkyBake} drops the
- * procedural ones brighter than {@link #COMPLETE_TO_MAG} so this list alone sets the bright sky.
+ * <p>{@link #catalogue()} merges this named list with every star of the Yale Bright Star Catalogue
+ * down to {@link #CATALOGUE_LIMIT_MAG} ({@link YaleBrightStars}); the named entries win where both
+ * have a star (they carry combined light for close doubles). The procedural galaxy also produces
+ * stars around the Sun; {@link EarthSkyBake} drops the procedural ones brighter than
+ * {@link #CATALOGUE_LIMIT_MAG}, so every star a naked eye picks out first is a real one at its real
+ * place.
  */
 public final class BrightStars {
     private BrightStars() {}
 
-    /** The list is complete down to this V magnitude. */
+    /** The named list is complete down to this V magnitude. */
     public static final double COMPLETE_TO_MAG = 2.5;
+    /** {@link #catalogue()} is complete (Yale BSC) down to this V magnitude. */
+    public static final double CATALOGUE_LIMIT_MAG = 4.5;
+    /**
+     * Yale entries closer than this to a named star are that star or an unresolved component of it,
+     * degrees. 3′ is above the naked eye's ~1–2′ resolution yet below naked-eye pairs such as
+     * μ¹/μ² Sco (6′) or δ Cen and its 4.5 mag neighbour (5′), which stay separate stars.
+     */
+    public static final double SAME_STAR_DEG = 0.05;
+    /** B−V assumed when the catalogue has none (a Sun-like colour). */
+    private static final double DEFAULT_BV = 0.65;
 
     /** One catalogue star: J2000 right ascension and declination in degrees, V magnitude, B−V. */
     public record Entry(String name, double raDeg, double decDeg, double vmag, double bv) {
@@ -29,6 +43,7 @@ public final class BrightStars {
          * T = 4600 K · (1/(0.92(B−V) + 1.7) + 1/(0.92(B−V) + 0.62)).
          */
         public double temperature() {
+            double bv = Double.isNaN(this.bv) ? DEFAULT_BV : this.bv;
             return 4600.0 * (1.0 / (0.92 * bv + 1.7) + 1.0 / (0.92 * bv + 0.62));
         }
     }
@@ -65,6 +80,7 @@ public final class BrightStars {
             s("Miaplacidus", "09 13 12.0", "-69 43 02", 1.67, 0.07),
             s("Alnilam", "05 36 12.8", "-01 12 07", 1.69, -0.18),
             s("Alnair", "22 08 14.0", "-46 57 40", 1.74, -0.13),
+            s("Regor", "08 09 31.9", "-47 20 12", 1.78, -0.22),
             s("Alnitak", "05 40 45.5", "-01 56 34", 1.77, -0.21),
             s("Alioth", "12 54 01.7", "+55 57 35", 1.77, -0.02),
             s("Dubhe", "11 03 43.7", "+61 45 03", 1.79, 1.07),
@@ -111,6 +127,7 @@ public final class BrightStars {
             s("Larawag", "16 50 09.8", "-34 17 36", 2.29, 1.15),
             s("Alpha Lupi", "14 41 55.8", "-47 23 17", 2.30, -0.15),
             s("Epsilon Centauri", "13 39 53.3", "-53 27 59", 2.30, -0.17),
+            s("Eta Centauri", "14 35 30.4", "-42 09 28", 2.31, -0.19),
             s("Merak", "11 01 50.5", "+56 22 57", 2.37, -0.02),
             s("Izar", "14 44 59.2", "+27 04 27", 2.37, 0.97),
             s("Enif", "21 44 11.2", "+09 52 30", 2.39, 1.53),
@@ -168,8 +185,49 @@ public final class BrightStars {
             s("Merope", "03 46 19.6", "+23 56 54", 4.18, -0.06),
             s("Taygeta", "03 45 12.5", "+24 28 02", 4.30, -0.11));
 
+    private static volatile List<Entry> catalogue;
+
+    /** The named stars only. */
     public static List<Entry> all() {
         return ALL;
+    }
+
+    /** Every Yale BSC star of V ≤ {@link #CATALOGUE_LIMIT_MAG}, named stars substituted, brightest first. */
+    public static List<Entry> catalogue() {
+        List<Entry> c = catalogue;
+        if (c == null) catalogue = c = buildCatalogue();
+        return c;
+    }
+
+    /** The raw Yale rows (V ≤ {@link #CATALOGUE_LIMIT_MAG}) as entries named "HR n". */
+    public static List<Entry> yale() {
+        List<Entry> out = new java.util.ArrayList<>(YaleBrightStars.ROWS.length);
+        for (String row : YaleBrightStars.ROWS) {
+            String[] f = row.split(",", 6);
+            double bv = f[4].isEmpty() ? Double.NaN : Double.parseDouble(f[4]);
+            out.add(new Entry("HR " + f[0], Double.parseDouble(f[1]), Double.parseDouble(f[2]), Double.parseDouble(f[3]), bv));
+        }
+        return out;
+    }
+
+    private static List<Entry> buildCatalogue() {
+        List<Entry> out = new java.util.ArrayList<>(ALL);
+        double[][] named = new double[ALL.size()][];
+        for (int i = 0; i < named.length; i++) named[i] = EquatorialFrame.equatorial(ALL.get(i).raDeg(), ALL.get(i).decDeg());
+        double cosLimit = Math.cos(Math.toRadians(SAME_STAR_DEG));
+        for (Entry y : yale()) {
+            double[] d = EquatorialFrame.equatorial(y.raDeg(), y.decDeg());
+            boolean dup = false;
+            for (double[] n : named) {
+                if (n[0] * d[0] + n[1] * d[1] + n[2] * d[2] > cosLimit) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup) out.add(y);
+        }
+        out.sort((a, b) -> Double.compare(a.vmag(), b.vmag()));
+        return List.copyOf(out);
     }
 
     public static Entry byName(String name) {

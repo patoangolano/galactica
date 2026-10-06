@@ -67,9 +67,13 @@ class EarthSkyBakeTest {
         // The real sky holds ~9 000 stars to V = 6.5 (Yale BSC); the model gives about that.
         assertTrue(stars.size() > 5_000 && stars.size() < 16_000, "n = " + stars.size());
         assertEquals("Sirius", stars.get(0).name());
+        long real = stars.stream().filter(x -> x.mag() < BrightStars.CATALOGUE_LIMIT_MAG).count();
+        assertEquals(BrightStars.catalogue().stream().filter(e -> e.vmag() < BrightStars.CATALOGUE_LIMIT_MAG).count(), real, "every star brighter than V 4.5 is a catalogue star, and all of them are drawn");
         for (EarthSkyBake.Sprite s : stars) {
             assertTrue(s.mag() <= EarthSkyBake.LIMITING_MAG);
-            if (s.mag() < BrightStars.COMPLETE_TO_MAG) assertNotNull(BrightStars.byName(s.name()), s.name() + " is not a real star");
+            if (s.mag() < BrightStars.CATALOGUE_LIMIT_MAG) {
+                assertTrue(BrightStars.byName(s.name()) != null || s.name().startsWith("HR "), s.name() + " is not a catalogue star");
+            }
             assertEquals(1.0, Math.sqrt(s.bx() * s.bx() + s.by() * s.by() + s.bz() * s.bz()), 1e-4);
         }
     }

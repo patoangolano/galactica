@@ -10,6 +10,7 @@ import dev.galactica.sky.Starfield;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ForkJoinPool;
 import java.util.stream.IntStream;
 
 /**
@@ -22,10 +23,12 @@ import java.util.stream.IntStream;
  *       along the matching galactocentric direction ({@link GalaxySkyBaker#march}), then
  *       {@link SkyTonemap} maps it to 8-bit. Alpha carries the light so the band can be blended over
  *       the vanilla sky colour without darkening it.</li>
- *   <li>Stars: {@link BrightStars} (real, every star to V = 2.5) plus {@link Starfield#compute} from
- *       Sol for everything fainter, down to the naked-eye limit. StarCatalog stars come out of
- *       Starfield at their real l, b; procedural stars brighter than the real catalogue's
- *       completeness limit are dropped so the bright sky is exactly the real one.</li>
+ *   <li>Stars: {@link BrightStars#catalogue()} (real: the Yale Bright Star Catalogue to V = 4.5, about
+ *       900 stars, with the named list's combined-light values) plus {@link Starfield#compute} from
+ *       Sol for everything fainter, down to the naked-eye limit. Galaxy stars brighter than the
+ *       catalogue's limit (procedural ones and {@code StarCatalog} duplicates alike) are dropped, so
+ *       every star that shapes a constellation figure is real and at its real place; the procedural
+ *       model only fills the faint 4.5–6.5 background.</li>
  * </ul>
  */
 public final class EarthSkyBake {
@@ -35,8 +38,6 @@ public final class EarthSkyBake {
     public static final double LIMITING_MAG = 6.5;
     /** The band is a faint glow to the eye; this caps how opaque its brightest pixel may be. */
     public static final double GALAXY_OPACITY = 0.85;
-    /** StarCatalog stars brighter than this are in {@link BrightStars} too; drop the duplicate. */
-    static final double CATALOG_DUPLICATE_MAG = 3.0;
 
     /** A star sprite: unit direction in the star-buffer frame, V magnitude, linear-sRGB colour. */
     public record Sprite(String name, float bx, float by, float bz, double mag, float r, float g, float b) {}
@@ -44,16 +45,26 @@ public final class EarthSkyBake {
     /** Everything the renderer needs. {@code galaxyArgb} is width × height, row-major, 0xAARRGGBB. */
     public record Baked(int width, int height, int[] galaxyArgb, List<Sprite> stars) {}
 
-    public static Baked bake(int width, int height) {
-        return new Baked(width, height, galaxy(width, height), stars(new Galaxy(Frames.GALAXY_SEED)));
+    /** Bakes on {@code pool}; the caller owns the pool (and its thread count and priority). */
+    public static Baked bake(int width, int height, ForkJoinPool pool) {
+        return new Baked(width, height, galaxy(width, height, pool), stars(new Galaxy(Frames.GALAXY_SEED)));
     }
 
-    /** The Milky Way as seen from Sol, in star-buffer equirect layout, with light-carrying alpha. */
+    /** The Milky Way on the common pool (tests). */
     public static int[] galaxy(int width, int height) {
+        return galaxy(width, height, ForkJoinPool.commonPool());
+    }
+
+    /**
+     * The Milky Way as seen from Sol, in star-buffer equirect layout, with light-carrying alpha. The
+     * rows are marched in parallel on {@code pool}: a parallel stream started from inside a
+     * ForkJoinPool task runs in that pool, not in the common pool.
+     */
+    public static int[] galaxy(int width, int height, ForkJoinPool pool) {
         GalaxySkyBaker baker = new GalaxySkyBaker(Frames.GALAXY_SEED);
         double ox = StarCatalog.SOL.x(), oy = StarCatalog.SOL.y(), oz = StarCatalog.SOL.z();
         float[] hdr = new float[width * height * 3];
-        IntStream.range(0, height).parallel().forEach(j -> {
+        pool.submit(() -> IntStream.range(0, height).parallel().forEach(j -> {
             double[] b = new double[3];
             double[] rgb = new double[3];
             for (int i = 0; i < width; i++) {
@@ -65,7 +76,7 @@ public final class EarthSkyBake {
                 hdr[k + 1] = (float) rgb[1];
                 hdr[k + 2] = (float) rgb[2];
             }
-        });
+        })).join();
         SkyTonemap tm = SkyTonemap.fit(hdr);
         int[] argb = new int[width * height];
         for (int i = 0; i < argb.length; i++) argb[i] = lightAlpha(tm.toArgb(hdr[i * 3], hdr[i * 3 + 1], hdr[i * 3 + 2]));
@@ -86,19 +97,18 @@ public final class EarthSkyBake {
         return (a << 24) | (rr << 16) | (gg << 8) | bb;
     }
 
-    /** Real bright stars plus the galaxy's own stars as seen from Sol, brightest first. */
+    /** Real catalogue stars plus the galaxy's own faint stars as seen from Sol, brightest first. */
     public static List<Sprite> stars(Galaxy galaxy) {
         List<Sprite> out = new ArrayList<>();
         float[] rgb = new float[3];
-        for (BrightStars.Entry e : BrightStars.all()) {
+        for (BrightStars.Entry e : BrightStars.catalogue()) {
             double[] b = EquatorialFrame.equatorialToStar(EquatorialFrame.equatorial(e.raDeg(), e.decDeg()));
             Blackbody.linearRgb(e.temperature(), rgb);
             out.add(new Sprite(e.name(), (float) b[0], (float) b[1], (float) b[2], e.vmag(), rgb[0], rgb[1], rgb[2]));
         }
         for (Starfield.VisibleStar v : Starfield.compute(galaxy, StarCatalog.SOL.x(), StarCatalog.SOL.y(), StarCatalog.SOL.z())) {
             double m = v.apparentMag();
-            if (m > LIMITING_MAG || m < BrightStars.COMPLETE_TO_MAG) continue;
-            if (v.star().id() < 0 && m < CATALOG_DUPLICATE_MAG) continue;
+            if (m > LIMITING_MAG || m < BrightStars.CATALOGUE_LIMIT_MAG) continue;
             double[] b = EquatorialFrame.spaceToStar(v.dx(), v.dy(), v.dz());
             double n = Math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
             out.add(new Sprite(v.star().name(), (float) (b[0] / n), (float) (b[1] / n), (float) (b[2] / n), m, v.r(), v.g(), v.b()));
