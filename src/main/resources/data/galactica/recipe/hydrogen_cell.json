@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "R": "minecraft:redstone",
+    "W": "minecraft:water_bucket",
+    "B": "minecraft:glass_bottle"
+  },
+  "pattern": [
+    "R",
+    "W",
+    "B"
+  ],
+  "result": {
+    "id": "galactica:hydrogen_cell"
+  }
+}

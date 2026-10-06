@@ -1,0 +1,14 @@
+{
+  "layers": {
+    "humanoid": [
+      {
+        "texture": "galactica:eva_suit"
+      }
+    ],
+    "humanoid_leggings": [
+      {
+        "texture": "galactica:eva_suit"
+      }
+    ]
+  }
+}
