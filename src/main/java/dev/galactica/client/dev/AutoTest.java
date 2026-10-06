@@ -95,6 +95,9 @@ public final class AutoTest {
         cmd(20, "galactica goto Sol");
         cmd(40, "galactica ship");
         look(40, 90, 10);   shot(5, "17_ship_boarded");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().options.setCameraType(net.minecraft.client.CameraType.THIRD_PERSON_FRONT)));
+        look(10, 130, 25);  shot(10, "17b_ship_exterior");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON)));
         key(5, "keyUp", true);
         shot(100, "18_ship_thrust");
         key(5, "keyUp", false);

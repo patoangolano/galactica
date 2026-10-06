@@ -1,24 +1,30 @@
-hull:fuselage_front: .texOffs(0, 0).addBox(-6.0F, -5.0F, 0.0F, 12.0F, 10.0F, 28.0F), PartPose.ZERO
-hull:fuselage_rear: .texOffs(0, 0).addBox(-6.0F, -5.0F, -28.0F, 12.0F, 10.0F, 28.0F), PartPose.ZERO
-hull:nose: .texOffs(0, 102).addBox(-4.0F, -3.0F, 28.0F, 8.0F, 7.0F, 8.0F), PartPose.ZERO
-hull:nose_tip: .texOffs(32, 86).addBox(-2.0F, -1.5F, 36.0F, 4.0F, 4.0F, 4.0F), PartPose.ZERO
-hull:canopy: .texOffs(48, 82).addBox(-4.0F, -9.0F, 4.0F, 8.0F, 4.0F, 16.0F), PartPose.ZERO
-hull:spine: .texOffs(0, 65).addBox(-3.0F, -8.0F, -14.0F, 6.0F, 3.0F, 18.0F), PartPose.ZERO
-hull:fin: .texOffs(96, 82).addBox(-1.0F, -16.0F, -26.0F, 2.0F, 8.0F, 12.0F), PartPose.ZERO
-hull:belly: .texOffs(54, 38).addBox(-4.0F, 5.0F, -16.0F, 8.0F, 2.0F, 20.0F), PartPose.ZERO
-hull:wing_left: .texOffs(54, 60).addBox(-22.0F, 1.0F, -20.0F, 16.0F, 2.0F, 20.0F), PartPose.ZERO
-hull:wing_right: .texOffs(54, 60).addBox(6.0F, 1.0F, -20.0F, 16.0F, 2.0F, 20.0F), PartPose.ZERO
-hull:wingtip_left: .texOffs(80, 0).addBox(-24.0F, 0.0F, -21.0F, 2.0F, 4.0F, 20.0F), PartPose.ZERO
-hull:wingtip_right: .texOffs(80, 0).addBox(22.0F, 0.0F, -21.0F, 2.0F, 4.0F, 20.0F), PartPose.ZERO
-hull:engine_left: .texOffs(0, 38).addBox(-14.0F, -2.0F, -34.0F, 7.0F, 7.0F, 20.0F), PartPose.ZERO
-hull:engine_right: .texOffs(0, 38).addBox(7.0F, -2.0F, -34.0F, 7.0F, 7.0F, 20.0F), PartPose.ZERO
-hull:strut_front: .texOffs(32, 94).addBox(-1.0F, 5.0F, 20.0F, 2.0F, 6.0F, 2.0F), PartPose.ZERO
-hull:strut_left: .texOffs(32, 94).addBox(-11.0F, 5.0F, -24.0F, 2.0F, 6.0F, 2.0F), PartPose.ZERO
-hull:strut_right: .texOffs(32, 94).addBox(9.0F, 5.0F, -24.0F, 2.0F, 6.0F, 2.0F), PartPose.ZERO
-hull:foot_front: .texOffs(44, 102).addBox(-2.0F, 11.0F, 19.0F, 4.0F, 1.0F, 4.0F), PartPose.ZERO
-hull:foot_left: .texOffs(44, 102).addBox(-12.0F, 11.0F, -25.0F, 4.0F, 1.0F, 4.0F), PartPose.ZERO
-hull:foot_right: .texOffs(44, 102).addBox(8.0F, 11.0F, -25.0F, 4.0F, 1.0F, 4.0F), PartPose.ZERO
-glow:nozzle_left: .texOffs(32, 102).addBox(-13.0F, -1.0F, -35.0F, 5.0F, 5.0F, 1.0F), PartPose.ZERO
-glow:nozzle_right: .texOffs(32, 102).addBox(8.0F, -1.0F, -35.0F, 5.0F, 5.0F, 1.0F), PartPose.ZERO
-glow:plume_left: .texOffs(0, 86).addBox(-2.0F, -2.0F, -12.0F, 4.0F, 4.0F, 12.0F), PartPose.offset(-10.5F, 1.5F, -35.0F)
-glow:plume_right: .texOffs(0, 86).addBox(-2.0F, -2.0F, -12.0F, 4.0F, 4.0F, 12.0F), PartPose.offset(10.5F, 1.5F, -35.0F)
+hull:body_mid: .texOffs(0, 0).addBox(-6.00F, -5.00F, -22.00F, 12.00F, 9.00F, 30.00F), PartPose.ZERO
+hull:body_fwd: .texOffs(208, 21).addBox(-5.00F, -4.00F, 8.00F, 10.00F, 7.50F, 12.00F), PartPose.ZERO
+hull:nose_a: .texOffs(160, 49).addBox(-3.50F, -3.00F, 20.00F, 7.00F, 5.50F, 8.00F), PartPose.ZERO
+hull:nose_b: .texOffs(0, 60).addBox(-2.00F, -2.00F, 28.00F, 4.00F, 3.50F, 6.00F), PartPose.ZERO
+hull:canopy: .texOffs(194, 41).addBox(-3.50F, -8.00F, -2.00F, 7.00F, 3.00F, 15.00F), PartPose.ZERO
+hull:canopy_rake: .texOffs(190, 59).addBox(-3.00F, 0.00F, 0.00F, 6.00F, 3.00F, 8.00F), PartPose.offset(0.00F, -6.00F, 13.00F)
+hull:spine: .texOffs(144, 26).addBox(-2.50F, -7.50F, -22.00F, 5.00F, 2.50F, 20.00F), PartPose.ZERO
+hull:belly: .texOffs(144, 0).addBox(-4.00F, 4.00F, -18.00F, 8.00F, 2.00F, 24.00F), PartPose.ZERO
+hull:intake_left: .texOffs(90, 50).addBox(-9.00F, -2.00F, 2.00F, 3.00F, 5.00F, 9.00F), PartPose.ZERO
+hull:intake_right: .texOffs(90, 50).addBox(6.00F, -2.00F, 2.00F, 3.00F, 5.00F, 9.00F), PartPose.ZERO
+hull:wing_left: .texOffs(0, 39).addBox(-26.00F, -0.75F, -18.00F, 26.00F, 1.50F, 19.00F), PartPose.offset(-6.00F, 1.25F, -4.00F)
+hull:wing_right: .texOffs(0, 39).addBox(0.00F, -0.75F, -18.00F, 26.00F, 1.50F, 19.00F), PartPose.offset(6.00F, 1.25F, -4.00F)
+hull:wingtip_left: .texOffs(90, 30).addBox(-27.00F, -1.75F, -18.00F, 2.00F, 3.50F, 16.00F), PartPose.offset(-6.00F, 1.25F, -4.00F)
+hull:wingtip_right: .texOffs(90, 30).addBox(25.00F, -1.75F, -18.00F, 2.00F, 3.50F, 16.00F), PartPose.offset(6.00F, 1.25F, -4.00F)
+hull:nacelle_left: .texOffs(84, 0).addBox(-15.00F, -3.00F, -30.00F, 8.00F, 8.00F, 22.00F), PartPose.ZERO
+hull:nacelle_right: .texOffs(84, 0).addBox(7.00F, -3.00F, -30.00F, 8.00F, 8.00F, 22.00F), PartPose.ZERO
+hull:ring_left: .texOffs(218, 59).addBox(-15.50F, -3.50F, -9.00F, 9.00F, 9.00F, 2.00F), PartPose.ZERO
+hull:ring_right: .texOffs(218, 59).addBox(6.50F, -3.50F, -9.00F, 9.00F, 9.00F, 2.00F), PartPose.ZERO
+hull:tail_left: .texOffs(208, 0).addBox(-0.75F, -10.00F, -5.50F, 1.50F, 10.00F, 11.00F), PartPose.offset(-3.75F, -5.00F, -24.50F)
+hull:tail_right: .texOffs(208, 0).addBox(-0.75F, -10.00F, -5.50F, 1.50F, 10.00F, 11.00F), PartPose.offset(3.75F, -5.00F, -24.50F)
+hull:strut_front: .texOffs(240, 41).addBox(-1.00F, 6.00F, 16.00F, 2.00F, 5.00F, 2.00F), PartPose.ZERO
+hull:strut_left: .texOffs(240, 41).addBox(-12.00F, 5.00F, -22.00F, 2.00F, 6.00F, 2.00F), PartPose.ZERO
+hull:strut_right: .texOffs(240, 41).addBox(10.00F, 5.00F, -22.00F, 2.00F, 6.00F, 2.00F), PartPose.ZERO
+hull:foot_front: .texOffs(240, 55).addBox(-2.00F, 11.00F, 15.00F, 4.00F, 1.00F, 4.00F), PartPose.ZERO
+hull:foot_left: .texOffs(240, 55).addBox(-13.00F, 11.00F, -23.00F, 4.00F, 1.00F, 4.00F), PartPose.ZERO
+hull:foot_right: .texOffs(240, 55).addBox(9.00F, 11.00F, -23.00F, 4.00F, 1.00F, 4.00F), PartPose.ZERO
+glow:nozzle_left: .texOffs(240, 48).addBox(-14.00F, -2.00F, -31.00F, 6.00F, 6.00F, 1.00F), PartPose.ZERO
+glow:nozzle_right: .texOffs(240, 48).addBox(8.00F, -2.00F, -31.00F, 6.00F, 6.00F, 1.00F), PartPose.ZERO
+glow:plume_left: .texOffs(126, 49).addBox(-2.50F, -2.50F, -12.00F, 5.00F, 5.00F, 12.00F), PartPose.offset(-11.00F, 1.00F, -31.00F)
+glow:plume_right: .texOffs(126, 49).addBox(-2.50F, -2.50F, -12.00F, 5.00F, 5.00F, 12.00F), PartPose.offset(11.00F, 1.00F, -31.00F)

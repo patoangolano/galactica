@@ -1,7 +1,7 @@
 # gen_starship.py — single source of truth for the Starship cuboid model.
 #
 # Writes, from one part table:
-#   src/main/resources/assets/galactica/textures/entity/ship/starship.png   (128x128 box-UV texture)
+#   src/main/resources/assets/galactica/textures/entity/ship/starship.png   (256x256 box-UV texture)
 #   src/main/resources/assets/galactica/textures/item/ship_beacon.png       (16x16 item icon)
 #   assets-src/ship/starship.bbmodel                                        (Blockbench "modded_entity" project)
 #   assets-src/ship/StarshipModel.parts.txt                                 (Java addBox lines pasted into StarshipModel)
@@ -20,37 +20,47 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-TEX = 128
+TEX = 256
 rng = random.Random(0x5EED5A1)
 
 # Design space: 1 unit = 1/16 block, y up, +z = nose, origin at the hull centre (renderer pivot, 0.75 block up).
-# (name, x0, y0, z0, w, h, d, material, layer, uv_share, pivot)
+# (name, x0, y0, z0, w, h, d, material, layer, uv_share, pivot, rotation_deg)
+# Rotation is about the pivot, in degrees (x, y, z), applied Z-Y-X like ModelPart. Mirrored twins reuse UVs.
+# v2 silhouette: stepped tapering nose, raked canopy, swept wings with tip fins, wing-root nacelles,
+# canted twin tails: a compact Star Citizen-style light fighter, 4 blocks long, ~3.8 wide.
+SWEEP, CANT, RAKE = 24, 18, 22
 PARTS = [
-    ("fuselage_front", -6, -5, 0, 12, 10, 28, "hull_stripe", "hull", None, None),
-    ("fuselage_rear", -6, -5, -28, 12, 10, 28, "hull_stripe", "hull", "fuselage_front", None),
-    ("nose", -4, -4, 28, 8, 7, 8, "hull", "hull", None, None),
-    ("nose_tip", -2, -2.5, 36, 4, 4, 4, "accent", "hull", None, None),
-    ("canopy", -4, 5, 4, 8, 4, 16, "glass", "hull", None, None),
-    ("spine", -3, 5, -14, 6, 3, 18, "hull", "hull", None, None),
-    ("fin", -1, 8, -26, 2, 8, 12, "accent", "hull", None, None),
-    ("belly", -4, -7, -16, 8, 2, 20, "metal", "hull", None, None),
-    ("wing_left", 6, -3, -20, 16, 2, 20, "hull", "hull", None, None),
-    ("wing_right", -22, -3, -20, 16, 2, 20, "hull", "hull", "wing_left", None),
-    ("wingtip_left", 22, -4, -21, 2, 4, 20, "accent", "hull", None, None),
-    ("wingtip_right", -24, -4, -21, 2, 4, 20, "accent", "hull", "wingtip_left", None),
-    ("engine_left", 7, -5, -34, 7, 7, 20, "engine", "hull", None, None),
-    ("engine_right", -14, -5, -34, 7, 7, 20, "engine", "hull", "engine_left", None),
-    ("strut_front", -1, -11, 20, 2, 6, 2, "metal", "hull", None, None),
-    ("strut_left", 9, -11, -24, 2, 6, 2, "metal", "hull", "strut_front", None),
-    ("strut_right", -11, -11, -24, 2, 6, 2, "metal", "hull", "strut_front", None),
-    ("foot_front", -2, -12, 19, 4, 1, 4, "metal", "hull", None, None),
-    ("foot_left", 8, -12, -25, 4, 1, 4, "metal", "hull", "foot_front", None),
-    ("foot_right", -12, -12, -25, 4, 1, 4, "metal", "hull", "foot_front", None),
+    ("body_mid", -6, -4, -22, 12, 9, 30, "hull_stripe", "hull", None, None, None),
+    ("body_fwd", -5, -3.5, 8, 10, 7.5, 12, "hull", "hull", None, None, None),
+    ("nose_a", -3.5, -2.5, 20, 7, 5.5, 8, "hull", "hull", None, None, None),
+    ("nose_b", -2, -1.5, 28, 4, 3.5, 6, "accent", "hull", None, None, None),
+    ("canopy", -3.5, 5, -2, 7, 3, 15, "glass", "hull", None, None, None),
+    ("canopy_rake", -3, 3, 13, 6, 3, 8, "glass", "hull", None, (0, 6, 13), (RAKE, 0, 0)),
+    ("spine", -2.5, 5, -22, 5, 2.5, 20, "hull", "hull", None, None, None),
+    ("belly", -4, -6, -18, 8, 2, 24, "metal", "hull", None, None, None),
+    ("intake_left", 6, -3, 2, 3, 5, 9, "metal", "hull", None, None, None),
+    ("intake_right", -9, -3, 2, 3, 5, 9, "metal", "hull", "intake_left", None, None),
+    ("wing_left", 6, -2, -22, 26, 1.5, 19, "hull", "hull", None, (6, -1.25, -4), (0, SWEEP, 0)),
+    ("wing_right", -32, -2, -22, 26, 1.5, 19, "hull", "hull", "wing_left", (-6, -1.25, -4), (0, -SWEEP, 0)),
+    ("wingtip_left", 31, -3, -22, 2, 3.5, 16, "accent", "hull", None, (6, -1.25, -4), (0, SWEEP, 0)),
+    ("wingtip_right", -33, -3, -22, 2, 3.5, 16, "accent", "hull", "wingtip_left", (-6, -1.25, -4), (0, -SWEEP, 0)),
+    ("nacelle_left", 7, -5, -30, 8, 8, 22, "engine", "hull", None, None, None),
+    ("nacelle_right", -15, -5, -30, 8, 8, 22, "engine", "hull", "nacelle_left", None, None),
+    ("ring_left", 6.5, -5.5, -9, 9, 9, 2, "metal", "hull", None, None, None),
+    ("ring_right", -15.5, -5.5, -9, 9, 9, 2, "metal", "hull", "ring_left", None, None),
+    ("tail_left", 3, 5, -30, 1.5, 10, 11, "accent", "hull", None, (3.75, 5, -24.5), (0, 0, -CANT)),
+    ("tail_right", -4.5, 5, -30, 1.5, 10, 11, "accent", "hull", "tail_left", (-3.75, 5, -24.5), (0, 0, CANT)),
+    ("strut_front", -1, -11, 16, 2, 5, 2, "metal", "hull", None, None, None),
+    ("strut_left", 10, -11, -22, 2, 6, 2, "metal", "hull", "strut_front", None, None),
+    ("strut_right", -12, -11, -22, 2, 6, 2, "metal", "hull", "strut_front", None, None),
+    ("foot_front", -2, -12, 15, 4, 1, 4, "metal", "hull", None, None, None),
+    ("foot_left", 9, -12, -23, 4, 1, 4, "metal", "hull", "foot_front", None, None),
+    ("foot_right", -13, -12, -23, 4, 1, 4, "metal", "hull", "foot_front", None, None),
     # Glow layer: drawn emissive and tinted by thrust. Plumes pivot on the nozzle plane so zScale stretches them aft.
-    ("nozzle_left", 8, -4, -35, 5, 5, 1, "glow", "glow", None, None),
-    ("nozzle_right", -13, -4, -35, 5, 5, 1, "glow", "glow", "nozzle_left", None),
-    ("plume_left", 8.5, -3.5, -47, 4, 4, 12, "plume", "glow", None, (10.5, -1.5, -35)),
-    ("plume_right", -12.5, -3.5, -47, 4, 4, 12, "plume", "glow", "plume_left", (-10.5, -1.5, -35)),
+    ("nozzle_left", 8, -4, -31, 6, 6, 1, "glow", "glow", None, None, None),
+    ("nozzle_right", -14, -4, -31, 6, 6, 1, "glow", "glow", "nozzle_left", None, None),
+    ("plume_left", 8.5, -3.5, -43, 5, 5, 12, "plume", "glow", None, (11, -1, -31), None),
+    ("plume_right", -13.5, -3.5, -43, 5, 5, 12, "plume", "glow", "plume_left", (-11, -1, -31), None),
 ]
 
 
@@ -209,24 +219,69 @@ def beacon_icon():
 
 
 def to_model(p):
-    """Design (y up) -> ModelPart space (y down, renderer applies scale(-1,-1,1) so x mirrors too)."""
+    """Design (y up) -> ModelPart space: the renderer applies scale(-1,-1,1), i.e. a 180° turn about z,
+    so x and y negate. Under that turn a rotation about x or y reverses sign and one about z keeps it."""
     name, x0, y0, z0, w, h, d = p[:7]
     mx0, my0 = -(x0 + w), -(y0 + h)
+    rot = p[11] or (0, 0, 0)
+    mrot = (-math.radians(rot[0]), -math.radians(rot[1]), math.radians(rot[2]))
     if p[10] is None:
-        return (0.0, 0.0, 0.0), (mx0, my0, z0)
+        return (0.0, 0.0, 0.0), (mx0, my0, z0), mrot
     px, py, pz = p[10]
     ox, oy, oz = -px, -py, pz
-    return (ox, oy, oz), (mx0 - ox, my0 - oy, z0 - oz)
+    return (ox, oy, oz), (mx0 - ox, my0 - oy, z0 - oz), mrot
 
 
 def java_lines(uv):
     out = []
     for p in PARTS:
-        pivot, (bx, by, bz) = to_model(p)
+        pivot, (bx, by, bz), r = to_model(p)
         u, v = uv[p[0]]
-        pose = "PartPose.ZERO" if p[10] is None else f"PartPose.offset({pivot[0]:.1f}F, {pivot[1]:.1f}F, {pivot[2]:.1f}F)"
-        out.append(f'{p[8]}:{p[0]}: .texOffs({u}, {v}).addBox({bx:.1f}F, {by:.1f}F, {bz:.1f}F, {p[4]:.1f}F, {p[5]:.1f}F, {p[6]:.1f}F), {pose}')
-    return "\n".join(out)
+        pose = "PartPose.ZERO" if p[10] is None else f"PartPose.offset({pivot[0]:.2f}F, {pivot[1]:.2f}F, {pivot[2]:.2f}F)"
+        out.append(f'{p[8]}:{p[0]}: .texOffs({u}, {v}).addBox({bx:.2f}F, {by:.2f}F, {bz:.2f}F, {p[4]:.2f}F, {p[5]:.2f}F, {p[6]:.2f}F), {pose}')
+    return chr(10).join(out)
+
+
+def java_geometry(uv):
+    """StarshipGeometry.java: the one place the model's boxes live (generated, do not edit by hand)."""
+    lines = {"hull": [], "glow": []}
+    for p in PARTS:
+        pivot, (bx, by, bz), r = to_model(p)
+        u, v = uv[p[0]]
+        if p[10] is None and p[11] is None:
+            pose = "PartPose.ZERO"
+        else:
+            pose = (f"PartPose.offsetAndRotation({pivot[0]:.3f}F, {pivot[1]:.3f}F, {pivot[2]:.3f}F, "
+                    f"{r[0]:.5f}F, {r[1]:.5f}F, {r[2]:.5f}F)")
+        lines[p[8]].append(
+            f'        r.addOrReplaceChild("{p[0]}", CubeListBuilder.create().texOffs({u}, {v})'
+            f'.addBox({bx:.3f}F, {by:.3f}F, {bz:.3f}F, {p[4]:.3f}F, {p[5]:.3f}F, {p[6]:.3f}F), {pose});')
+    hull = chr(10).join(lines["hull"])
+    glow = chr(10).join(lines["glow"])
+    return f"""package dev.galactica.client.ship;
+
+import net.minecraft.client.model.geom.PartPose;
+import net.minecraft.client.model.geom.builders.CubeListBuilder;
+import net.minecraft.client.model.geom.builders.PartDefinition;
+
+/**
+ * Starship cuboids, generated by assets-src/ship/gen_starship.py from its part table (do not edit by hand:
+ * change the table and rerun). The texture at textures/entity/ship/starship.png is packed by the same run.
+ */
+final class StarshipGeometry {{
+    private StarshipGeometry() {{}}
+
+    static final int TEXTURE_SIZE = {TEX};
+
+    static void hull(PartDefinition r) {{
+{hull}
+    }}
+
+    static void glow(PartDefinition r) {{
+{glow}
+    }}
+}}
+"""
 
 
 def bbmodel(uv, tex_png):
@@ -238,8 +293,9 @@ def bbmodel(uv, tex_png):
         frm = [x0, y0 + 12, z0]
         to = [x0 + w, y0 + h + 12, z0 + d]
         origin = [p[10][0], p[10][1] + 12, p[10][2]] if p[10] else [0, 12, 0]
+        rotation = list(p[11]) if p[11] else [0, 0, 0]
         elements.append({"name": name, "box_uv": True, "rescale": False, "locked": False, "from": frm, "to": to,
-                         "autouv": 0, "color": 0, "origin": origin, "uv_offset": list(uv[name]),
+                         "autouv": 0, "color": 0, "origin": origin, "rotation": rotation, "uv_offset": list(uv[name]),
                          "faces": {f: {"uv": [0, 0, 0, 0], "texture": 0} for f in ("north", "east", "south", "west", "up", "down")},
                          "type": "cube", "uuid": uid})
         groups[p[8]].append(uid)
@@ -271,6 +327,7 @@ def main():
     here = Path(__file__).resolve().parent
     (here / "starship.bbmodel").write_text(json.dumps(bbmodel(uv, buf.getvalue()), indent=1), encoding="utf-8")
     (here / "StarshipModel.parts.txt").write_text(java_lines(uv) + "\n", encoding="utf-8")
+    (ROOT / "src/main/java/dev/galactica/client/ship/StarshipGeometry.java").write_text(java_geometry(uv), encoding="utf-8")
     print(java_lines(uv))
 
 
