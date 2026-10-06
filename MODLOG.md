@@ -20,3 +20,37 @@ Loader API (Fabric) + Mixins pontuais no render do céu. O núcleo científico (
 
 ## Log
 - 2026-10-06: recon dos três jars de referência e do toolchain 26.3 disparado (workflow `space-mod-recon`).
+- 2026-10-06: build Fabric-only a partir do MultiLoader-Template 26.3 (Loom `net.fabricmc.fabric-loom` 1.18.1, Gradle 9.7.1, fabric-api 0.161.0+26.3 do cache, loader 0.19.5). O Gradle precisa rodar no JDK 25 (`org.gradle.java.home` em gradle.properties), senão o Loom não resolve.
+- Núcleo científico em Java puro, com 12 testes JUnit:
+  - modelo galáctico (disco fino e espesso, barra a 27°, halo, 4 braços log-espirais com pitch de 12°, poeira);
+  - Kroupa IMF e evolução estelar com remanescentes;
+  - catálogo real (Sol, α Cen, Sirius, Betelgeuse, Sgr A*…);
+  - sistemas planetários (estatística do Kepler, Chen-Kipping, zona habitável);
+  - órbitas keplerianas, com o Sistema Solar real (J2000).
+- Validações contra o céu real:
+  - censo perto do Sol: M 76%, K 12%, A 0,5%, B 0,1%;
+  - 9.180 estrelas até mag 6,5 (real: ~9.100);
+  - Sirius a −1,43 mag (real: −1,46);
+  - densidade local de 0,10 pc⁻³ e ~1,4×10¹¹ estrelas no total.
+
+## Fatos do 26.3 descobertos (detalhes em docs/recon/api_*_verified.md)
+- A GPU agora é `com.mojang.renderpearl` (com backends GL e Vulkan). `ResourceLocation` virou `Identifier` e `GuiGraphics` virou `GuiGraphicsExtractor`.
+- Não existe hook de céu na Fabric API. O `SkyRenderer.render` só roda se o dimension_type tiver `"skybox"` diferente de `"none"`.
+- O Iris mapeia os pipelines vanilla por identidade: `END_SKY` vira `SKY_TEXTURED`. O Iris não injeta em `SkyRenderer.render`, então o HEAD-cancel é seguro e o desenho roda na fase `CUSTOM_SKY`.
+- Criar uma `DynamicTexture` faz upload, e upload com render pass aberto causa crash ("Close the existing render pass…"). Todas as texturas são resolvidas antes de abrir o pass.
+- O céu é desenhado em cascas de raio ~100 (o depthFar pode cair a 128 em render distance 2).
+
+## Gotchas (numerados)
+1. Um offset em `double` dentro de um sector de 10 pc resolve só 64 m. Por isso a `GalacticPos` usa células de 1 UA em `long` mais metros em `double` (~0,03 mm).
+2. O ray-march com passo geométrico gera anéis de aliasing quando visto de fora do disco. O passo agora também é limitado pela variação vertical.
+3. O mapa de `armStrength` é enganoso a olho: meça numericamente. A fase de 25° põe Sagitário 0,86 kpc para dentro e Perseu 1,9 kpc para fora.
+4. Num dimension_type com `has_fixed_time`, sem `default_clock` o `/time` quebra.
+
+## Simplificações conhecidas (próximos marcos)
+- Os planos orbitais dos sistemas estão no plano galáctico (a eclíptica real está inclinada ~60°).
+- Planetas são discos com cor por tipo: sem fase, atmosfera nem pouso (M2–M4).
+- Vizinhança densa (bojo): só o sector atual é varrido para achar a estrela mais próxima.
+
+## Como testar
+- `./gradlew runAutotest`: abre o mundo `runs/client/saves/galactica_test`, executa o roteiro em `client/dev/AutoTest.java` e salva screenshots em `runs/client/screenshots/galactica_*.png`. Não usa mouse nem teclado.
+- `./gradlew test`: testes científicos.

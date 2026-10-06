@@ -56,6 +56,13 @@ loom {
             runDir 'runs/client'
             vmArgs '-Xmx4G'
         }
+        autotest {
+            client()
+            configName = 'Galactica Autotest'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
         server {
             server()
             configName = 'Galactica Server'

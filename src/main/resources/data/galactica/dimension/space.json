@@ -1,0 +1,13 @@
+{
+  "type": "galactica:space",
+  "generator": {
+    "type": "minecraft:flat",
+    "settings": {
+      "biome": "galactica:space",
+      "features": false,
+      "lakes": false,
+      "layers": [],
+      "structure_overrides": []
+    }
+  }
+}

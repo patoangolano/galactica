@@ -22,6 +22,7 @@ public final class GalaxySkyBaker {
     public static final double START_PC = 25.0;
     public static final double END_PC = 60_000.0;
     private static final int STEPS = 160;
+    private static final int MAX_STEPS = 700;
 
     /** A_λ / A_V for the R, G, B channel centres (~610, 550, 465 nm), CCM89 with R_V = 3.1. */
     private static final double[] EXTINCTION_RATIO = {0.80, 1.00, 1.30};
@@ -96,14 +97,23 @@ public final class GalaxySkyBaker {
         out[2] = -c * Math.cos(phi);
     }
 
-    /** Integrates one ray. Steps grow geometrically: fine nearby where dust matters, coarse far away. */
+    /**
+     * Integrates one ray. Steps grow geometrically (fine nearby, coarse far away) but are also capped
+     * so the ray never moves more than a quarter of the local disk height per step: without that, an
+     * observer outside the disk crosses the ~600 pc slab in one or two samples and the image breaks
+     * into concentric aliasing rings.
+     */
     public void march(double ox, double oy, double oz, double dx, double dy, double dz, double[] rgb) {
         double tauR = 0, tauG = 0, tauB = 0, r = 0, g = 0, b = 0;
-        double ratio = Math.pow(END_PC / START_PC, 1.0 / STEPS);
+        double growth = Math.pow(END_PC / START_PC, 1.0 / STEPS) - 1;
+        double adz = Math.max(1e-6, Math.abs(dz));
         double s0 = START_PC;
-        for (int i = 0; i < STEPS; i++) {
-            double s1 = s0 * ratio, ds = s1 - s0, s = 0.5 * (s0 + s1);
-            s0 = s1;
+        for (int i = 0; i < MAX_STEPS && s0 < END_PC; i++) {
+            double zNow = oz + dz * s0;
+            double ds = Math.min(s0 * growth, 0.25 * Math.max(Math.abs(zNow), 100.0) / adz);
+            ds = Math.max(ds, 2.0);
+            double s = s0 + 0.5 * ds;
+            s0 += ds;
             double x = ox + dx * s, y = oy + dy * s, z = oz + dz * s;
             if (Math.abs(z) > 12_000 || x * x + y * y > 9.0e8) {
                 if (dz * z > 0) break; // leaving the galaxy for good

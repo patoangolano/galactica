@@ -42,6 +42,18 @@ public final class StellarPhysics {
                 : sampleSegment(u, A2, M_BREAK, M_MAX);
     }
 
+    /** Initial mass drawn from the Kroupa IMF truncated to [lo, hi), by inverting the cumulative fraction. */
+    public static double sampleInitialMass(SeedRng rng, double lo, double hi) {
+        double fLo = fractionAbove(lo), fHi = fractionAbove(hi);
+        double target = fHi + rng.nextDouble() * (fLo - fHi); // fraction above the sampled mass
+        double a = lo, b = hi;
+        for (int i = 0; i < 60; i++) { // fractionAbove is monotone: bisection to ~1e-15 relative
+            double m = Math.sqrt(a * b);
+            if (fractionAbove(m) > target) a = m; else b = m;
+        }
+        return Math.sqrt(a * b);
+    }
+
     /** Fraction of IMF-drawn stars above a given mass, used for tests and population stats. */
     public static double fractionAbove(double mass) {
         if (mass <= M_MIN) return 1.0;

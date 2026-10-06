@@ -39,10 +39,10 @@ public final class GalaxyModel {
     static final double ARM_PITCH = Math.toRadians(12.0);
     static final double ARM_WIDTH = 400.0;
     static final double ARM_REF_RADIUS = 2100.0;     // arms start at the end of the bar
-    /** Phase of arm 0 at ARM_REF_RADIUS, chosen so the Sun lies between Sagittarius and Perseus. */
+    /** Phase of arm 0 at ARM_REF_RADIUS: puts Sagittarius–Carina 0.86 kpc inside the Sun and Perseus 1.9 kpc outside. */
     static final double ARM_PHASE0 = Math.toRadians(25.0);
-    static final double ARM_STAR_CONTRAST = 0.6;     // old stars: arm/interarm ≈ 1.6
-    static final double ARM_YOUNG_CONTRAST = 3.0;    // OB stars concentrate strongly in arms
+    static final double ARM_STAR_CONTRAST = 1.2;     // old stars: arm/interarm ≈ 2 (K-band, Drimmel & Spergel 2001)
+    static final double ARM_YOUNG_CONTRAST = 6.0;    // OB stars concentrate strongly in arms
 
     static final double DUST_L = 3000.0, DUST_H = 100.0;
     /** V-band extinction per parsec at the Sun (≈1 mag/kpc). */
