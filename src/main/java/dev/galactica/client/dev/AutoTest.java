@@ -133,6 +133,7 @@ public final class AutoTest {
         STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(null)));
         // M4: planets. Land on Mars and Earth, check gravity, then climb back to space.
         cmd(20, "galactica goto Sol");
+        STEPS.add(new Step(1, dev.galactica.client.planet.PlanetAutoTest::markDeaths));
         STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Mars")));
         look(200, 0, -10);  shot(5, "20_mars_descent");
         STEPS.add(new Step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Mars", 0.38)));

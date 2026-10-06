@@ -245,6 +245,16 @@ public final class PlanetEntry {
         return true;
     }
 
+    /**
+     * Standing on this planet's ground. The on-ground flag survives a cross-dimension teleport until the
+     * client's next movement packet, so a player sent here from another surface still reads as grounded
+     * at the entry altitude, where no terrain reaches; trusting it there ended the descent flight at once
+     * and dropped the player from Y 600.
+     */
+    private static boolean touchedDown(ServerPlayer p) {
+        return p.onGround() && p.getY() < ENTRY_Y - 8;
+    }
+
     /** {@code p} plus every player sharing its vehicle stack. */
     private static List<ServerPlayer> ridersOf(ServerPlayer p) {
         List<ServerPlayer> out = new ArrayList<>();
@@ -313,7 +323,7 @@ public final class PlanetEntry {
             if (arrival != null) arrival.lowestY = Math.min(arrival.lowestY, p.getY());
             // No bookkeeping (server restarted mid-descent) counts as timed out: never fly for free.
             boolean ends = arrival == null || p.getVehicle() != null
-                    || EvaDescent.ends(p.onGround(), p.getY(), arrival.lowestY, since);
+                    || EvaDescent.ends(touchedDown(p), p.getY(), arrival.lowestY, since);
             if (ends) {
                 if (!p.isCreative() && !p.isSpectator()) {
                     p.getAbilities().mayfly = false;
