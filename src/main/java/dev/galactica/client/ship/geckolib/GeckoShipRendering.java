@@ -5,7 +5,6 @@ import dev.galactica.client.ship.StarshipModel;
 import dev.galactica.client.ship.StarshipRenderState;
 import dev.galactica.client.ship.StarshipRenderer;
 import dev.galactica.ship.ShipAnimator;
-import dev.galactica.ship.ShipEntities;
 import dev.galactica.ship.Starship;
 import com.geckolib.animatable.GeoAnimatable;
 import com.geckolib.animatable.instance.AnimatableInstanceCache;
@@ -24,13 +23,15 @@ import com.geckolib.util.GeckoLibUtil;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
-import net.minecraft.client.renderer.entity.EntityRenderers;
+import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.phys.AABB;
 
 /**
  * Optional GeckoLib 5.5.7 renderer for the Starship. Every GeckoLib reference in the mod lives in this class, which
- * {@code ShipClient} only touches after {@code FabricLoader.isModLoaded("geckolib")}; without GeckoLib the vanilla
+ * {@code ShipClient} only touches when GeckoLib {@code >=5.5.7 <5.6} is loaded (and falls back to the built-in renderer on a
+ * {@link LinkageError}); without GeckoLib the vanilla
  * {@link StarshipRenderer} draws the same model.
  *
  * <p>The ship entity stays a plain {@code VehicleEntity}: it is rendered through {@link GeoReplacedEntityRenderer}
@@ -43,10 +44,13 @@ import net.minecraft.resources.Identifier;
  *   <li>controller {@code canopy}: {@code canopy.open} while nobody is aboard, {@code canopy.close} once boarded;</li>
  *   <li>nozzle gimbal: posed every frame from the thrust-vector state in {@link #adjustModelBonesForRender}.</li>
  * </ul>
- * The emissive layers and the exhaust are drawn by the shared vanilla code on top, from the same part table.
+ * The geometry holds only the hull layer; the emissive lights and engine cores, and the exhaust, are drawn by the
+ * shared vanilla code on top, from the same part table, so nothing is drawn twice.
  */
 public final class GeckoShipRendering {
     private GeckoShipRendering() {}
+
+    private static final String[] GEAR_BONES = {"gear_front", "gear_left", "gear_right"};
 
     static final DataTicket<Boolean> GEAR_DOWN = DataTicket.create("galactica_ship_gear_down", Boolean.class);
     static final DataTicket<Boolean> CANOPY_OPEN = DataTicket.create("galactica_ship_canopy_open", Boolean.class);
@@ -56,8 +60,9 @@ public final class GeckoShipRendering {
     private static final RawAnimation CANOPY_OPEN_ANIM = RawAnimation.begin().thenPlayAndHold("canopy.open");
     private static final RawAnimation CANOPY_CLOSE_ANIM = RawAnimation.begin().thenPlayAndHold("canopy.close");
 
-    public static void register() {
-        EntityRenderers.register(ShipEntities.SHIP, Renderer::new);
+    /** The GeckoLib Starship renderer; called from the renderer provider, so link errors surface at bake. */
+    public static EntityRenderer<Starship, ?> create(EntityRendererProvider.Context context) {
+        return new Renderer(context);
     }
 
     /** The single animatable every Starship is drawn with (GeckoLib keys its state by entity id). */
@@ -152,6 +157,14 @@ public final class GeckoShipRendering {
             float yaw = (float) Math.toRadians(s.gimbalYaw), pitch = (float) Math.toRadians(s.gimbalPitch);
             bones.ifPresent("nozzle_left", b -> b.setRotation(pitch, yaw, 0F));
             bones.ifPresent("nozzle_right", b -> b.setRotation(pitch, yaw, 0F));
+            // Stowed legs sit inside the pods and nose; hide them once folded, as the built-in model does.
+            boolean stowed = ShipAnimator.ease(1F - s.gear) >= 0.98F;
+            for (String leg : GEAR_BONES) bones.ifPresent(leg, b -> b.skipRender(stowed).skipChildrenRender(stowed));
+        }
+
+        @Override
+        protected AABB getBoundingBoxForCulling(Starship ship, float partialTicks) {
+            return StarshipRenderer.cullingBox(ship);
         }
 
         @Override

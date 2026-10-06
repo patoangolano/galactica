@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import dev.galactica.Galactica;
 import dev.galactica.ship.DriveRules;
+import dev.galactica.ship.ExhaustPhysics;
 import dev.galactica.ship.Starship;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.entity.EntityRenderer;
@@ -35,6 +36,9 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
     /** Hull centre (the model pivot) above the entity origin, blocks. */
     public static final float PIVOT_BLOCKS = 0.75F;
     private final StarshipModel hull, lights, cores;
+    private final PoseStack hullPose = new PoseStack();
+    /** Render-thread scratch for {@link #cameraInBody}. */
+    private static final Quaternionf INV = new Quaternionf(), VIEW = new Quaternionf();
 
     public StarshipRenderer(EntityRendererProvider.Context context) {
         super(context);
@@ -75,11 +79,28 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
         }
     }
 
-    /** Keeps the model and a full-length plume inside the frustum test: wings span 5 blocks, plumes up to ~7. */
     @Override
     protected AABB getBoundingBoxForCulling(Starship ship, float partialTicks) {
-        double plume = 1.0 + 7.0 * Math.abs(ship.throttle());
-        return ship.getBoundingBox().inflate(1.5 + plume, 1.0 + plume, 1.5 + plume);
+        return cullingBox(ship);
+    }
+
+    /** Nozzle exit plane behind the hull centre (throat 35 px + bell 6.8 px), plus the 0.5 px pod offset, blocks. */
+    private static final double EXIT_BEHIND_CENTRE = (35.0 + 6.8 + 1.0) / 16.0;
+    /** Half the 5-block wingspan: the hull alone, any attitude. */
+    private static final double HULL_REACH = 2.5;
+    /** RCS puff reach beyond its jet, blocks (ExhaustRenderer's RCS_LENGTH plus its end radius). */
+    private static final double RCS_REACH = 1.0;
+
+    /**
+     * Frustum-culling box for the ship and everything it draws: the hull at any attitude, and the plume out to its
+     * tip ({@link ExhaustPhysics#maxReach}, which also covers the tip's radius), inflated on every axis because the
+     * attitude can point the jet anywhere. Shared with the GeckoLib renderer.
+     */
+    public static AABB cullingBox(Starship ship) {
+        double plume = ExhaustPhysics.maxReach(Math.abs(ship.throttle()), ExhaustRenderer.EXIT_RADIUS);
+        double reach = Math.max(HULL_REACH, EXIT_BEHIND_CENTRE + Math.max(plume, RCS_REACH));
+        // The box is centred on the entity origin; the hull centre sits PIVOT_BLOCKS above it.
+        return ship.getBoundingBox().inflate(reach).move(0, PIVOT_BLOCKS - ship.getBbHeight() / 2.0, 0);
     }
 
     @Override
@@ -114,12 +135,14 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
 
 
     private void submitHull(StarshipRenderState state, PoseStack pose, SubmitNodeCollector out) {
-        if (state.starLit && !IrisCompat.shaderPackActive() && ShipRenderTypes.hullUsable()) {
+        // A glowing ship (spectral arrow) needs the outline that only the model route submits.
+        if (state.starLit && state.outlineColor == 0 && !IrisCompat.shaderPackActive() && ShipRenderTypes.hullUsable()) {
             StarshipModel model = hull;
             int overlay = OverlayTexture.NO_OVERLAY;
+            PoseStack local = hullPose;
             out.submitCustomGeometry(pose, ShipRenderTypes.HULL_LIT_TYPE, (p, buf) -> {
                 model.setupAnim(state);
-                PoseStack local = new PoseStack();
+                // Callbacks run one at a time on the render thread, so one scratch stack per renderer suffices.
                 local.last().set(p);
                 model.root().render(local, new ShadedVertexConsumer(buf, state.toStar, state.direct, state.tint),
                         FULL_BRIGHT, overlay, -1);
@@ -148,10 +171,10 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
 
     /** Camera position and billboard axes in the ship's body frame, for the exhaust geometry. */
     static void cameraInBody(StarshipRenderState state, CameraRenderState camera) {
-        Quaternionf inv = new Quaternionf(state.attitude).conjugate();
+        Quaternionf inv = INV.set(state.attitude).conjugate();
         state.cameraBody.set((float) (camera.pos.x - state.x), (float) (camera.pos.y - state.y - PIVOT_BLOCKS), (float) (camera.pos.z - state.z));
         inv.transform(state.cameraBody);
-        Quaternionf view = new Quaternionf(inv).mul(camera.orientation);
+        Quaternionf view = VIEW.set(inv).mul(camera.orientation);
         view.transform(state.camRightBody.set(1, 0, 0));
         view.transform(state.camUpBody.set(0, 1, 0));
     }

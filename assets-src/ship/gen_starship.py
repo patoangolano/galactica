@@ -3,10 +3,10 @@
 # Writes, from one part table:
 #   src/main/resources/assets/galactica/textures/entity/ship/starship.png           256x256 material-atlas texture
 #   src/main/resources/assets/galactica/textures/item/ship_beacon.png               16x16 item icon (unchanged since v2)
-#   src/main/resources/assets/galactica/geckolib/models/entity/ship.geo.json        Bedrock geometry for the optional GeckoLib renderer
+#   src/main/resources/assets/galactica/geckolib/models/entity/ship.geo.json        Bedrock geometry, hull layer only, for the optional GeckoLib renderer
 #   src/main/resources/assets/galactica/geckolib/animations/entity/ship.animation.json  gear / canopy keyframe animations
-#   src/main/java/dev/galactica/client/ship/StarshipGeometry.java                    vanilla ModelPart boxes (both layers)
-#   assets-src/ship/starship.geo.json                                                 the same geometry, for Blockbench import
+#   src/main/java/dev/galactica/client/ship/StarshipGeometry.java                    vanilla ModelPart boxes (all three layers)
+#   assets-src/ship/starship.geo.json                                                 the full geometry (all layers), for Blockbench import
 #   assets-src/ship/starship.bbmodel                                                  Blockbench "modded_entity" project
 #
 # Run from anywhere:  python assets-src/ship/gen_starship.py
@@ -455,16 +455,20 @@ def r4(v):
     return round(v, 4)
 
 
-def geo_json(uv):
+def geo_json(uv, hull_only=True):
     """Bedrock geometry 1.12: x is mirrored relative to Blockbench's view (origin.x = -to.x, pivot.x negated) and
-    rotations about x and y change sign, as Blockbench's own bedrock codec writes them."""
+    rotations about x and y change sign, as Blockbench's own bedrock codec writes them.
+
+    hull_only (the GeckoLib asset): the GeckoLib renderer draws this lit by the lightmap, and the shared vanilla code draws the
+    emissive light and engine-core layers on top; including them here would draw them twice at the same depth
+    (z-fighting, and cores that never go dark at idle). The Blockbench import copy keeps every layer."""
     bones = []
     for g, (px, py, pz) in GROUPS.items():
         bone = {"name": g, "pivot": [r4(-px), r4(py + FEET), r4(pz)], "cubes": []}
         if g != "body":
             bone["parent"] = "body"
         for p in PARTS:
-            if p["group"] != g:
+            if p["group"] != g or (hull_only and layer_of(p) != "hull"):
                 continue
             cube = {"origin": [r4(-(p["x0"] + p["w"])), r4(p["y0"] + FEET), r4(p["z0"])],
                     "size": [r4(p["w"]), r4(p["h"]), r4(p["d"])], "uv": list(uv[p["name"]])}
@@ -567,9 +571,8 @@ def main():
     # Only rewrite on a pixel change, so a different Pillow's PNG encoder does not churn the file.
     if not icon_path.exists() or Image.open(icon_path).convert("RGBA").tobytes() != icon.tobytes():
         icon.save(icon_path)
-    geo = json.dumps(geo_json(uv), indent=1)
-    (res / "geckolib/models/entity/ship.geo.json").write_text(geo, encoding="utf-8")
-    (HERE / "starship.geo.json").write_text(geo, encoding="utf-8")
+    (res / "geckolib/models/entity/ship.geo.json").write_text(json.dumps(geo_json(uv), indent=1), encoding="utf-8")
+    (HERE / "starship.geo.json").write_text(json.dumps(geo_json(uv, hull_only=False), indent=1), encoding="utf-8")
     (res / "geckolib/animations/entity/ship.animation.json").write_text(json.dumps(animation_json(), indent=1), encoding="utf-8")
     buf = io.BytesIO()
     tex.save(buf, "PNG")

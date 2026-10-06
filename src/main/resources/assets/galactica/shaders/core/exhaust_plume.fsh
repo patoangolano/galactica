@@ -29,13 +29,17 @@ float exhaustSeconds() {
     return GameTime * 1200.0;
 }
 
-// Emissive density at normalised plume coordinates: along 0..1, radius r 0..1 of the local plume radius.
-float plumeDensity(float along, float r, vec3 noisePos, float throttle, float cells) {
+// Turbulence of the jet at plume-plane point (along, across) and chord depth q. Eddies are advected downstream at a
+// fraction of the jet speed, faster at full throttle.
+float plumeTurbulence(float along, float across, float q, float seed, float throttle) {
+    float flow = exhaustSeconds() * (1.5 + 5.0 * throttle);
+    return exhaust_fbm(vec3(along * 7.0 - flow, across * 2.2 + seed * 17.0, q * 2.2));
+}
+
+// Emissive density at normalised plume coordinates: along 0..1, radius r 0..1 of the local plume radius, with the
+// local turbulence value turb (0..1).
+float plumeDensity(float along, float r, float turb, float cells) {
     bool vacuum = cells < 0.5;
-    float t = exhaustSeconds();
-    // Advection: the turbulent eddies move downstream at a fraction of the jet speed, faster at full throttle.
-    float flow = t * (1.5 + 5.0 * throttle);
-    float turb = exhaust_fbm(noisePos + vec3(-flow, 0.0, 0.0));
     float radial = vacuum ? exp(-r * r * 1.6) : exp(-r * r * 3.2);
     float d = radial * (vacuum ? (0.75 + 0.5 * turb) : (0.45 + 1.1 * turb));
     if (!vacuum) {
@@ -44,24 +48,37 @@ float plumeDensity(float along, float r, vec3 noisePos, float throttle, float ce
         float phase = along * cells;
         float f = fract(phase);
         float edge = abs(1.0 - 2.0 * f) * 0.85;
-        float diamond = exp(-pow((r - edge) / 0.13, 2.0));
-        float disc = exp(-pow((f - 0.5) / 0.07, 2.0)) * exp(-r * r * 10.0);
+        float de = (r - edge) / 0.13;
+        float diamond = exp(-de * de);
+        float df = (f - 0.5) / 0.07;
+        float disc = exp(-df * df) * exp(-r * r * 10.0);
         float survive = 1.0 - smoothstep(0.35, 0.85, along);
         d += (0.9 * diamond + 1.6 * disc) * survive * step(phase, cells);
     }
     return d;
 }
 
+// Downstream fade of the visible plume (shared with main's early-out).
+float plumeTail(float along, float cells) {
+    return 1.0 - smoothstep(cells < 0.5 ? 0.45 : 0.6, 1.0, along);
+}
+
 vec3 plumePlane(float along, float across, float seed, float throttle, float cells) {
     // Line of sight through a round jet at lateral offset s: the chord runs over q in [-h, h], h = sqrt(1 - s^2).
     float h = sqrt(max(0.0, 1.0 - across * across));
+    // Cost: the fBm is the expensive part (4 octaves x 8 hashes). It is sampled twice per fragment, at the near and
+    // far quarter-chord points, and interpolated along the chord; the cheap density terms (radial profile, shock
+    // cells) are still integrated at every step. Turbulent structure smaller than half the jet diameter would be
+    // sub-pixel at plume scale anyway.
+    float turbNear = plumeTurbulence(along, across, -0.5 * h, seed, throttle);
+    float turbFar = plumeTurbulence(along, across, 0.5 * h, seed, throttle);
     float sum = 0.0;
     float heatSum = 0.0;
     for (int i = 0; i < MARCH_STEPS; i++) {
-        float q = ((float(i) + 0.5) / float(MARCH_STEPS) * 2.0 - 1.0) * h;
+        float k = (float(i) + 0.5) / float(MARCH_STEPS);
+        float q = (k * 2.0 - 1.0) * h;
         float r = sqrt(across * across + q * q);
-        vec3 p = vec3(along * 7.0, across * 2.2 + seed * 17.0, q * 2.2);
-        float d = plumeDensity(along, r, p, throttle, cells);
+        float d = plumeDensity(along, r, mix(turbNear, turbFar, k), cells);
         sum += d;
         heatSum += d * (1.0 - r);
     }
@@ -71,11 +88,10 @@ vec3 plumePlane(float along, float across, float seed, float throttle, float cel
     bool vacuum = cells < 0.5;
     // Temperature falls downstream (expansion and mixing) and outward from the core.
     float heat = exp(-along * (vacuum ? 1.6 : 2.6)) * (0.55 + 0.45 * coreBias) * (0.7 + 0.3 * throttle);
-    float tail = 1.0 - smoothstep(vacuum ? 0.45 : 0.6, 1.0, along);
     float nozzleBloom = 1.0 + 1.5 * exp(-along * 18.0);
     vec3 col = exhaust_ramp(heat * 1.15);
     if (vacuum) col = mix(col, vec3(0.6, 0.7, 1.0), 0.35);
-    return col * density * tail * nozzleBloom;
+    return col * density * plumeTail(along, cells) * nozzleBloom;
 }
 
 vec3 plumeDisc(vec2 uv, float seed, float throttle) {
@@ -130,9 +146,18 @@ void main() {
     float seed = floor((plumeUv.x + 1.5) / 4.0);
     float local = plumeUv.x - seed * 4.0;
 
+    // Early-out before any noise: off the edge of a strip, or where the tail (or the plane's view weight) has
+    // already faded the plume to nothing.
+    if (abs(plumeUv.y) >= 1.0 || weight < 0.002) {
+        discard;
+    }
     vec3 emission;
     if (kind == 0) {
-        emission = plumePlane(clamp(local, 0.0, 1.0), plumeUv.y, seed, throttle, cells);
+        float along = clamp(local, 0.0, 1.0);
+        if (weight * plumeTail(along, cells) < 0.002) {
+            discard;
+        }
+        emission = plumePlane(along, plumeUv.y, seed, throttle, cells);
     } else if (kind == 1) {
         emission = plumeDisc(vec2(local, plumeUv.y), seed, throttle);
     } else if (kind == 2) {

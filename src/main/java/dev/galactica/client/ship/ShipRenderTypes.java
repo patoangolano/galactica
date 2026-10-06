@@ -39,6 +39,11 @@ import java.util.Set;
  * A pipeline whose shaders fail to compile is remembered in {@link #FAILED} and never queried again until the
  * next resource reload: asking {@code RenderSystem.getCompiledPipelineNullable} again while Iris is active would hit
  * Iris's null cast, and asking a render type to draw would throw.
+ *
+ * <p>Every pipeline, the three {@link #EXHAUST_OIT} stages included, is precompiled at resource reload through
+ * {@code registerOptional}, one pipeline at a time. {@code RenderPipelines.register(OitPipelineSet)} would do the
+ * same but into the required set (it only puts the three stage pipelines in the required map), where a driver that
+ * rejects one fails the whole reload; optional ones that fail are just left uncompiled and caught by the memo.
  */
 public final class ShipRenderTypes {
     private ShipRenderTypes() {}
@@ -106,6 +111,10 @@ public final class ShipRenderTypes {
     public static void init() {
         RenderPipelines.registerOptional(HULL_LIT);
         RenderPipelines.registerOptional(EXHAUST);
+        // Precompiled so turning improved transparency on does not hitch on the first exhaust draw.
+        RenderPipelines.registerOptional(EXHAUST_OIT.depthBoundsPipeline());
+        RenderPipelines.registerOptional(EXHAUST_OIT.transmittancePipeline());
+        RenderPipelines.registerOptional(EXHAUST_OIT.accumulatePipeline());
         Identifier listener = id("ship_shader_retry");
         ResourceLoader loader = ResourceLoader.get(PackType.CLIENT_RESOURCES);
         loader.registerReloadListener(listener, (ResourceManagerReloadListener) rm -> FAILED.clear());

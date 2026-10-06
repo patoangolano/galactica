@@ -69,9 +69,7 @@ public class StarshipModel extends EntityModel<StarshipRenderState> {
         // Stowed legs sit inside the pods and nose: hide them once fully folded so nothing pokes through the skin.
         gearFront.visible = gearLeft.visible = gearRight.visible = stow < 0.98F;
         canopy.xRot = -ShipAnimator.CANOPY_OPEN_DEG * open * DEG;
-        for (ModelPart n : new ModelPart[] {nozzleLeft, nozzleRight}) {
-            n.xRot = -state.gimbalPitch * DEG;
-            n.yRot = -state.gimbalYaw * DEG;
-        }
+        nozzleLeft.xRot = nozzleRight.xRot = -state.gimbalPitch * DEG;
+        nozzleLeft.yRot = nozzleRight.yRot = -state.gimbalYaw * DEG;
     }
 }

@@ -46,4 +46,29 @@ class ShipLightingTest {
         assertEquals(1F, out[2], 1e-6);
         assertTrue(out[0] < out[1] && out[1] < out[2], "a hot star stays bluish");
     }
+
+    @Test
+    void crossingTheSystemEdgeIsContinuous() {
+        double r = 1e15;
+        assertEquals(1, systemFade(0.5 * r, r), 1e-12);
+        assertEquals(1, systemFade(FADE_START * r, r), 1e-12);
+        assertEquals(0.5, systemFade(0.9 * r, r), 1e-12);
+        assertEquals(0, systemFade(r, r), 1e-12);
+        assertEquals(0, systemFade(2 * r, r), 1e-12);
+        // Night and day side both slide to the interstellar floor; no step bigger than the sampling would allow.
+        double far = directStrength(1e-6); // the exposure floor, as at the edge of a big system
+        double prevDay = shade(1, far), prevNight = shade(-1, far);
+        for (int i = 1; i <= 400; i++) {
+            double d = (FADE_START + (1.05 - FADE_START) * i / 400.0) * r;
+            double direct = far * systemFade(d, r);
+            double day = shade(1, direct), night = shade(-1, direct);
+            assertTrue(Math.abs(day - prevDay) < 0.01 && Math.abs(night - prevNight) < 0.01, "step at " + d / r);
+            prevDay = day;
+            prevNight = night;
+        }
+        assertEquals(INTERSTELLAR_AMBIENT, prevDay, 1e-12);
+        assertEquals(INTERSTELLAR_AMBIENT, prevNight, 1e-12);
+        assertEquals(AMBIENT, ambient(MIN_DIRECT), 1e-12);
+        assertEquals(AMBIENT, ambient(1), 1e-12);
+    }
 }

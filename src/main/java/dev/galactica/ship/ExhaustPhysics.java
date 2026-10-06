@@ -161,6 +161,24 @@ public final class ExhaustPhysics {
         return new Plume(r, length, exitRadius, half, jetRadius, spacing, cells, mj, pe, te, t);
     }
 
+    /** Ambient pressures, bar, that {@link #maxReach} samples: vacuum, the diamond threshold, up to a Venus surface. */
+    private static final double[] REACH_PRESSURES_BAR = {0, DIAMOND_MIN_PRESSURE_BAR, 0.1, 0.3, 1, 3, 10, 30, 100};
+
+    /**
+     * How far from the nozzle exit any part of the visible plume can reach at this throttle, whatever the ambient
+     * pressure: the largest {@code length + radiusAt(length)} (tip distance plus tip radius, which bounds every
+     * point of the cone) over vacuum and a ladder of pressures to 100 bar. For frustum culling: a box this much larger
+     * than the hull keeps the plume tip on screen when the hull itself has left the view.
+     */
+    public static double maxReach(double throttle, double exitRadius) {
+        double reach = 0;
+        for (double pa : REACH_PRESSURES_BAR) {
+            Plume p = plume(throttle, pa, exitRadius);
+            reach = Math.max(reach, p.length() + p.radiusAt(p.length()));
+        }
+        return reach;
+    }
+
     /**
      * Barometric pressure at height {@code h} above a reference level with surface pressure {@code p0} and scale
      * height {@code H}: p = p₀·e^(−h/H) (isothermal atmosphere).

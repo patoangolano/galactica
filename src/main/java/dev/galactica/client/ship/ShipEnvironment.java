@@ -35,6 +35,8 @@ public final class ShipEnvironment {
 
     private static long cachedTick = Long.MIN_VALUE;
     private static Star cachedStar;
+    /** Render-thread scratch for the star's blackbody colour. */
+    private static final float[] BLACKBODY = new float[3];
 
     /** Fills the lighting and pressure fields of {@code state} for a ship at its interpolated position. */
     public static void sample(Starship ship, StarshipRenderState state) {
@@ -78,8 +80,8 @@ public final class ShipEnvironment {
         double[] mc3 = Frames.galacticToMc(g[0], g[1], g[2]);
         state.toStar.set((float) mc3[0], (float) mc3[1], (float) mc3[2]).normalize();
         double s = ShipLighting.insolation(star.luminosity(), dist / Units.AU);
-        state.direct = (float) ShipLighting.directStrength(s);
-        float[] bb = new float[3];
+        state.direct = (float) (ShipLighting.directStrength(s) * ShipLighting.systemFade(dist, Neighbourhood.SYSTEM_RADIUS_M));
+        float[] bb = BLACKBODY;
         Blackbody.linearRgb(Math.max(1000, star.temperature()), bb);
         ShipLighting.tint(bb, state.tint);
     }

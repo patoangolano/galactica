@@ -32,6 +32,13 @@ final class ExhaustRenderer {
     /** Largest end-on disc, blocks: the integrated column is brightest within a few nozzle radii of the axis. */
     private static final float MAX_DISC_HALF = 1.5F;
     private static final float RCS_RADIUS = 0.06F, RCS_LENGTH = 0.7F, RCS_HALF_ANGLE_TAN = 0.32F;
+    /** Render-thread scratch (the custom-geometry callbacks run one at a time on it). */
+    private static final Matrix3f GIMBAL = new Matrix3f();
+    private static final float[] WEIGHTS = new float[3];
+    private static final Vector3f[] PLANES = {new Vector3f(), new Vector3f(), new Vector3f()};
+    private static final Vector3f NORMAL = new Vector3f();
+    /** The three axial planes sit 0°, 60° and 120° about the jet axis. */
+    private static final float[] PLANE_COS = {1F, 0.5F, -0.5F}, PLANE_SIN = {0F, (float) Math.sqrt(0.75), (float) Math.sqrt(0.75)};
     private static final int KIND_PLUME = 0, KIND_DISC = 1, KIND_GLOW = 2, KIND_RCS = 3, KIND_RCS_DISC = 4;
 
     /** True if this ship has anything to draw this frame. */
@@ -48,7 +55,7 @@ final class ExhaustRenderer {
         ExhaustPhysics.Plume plume = ExhaustPhysics.plume(s.thrust, s.ambientBar, EXIT_RADIUS);
         float pulse = s.spool > 0 ? 0.5F + 0.5F * (float) Math.sin(s.ageInTicks * (0.4F + 1.6F * s.spool)) : 0F;
         float glow = Math.max(s.thrust, pulse * s.spool * 0.7F);
-        Matrix3f gimbal = new Matrix3f().rotationYXZ(s.gimbalYaw * (float) (Math.PI / 180), s.gimbalPitch * (float) (Math.PI / 180), 0F);
+        Matrix3f gimbal = GIMBAL.rotationYXZ(s.gimbalYaw * (float) (Math.PI / 180), s.gimbalPitch * (float) (Math.PI / 180), 0F);
         for (int side = 0; side < 2; side++) {
             float sx = side == 0 ? POD_X : -POD_X;
             Vector3f axis = gimbal.transform(new Vector3f(0, 0, -1));
@@ -82,13 +89,13 @@ final class ExhaustRenderer {
         Vector3f w0 = new Vector3f(axis).cross(u0).normalize();
         float side = smoothstep(0.08F, 0.45F, sinV) * (float) plume.intensity();
         float cells = (float) plume.shockCells();
-        float[] weights = new float[3];
-        Vector3f[] us = new Vector3f[3];
+        float[] weights = WEIGHTS;
+        Vector3f[] us = PLANES;
         float total = 0F;
         for (int k = 0; k < 3; k++) {
-            double th = Math.toRadians(60.0 * k);
-            us[k] = new Vector3f(u0).mul((float) Math.cos(th)).add(new Vector3f(w0).mul((float) Math.sin(th)));
-            Vector3f n = new Vector3f(axis).cross(us[k]);
+            float c = PLANE_COS[k], sn = PLANE_SIN[k];
+            us[k].set(u0.x * c + w0.x * sn, u0.y * c + w0.y * sn, u0.z * c + w0.z * sn);
+            Vector3f n = NORMAL.set(axis).cross(us[k]);
             weights[k] = Math.abs(n.dot(toCam));
             total += weights[k];
         }

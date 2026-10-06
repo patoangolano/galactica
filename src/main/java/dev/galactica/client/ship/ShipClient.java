@@ -13,9 +13,14 @@ import net.fabricmc.fabric.api.client.rendering.v1.ModelLayerRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.Version;
+import net.fabricmc.loader.api.VersionParsingException;
+import net.fabricmc.loader.api.metadata.version.VersionPredicate;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.renderer.entity.EntityRenderer;
+import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.entity.EntityRenderers;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.Vec3;
@@ -46,16 +51,43 @@ public final class ShipClient {
         ModelLayerRegistry.registerModelLayer(StarshipModel.LIGHTS_LAYER, StarshipModel::createLightsLayer);
         ModelLayerRegistry.registerModelLayer(StarshipModel.CORES_LAYER, StarshipModel::createCoresLayer);
         ShipRenderTypes.init();
-        // GeckoLib is optional: its classes are only loaded through GeckoShipRendering when the mod is present.
-        if (FabricLoader.getInstance().isModLoaded("geckolib")) {
-            dev.galactica.client.ship.geckolib.GeckoShipRendering.register();
-        } else {
-            EntityRenderers.register(ShipEntities.SHIP, StarshipRenderer::new);
-        }
+        // GeckoLib is optional: its classes are only loaded through GeckoShipRendering, and only for the API line
+        // this mod was compiled against.
+        EntityRenderers.register(ShipEntities.SHIP, geckoLibUsable() ? ShipClient::geckoOrVanilla : StarshipRenderer::new);
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("ship_hud"), ShipHud::extract);
 
         ClientTickEvents.START_CLIENT_TICK.register(ShipClient::beforeTick);
         ClientTickEvents.END_CLIENT_TICK.register(ShipClient::afterTick);
+    }
+
+    /** GeckoLib versions whose API {@code GeckoShipRendering} was compiled against (5.5.7, MC 26.3). */
+    static final String GECKOLIB_RANGE = ">=5.5.7 <5.6";
+
+    /** True if GeckoLib is installed in a version this mod's renderer links against. */
+    private static boolean geckoLibUsable() {
+        var container = FabricLoader.getInstance().getModContainer("geckolib");
+        if (container.isEmpty()) return false;
+        Version version = container.get().getMetadata().getVersion();
+        try {
+            if (VersionPredicate.parse(GECKOLIB_RANGE).test(version)) return true;
+        } catch (VersionParsingException e) {
+            throw new IllegalStateException("bad GeckoLib range " + GECKOLIB_RANGE, e);
+        }
+        Galactica.LOG.warn("GeckoLib {} is outside {}; the Starship uses its built-in renderer", version.getFriendlyString(), GECKOLIB_RANGE);
+        return false;
+    }
+
+    /**
+     * Builds the GeckoLib renderer at renderer bake, falling back to the built-in one if GeckoLib's classes do not
+     * link (a build that kept the version number but changed the API).
+     */
+    private static EntityRenderer<Starship, ?> geckoOrVanilla(EntityRendererProvider.Context context) {
+        try {
+            return dev.galactica.client.ship.geckolib.GeckoShipRendering.create(context);
+        } catch (LinkageError e) {
+            Galactica.LOG.warn("GeckoLib renderer failed to link; the Starship uses its built-in renderer", e);
+            return new StarshipRenderer(context);
+        }
     }
 
     /** The ship the local player is flying, or null. */

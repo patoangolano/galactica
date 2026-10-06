@@ -103,4 +103,20 @@ class ExhaustPhysicsTest {
         assertEquals(0, barometric(0, 10, 8500));
         assertEquals(92 * Math.exp(-0.5), barometric(92, 7900, 15800), 1e-9, "Venus-like");
     }
+
+    @Test
+    void maxReachBoundsEveryPlume() {
+        assertEquals(0, maxReach(0, 0.275));
+        double full = maxReach(1, 0.275);
+        // Vacuum at full throttle: 2·0.275·18 = 9.9 blocks long, tip radius 0.275 + 9.9·tan(cap).
+        Plume vac = plume(1, 0, 0.275);
+        assertEquals(9.9, vac.length(), 1e-9);
+        assertTrue(full >= vac.length() + vac.radiusAt(vac.length()) - 1e-9);
+        for (double pa : new double[] {0.07, 0.5, 1.01325, 5, 92}) {
+            Plume p = plume(1, pa, 0.275);
+            assertTrue(full >= p.length() + p.radiusAt(p.length()) - 1e-9, "pa " + pa);
+        }
+        assertTrue(maxReach(0.3, 0.275) < full, "shorter at low throttle");
+        assertTrue(full < 9.9 * (1 + Math.tan(MAX_VISIBLE_HALF_ANGLE_RAD)) + 0.6, "no runaway box");
+    }
 }

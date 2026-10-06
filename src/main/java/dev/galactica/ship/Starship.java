@@ -89,6 +89,9 @@ public class Starship extends VehicleEntity {
     private static ToDoubleFunction<Level> gravityModel = l -> Units.EARTH_GRAVITY;
 
     private final Quaternionf attitude = new Quaternionf(), attitudeO = new Quaternionf();
+    /** Client, ships this client does not control: synced attitude handed over on tick boundaries. */
+    private final AttitudeSync attitudeSync = new AttitudeSync();
+    private final Quaternionf turnScratch = new Quaternionf();
     // Pilot-side prediction inputs, fed by the client every tick before the entity ticks.
     private Input pilotInput = Input.EMPTY;
     private float rollAxis, mouseYaw, mousePitch;
@@ -155,7 +158,7 @@ public class Starship extends VehicleEntity {
     public void onSyncedDataUpdated(EntityDataAccessor<?> key) {
         super.onSyncedDataUpdated(key);
         if (!level().isClientSide() || isLocalInstanceAuthoritative()) return;
-        if (DATA_ATTITUDE.equals(key)) attitude.set(entityData.get(DATA_ATTITUDE));
+        if (DATA_ATTITUDE.equals(key)) attitudeSync.receive(entityData.get(DATA_ATTITUDE), attitude, attitudeO);
         else if (DATA_COUPLED.equals(key)) coupled = entityData.get(DATA_COUPLED);
     }
 
@@ -212,7 +215,7 @@ public class Starship extends VehicleEntity {
         boolean open = ShipAnimator.canopyOpen(getPassengers().size());
         canopy = ShipAnimator.approach(canopy, open ? 1F : 0F, (float) ShipFlightModel.TICK, ShipAnimator.CANOPY_SECONDS);
         // Body-frame turn this tick: q_prev⁻¹ · q_now, as a rotation vector in degrees.
-        Quaternionf d = new Quaternionf(attitudeO).conjugate().mul(attitude);
+        Quaternionf d = turnScratch.set(attitudeO).conjugate().mul(attitude);
         if (d.w < 0) d.set(-d.x, -d.y, -d.z, -d.w);
         float angle = 2F * (float) Math.acos(Math.min(1F, d.w));
         float s = (float) Math.sqrt(Math.max(1e-12F, 1F - d.w * d.w));
@@ -243,6 +246,7 @@ public class Starship extends VehicleEntity {
     public void setAttitude(Quaternionfc q) {
         attitude.set(q).normalize();
         attitudeO.set(attitude);
+        attitudeSync.reset(attitude);
         entityData.set(DATA_ATTITUDE, new Quaternionf(attitude));
         syncRotationFields();
     }
@@ -269,6 +273,7 @@ public class Starship extends VehicleEntity {
     public void tick() {
         if (getHurtTime() > 0) setHurtTime(getHurtTime() - 1);
         attitudeO.set(attitude);
+        attitudeSync.apply(attitude, level().isClientSide() && !isLocalInstanceAuthoritative());
         super.tick();
         if (isLocalInstanceAuthoritative()) {
             if (level().isClientSide()) pilotStep();
