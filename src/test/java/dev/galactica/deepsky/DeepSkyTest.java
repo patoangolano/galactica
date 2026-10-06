@@ -1,8 +1,10 @@
 package dev.galactica.deepsky;
 
+import dev.galactica.galaxy.Galaxy;
 import dev.galactica.galaxy.StarCatalog;
 import dev.galactica.nav.Frames;
 import dev.galactica.sky.GalaxySkyBaker;
+import dev.galactica.sky.Starfield;
 import dev.galactica.star.Star;
 import org.junit.jupiter.api.Test;
 
@@ -100,19 +102,21 @@ class DeepSkyTest {
         assertTrue(w.nStars > 5e5 && w.nStars < 2e7, "member count " + w.nStars);
         double[] lb = DeepMath.galacticFromSun(w.x, w.y, w.z);
         assertEquals(5200, lb[2], 5);
-        assertEquals(1.0, w.unresolvedFraction(5200), 1e-9, "unresolved from the Sun");
-        assertTrue(w.unresolvedFraction(40) < 0.95, "giants resolved from 40 pc");
+        assertEquals(1.0, w.unresolvedFraction(w.resolvedMagnitudeLimit(5200, 0)), 1e-9, "unresolved from the Sun");
+        assertTrue(w.unresolvedFraction(w.resolvedMagnitudeLimit(40, 0)) < 0.95, "giants resolved from 40 pc");
     }
 
     @Test
     void pleiadesLookLikeThePleiadesFromEarth() {
         StarCluster p = (StarCluster) byId("m45");
-        double d = p.distanceTo(SUN[0], SUN[1], SUN[2]);
+        DeepSky ds = DeepSky.of(Frames.GALAXY_SEED);
+        DeepSky.ClusterResolution r = DeepSky.resolution(p, SUN[0], SUN[1], SUN[2], ds.dustView(SUN[0], SUN[1], SUN[2]));
         List<double[]> mags = new ArrayList<>();
-        p.members(p.resolvedMagnitudeLimit(d), s -> mags.add(new double[] {
-                s.absoluteMagnitude() + 5 * Math.log10(s.distanceTo(SUN[0], SUN[1], SUN[2]) / 10), s.catalog() ? 1 : 0}));
+        p.members(r.limitMv(), s -> mags.add(new double[] {
+                s.absoluteMagnitude() + 5 * Math.log10(s.distanceTo(SUN[0], SUN[1], SUN[2]) / 10) + r.avMag(), s.catalog() ? 1 : 0}));
         mags.sort((a, b) -> Double.compare(a[0], b[0]));
-        assertEquals(2.87 - 0.12, mags.get(0)[0], 0.25, "Alcyone is the brightest (V = 2.87 incl. extinction)");
+        assertEquals(2.87, mags.get(0)[0], 0.3, "Alcyone is the brightest (V = 2.87)");
+        assertEquals(1, mags.get(0)[1], "the brightest is a catalogued anchor");
         long nakedEye = mags.stream().filter(m -> m[0] < 6.0).count();
         assertTrue(nakedEye >= 8 && nakedEye <= 20, "naked-eye members: " + nakedEye);
         long brightB = mags.stream().filter(m -> m[0] < 4.5).count();
@@ -224,5 +228,129 @@ class DeepSkyTest {
         }
         // At 128 px the half-res galaxy is coarse (2.8° per sample); in game (2048 px) it is far closer.
         assertTrue(err / ref < 0.15, "mean relative difference " + err / ref);
+    }
+
+    /** Total V light (L☉) of the members {@link StarCluster#members} emits down to {@code lim}. */
+    private static double drawnLight(StarCluster c, double lim) {
+        double[] l = {0};
+        c.members(lim, s -> l[0] += Math.pow(10, -0.4 * (s.absoluteMagnitude() - 4.83)));
+        return l[0];
+    }
+
+    private static double anchorLight(StarCluster c) {
+        double l = 0;
+        for (Star s : c.anchorStars()) l += Math.pow(10, -0.4 * (s.absoluteMagnitude() - 4.83));
+        return l;
+    }
+
+    @Test
+    void clusterGlowAndDrawnMembersAddUpToTheCluster() {
+        // Expectation identity: glow + expected bright procedural light + bright anchors = total, at any limit.
+        for (String id : new String[] {"ngc6611", "ngc6530", "ngc2244", "m44", "onc", "m45", "ngc5139"}) {
+            StarCluster c = (StarCluster) byId(id);
+            double proc = c.nStars * c.population.lumPerStar;
+            for (double lim : new double[] {-8, -4, -1, 1, 3, 5}) {
+                double brightAnchors = 0;
+                for (Star s : c.anchorStars()) if (s.absoluteMagnitude() <= lim) brightAnchors += Math.pow(10, -0.4 * (s.absoluteMagnitude() - 4.83));
+                double sum = c.unresolvedFraction(lim) * proc + c.nStars * c.population.lumBrighter(lim) + brightAnchors;
+                assertEquals(proc + anchorLight(c), sum, 1e-9 * sum, id + " at " + lim);
+            }
+        }
+        // The expected bright light used by the glow agrees with the members actually drawn, on average.
+        // Clusters older than 20 Myr only: younger ones are dominated by a rare O star, so their mean
+        // converges far too slowly for a test (the identity above still holds for them exactly).
+        DeepSky ds = DeepSky.of(Frames.GALAXY_SEED);
+        double expected = 0, drawn = 0;
+        int n = 0;
+        for (DeepSkyObject o : ds.proceduralNear(SUN[0], SUN[1], SUN[2], 2_000)) {
+            if (!(o instanceof StarCluster c) || c.ageGyr < 0.02 || n >= 600) continue;
+            double lim = c.resolvedMagnitudeLimit(150, 0);
+            expected += c.nStars * c.population.lumBrighter(lim);
+            drawn += drawnLight(c, lim);
+            n++;
+        }
+        assertTrue(n > 100, "clusters sampled " + n);
+        assertEquals(1.0, drawn / expected, 0.1, "drawn / expected bright light over " + n + " clusters");
+    }
+
+    @Test
+    void extinctionLowersTheResolutionLimitSharedByBothLayers() {
+        DeepSky ds = DeepSky.of(Frames.GALAXY_SEED);
+        DeepSkyView dust = ds.dustView(SUN[0], SUN[1], SUN[2]);
+        // The Eagle's cluster sits behind A_V ~ 3 (real: ~2.5); its brightest star (an O3 at V = 8.2) is
+        // below the naked eye, so none of its members may be drawn from Earth.
+        StarCluster eagle = (StarCluster) byId("ngc6611");
+        DeepSky.ClusterResolution r = DeepSky.resolution(eagle, SUN[0], SUN[1], SUN[2], dust);
+        assertTrue(r.avMag() > 1.5, "the Eagle is reddened, A_V = " + r.avMag());
+        assertEquals(eagle.resolvedMagnitudeLimit(r.distancePc(), 0) - r.avMag(), r.limitMv(), 1e-9);
+        // Every member brighter than the shared limit reaches the starfield (none is lost between the layers).
+        List<Starfield.VisibleStar> stars = Starfield.compute(new Galaxy(Frames.GALAXY_SEED), SUN[0], SUN[1], SUN[2]);
+        int checked = 0;
+        for (DeepSky.ClusterResolution c : ds.resolvedClusters(SUN[0], SUN[1], SUN[2])) {
+            if (c.cluster().catalogued) continue; // anchors share names with catalogue stars
+            List<Star> members = new ArrayList<>();
+            c.cluster().members(c.limitMv(), members::add);
+            // Compare the brighter ones only: the field is cut at MAX_STARS from the faint end.
+            long want = members.stream().filter(s -> s.absoluteMagnitude() + 5 * Math.log10(s.distanceTo(SUN[0], SUN[1], SUN[2]) / 10)
+                    + c.avMag() < 7.0).count();
+            String prefix = c.cluster().name + " ";
+            long got = stars.stream().filter(v -> v.star().name().startsWith(prefix) && v.apparentMag() < 7.0).count();
+            assertEquals(want, got, c.cluster().name);
+            checked += members.isEmpty() ? 0 : 1;
+        }
+        assertTrue(checked > 3, "procedural clusters with resolved members " + checked);
+    }
+
+    @Test
+    void membersNearMatchesBruteForceAndIsFast() {
+        StarCluster p = (StarCluster) byId("m44");
+        double qx = p.x + 1.5, qy = p.y - 0.5, qz = p.z + 0.3, rad = 1.2;
+        List<Star> brute = new ArrayList<>();
+        p.members(99, s -> { if (s.distanceTo(qx, qy, qz) <= rad) brute.add(s); });
+        brute.sort((a, b) -> Double.compare(a.distanceTo(qx, qy, qz), b.distanceTo(qx, qy, qz)));
+        List<Star> fast = p.membersNear(qx, qy, qz, rad, 10_000);
+        assertEquals(brute, fast);
+        List<Star> capped = p.membersNear(qx, qy, qz, rad, 5);
+        assertEquals(brute.subList(0, Math.min(5, brute.size())), capped);
+
+        StarCluster w = (StarCluster) byId("ngc5139");
+        DeepSky ds = DeepSky.of(Frames.GALAXY_SEED);
+        ds.clusterStarsNear(w.x + 1, w.y, w.z, 0.5, 64); // warm
+        long t0 = System.nanoTime();
+        List<Star> near = ds.clusterStarsNear(w.x + 1, w.y, w.z, 0.5, 64);
+        double ms = (System.nanoTime() - t0) / 1e6;
+        assertEquals(64, near.size());
+        assertTrue(ms < 400, "query inside omega Cen took " + ms + " ms");
+    }
+
+    @Test
+    void skyRebakesFollowTheViewerNearDeepSkyObjects() {
+        DeepSky ds = DeepSky.of(Frames.GALAXY_SEED);
+        assertEquals(3.0, ds.rebakeDistancePc(SUN[0], SUN[1], SUN[2], 3.0), 1e-9, "open space near the Sun");
+        DeepSkyObject onc = byId("onc");
+        assertEquals(DeepSky.STARFIELD_STEP_PC, ds.rebakeDistancePc(onc.x, onc.y, onc.z, 3.0), 1e-9, "inside the Trapezium");
+        DeepSkyObject m45 = byId("m45");
+        double step = ds.rebakeDistancePc(m45.x + 20, m45.y, m45.z, 3.0);
+        assertTrue(step > 1.5 && step <= 2.0, "20 pc from the Pleiades " + step);
+    }
+
+    @Test
+    void hiiCrossFadeWeightsSumToOne() {
+        for (double d = 0; d < 4_000; d += 37) {
+            assertEquals(1.0, DeepSky.discreteHiiWeight(d) + DeepSky.statisticalHiiWeight(d), 1e-12);
+        }
+        assertEquals(1.0, DeepSky.discreteHiiWeight(DeepSky.HII_CROSSFADE_START_PC), 1e-12);
+        assertEquals(0.0, DeepSky.discreteHiiWeight(DeepSky.VIEW_RADIUS_PC), 1e-12);
+    }
+
+    @Test
+    void anchorsAreNotDuplicatedByProceduralMembers() {
+        for (String id : new String[] {"m45", "onc"}) {
+            StarCluster c = (StarCluster) byId(id);
+            double minAnchor = Double.POSITIVE_INFINITY;
+            for (Star s : c.anchorStars()) minAnchor = Math.min(minAnchor, s.mass());
+            assertTrue(c.population.massCap < minAnchor, id + " mass cap " + c.population.massCap + " vs " + minAnchor);
+        }
+        assertEquals(DeepSky.near(byId("lambda_ori").x, byId("lambda_ori").y, byId("lambda_ori").z, 1), "Lambda Orionis Ring");
     }
 }

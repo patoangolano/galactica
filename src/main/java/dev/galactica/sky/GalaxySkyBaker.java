@@ -18,13 +18,19 @@ import dev.galactica.science.Noise;
  *
  * <p>Individually rendered stars (closer than {@link #START_PC}) are excluded so light is not
  * counted twice. Output is linear sRGB in L☉ pc⁻² sr⁻¹ (exposure is applied by the renderer).
- * Runs off-thread (~45 µs per ray): a 2048 × 1024 equirectangular bake is ~2 s across 8 cores.
+ * Runs off-thread. {@link #bakeEquirect} marches the smooth galaxy at half resolution and composites
+ * the sharp deep-sky volumes at full resolution (see {@code bakeEquirectTwoScale}): a 2048 × 1024
+ * bake takes ~2.2–2.5 s on 8 cores from the Sun (~3.7 s from inside the Orion Nebula, ~4.7 s cold).
+ * A full-resolution march costs ~40 µs per ray (~10 s for the same image); the cube-face
+ * {@link #bake} still uses it.
  *
  * <p>Deep-sky objects ({@link DeepSky}: nebulae, dark clouds, supernova remnants, the glow of
  * star clusters, the Magellanic Clouds and Andromeda) are Gaussian volumes integrated analytically
  * along each ray by a {@link DeepSkyView} prepared once per bake; their emission and extinction
- * are merged into the march in distance order. Within {@link DeepSky#VIEW_RADIUS_PC} the
- * statistical H II glow of the march fades out because discrete H II regions take over there.
+ * are merged into the march in distance order. Within {@link DeepSky#VIEW_RADIUS_PC} discrete H II
+ * regions replace the statistical H II glow of the march; across the band from
+ * {@link DeepSky#HII_CROSSFADE_START_PC} to the view radius the two cross-fade with weights that
+ * sum to one ({@link DeepSky#statisticalHiiWeight}), so no H II light is counted twice.
  */
 public final class GalaxySkyBaker {
     public static final double START_PC = 25.0;
@@ -281,7 +287,6 @@ public final class GalaxySkyBaker {
         // that carries the fine structure is still sampled at every step.
         double sModel = Double.NEGATIVE_INFINITY, zModel = 0;
         double mDisk = 0, mBulgeHalo = 0, mYoungFrac = 0, mDust = 0;
-        double hiiFadeStart = 0.6 * DeepSky.VIEW_RADIUS_PC;
         for (int i = 0; i < MAX_STEPS && s0 < END_PC; i++) {
             if (knots != null) {
                 while (kn < KN - 1 && s0 >= KNOTS[kn]) {
@@ -346,10 +351,10 @@ public final class GalaxySkyBaker {
             }
             double hii = 0;
             // Inside the deep-sky view radius discrete H II regions replace the statistical glow.
-            if (young > 1e-6 && (!deepSkyNear || s > hiiFadeStart)) {
+            if (young > 1e-6 && (!deepSkyNear || s > DeepSky.HII_CROSSFADE_START_PC)) {
                 double n = Noise.fbm(seed ^ 0x4811L, x / 90.0, y / 90.0, z / 40.0, 3);
                 hii = young * Math.max(0, n - 0.15) * 4.0;
-                if (deepSkyNear) hii *= smoothstep(hiiFadeStart, DeepSky.VIEW_RADIUS_PC, s);
+                if (deepSkyNear) hii *= DeepSky.statisticalHiiWeight(s);
             }
 
             double bh = mBulgeHalo * L_BULGE, dk = disk * L_OLD, yg = young * L_YOUNG, ha = hii * L_HALPHA;

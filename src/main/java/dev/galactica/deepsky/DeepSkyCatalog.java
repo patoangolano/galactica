@@ -163,7 +163,7 @@ public final class DeepSkyCatalog {
         out.add(neb("orion_a", "Orion A Molecular Cloud", DeepSkyType.DARK_NEBULA, orionA, 32, o ->
                 Morphology.darkCloud(o.seed, frameSky(orionA, 24, 5, 9), 4.0, 9, 0.25)));
         double[] lamOri = eq(ra(5, 35, 0), dec(9, 56, 0), 400);
-        out.add(neb("lambda_ori", "Lambda Orionis Ring (Sh2-264)", DeepSkyType.EMISSION_NEBULA, lamOri, 36, o ->
+        out.add(neb("lambda_ori", "Lambda Orionis Ring", DeepSkyType.EMISSION_NEBULA, lamOri, 36, o ->
                 Morphology.shell(o.seed, frameRandom(o.id, lamOri, 28, 28, 28), 0.12, 2_000, 0.0, 160, null, 0, 0.3)));
         double[] carina = lb(287.6, -0.6, 2300);
         out.add(neb("ngc3372", "Carina Nebula (NGC 3372)", DeepSkyType.EMISSION_NEBULA, carina, 45, o ->
@@ -236,6 +236,8 @@ public final class DeepSkyCatalog {
 
         // ------------------------------------------------------------ open clusters
         double[] pleiades = lb(166.57, -23.52, 136);
+        // Pleiades: the eleven members brighter than V ≈ 5.8 (Hipparcos V), procedural members capped
+        // just below the least massive of them (Asterope, ~2.9 M☉).
         out.add(new StarCluster("m45", "Pleiades (M45)", DeepSkyType.OPEN_CLUSTER, pleiades, true, seedOf("m45"),
                 0.125, 0.0, 1000, 1.4, 12.0, List.of(
                 new StarCluster.Anchor("Alcyone", ra(3, 47, 29.1), dec(24, 6, 18), 2.87, 12_258, StarKind.GIANT, 6.0),
@@ -246,8 +248,10 @@ public final class DeepSkyCatalog {
                 new StarCluster.Anchor("Taygeta", ra(3, 45, 12.5), dec(24, 28, 2), 4.30, 13_700, StarKind.MAIN_SEQUENCE, 4.5),
                 new StarCluster.Anchor("Pleione", ra(3, 49, 11.2), dec(24, 8, 12), 5.05, 12_000, StarKind.MAIN_SEQUENCE, 3.4),
                 new StarCluster.Anchor("Celaeno", ra(3, 44, 48.2), dec(24, 17, 22), 5.45, 13_300, StarKind.MAIN_SEQUENCE, 4.4),
-                new StarCluster.Anchor("Asterope", ra(3, 45, 54.5), dec(24, 33, 17), 5.76, 10_000, StarKind.MAIN_SEQUENCE, 2.9)),
-                3.6, 0.12, o -> Morphology.reflection(o.seed, frameRandom("m45_dust", pleiades, 1.6, 1.6, 1.0), 45, 40)));
+                new StarCluster.Anchor("Asterope", ra(3, 45, 54.5), dec(24, 33, 17), 5.76, 10_000, StarKind.MAIN_SEQUENCE, 2.9),
+                new StarCluster.Anchor("HD 23753", ra(3, 48, 20.8), dec(23, 25, 16), 5.45, 12_300, StarKind.MAIN_SEQUENCE, 3.2),
+                new StarCluster.Anchor("18 Tauri", ra(3, 45, 9.7), dec(24, 50, 21), 5.66, 12_800, StarKind.MAIN_SEQUENCE, 3.0)),
+                2.85, 0.12, o -> Morphology.reflection(o.seed, frameRandom("m45_dust", pleiades, 1.6, 1.6, 1.0), 45, 40)));
         double[] hyades = lb(180.06, -22.34, 47.5);
         out.add(new StarCluster("hyades", "Hyades", DeepSkyType.OPEN_CLUSTER, hyades, true, seedOf("hyades"),
                 0.625, 0.13, 700, 2.7, 10.0, List.of(
@@ -263,10 +267,18 @@ public final class DeepSkyCatalog {
                 0.014, -0.1, 8_000, 1.3, 12.0, List.of(), 150, 0.0, null));
         out.add(new StarCluster("ngc884", "Chi Persei (NGC 884)", DeepSkyType.OPEN_CLUSTER, lb(135.05, -3.58, 2340), true, seedOf("ngc884"),
                 0.014, -0.1, 6_000, 1.5, 12.0, List.of(), 150, 0.0, null));
+        // Trapezium Cluster: θ¹ Ori A–D and θ² Ori A/B as anchors (SIMBAD V; masses from spectral type,
+        // Martins et al. 2005 for O stars, Harmanec 1988 for B stars); procedural members stop just
+        // below the least massive anchor (θ¹ Ori B, ~7 M☉) so no bright star appears twice.
         out.add(new StarCluster("onc", "Trapezium Cluster", DeepSkyType.OPEN_CLUSTER, lb(209.01, -19.38, 410), true, seedOf("onc"),
                 0.002, -0.05, 2_800, 0.2, 3.5, List.of(
-                new StarCluster.Anchor("Theta1 Orionis C", ra(5, 35, 16.46), dec(-5, 23, 22.8), 5.13, 39_000, StarKind.MAIN_SEQUENCE, 33)),
-                20, 1.7, null));
+                new StarCluster.Anchor("Theta1 Orionis C", ra(5, 35, 16.46), dec(-5, 23, 22.8), 5.13, 39_000, StarKind.MAIN_SEQUENCE, 33),
+                new StarCluster.Anchor("Theta1 Orionis A", ra(5, 35, 15.83), dec(-5, 23, 14.3), 6.73, 30_000, StarKind.MAIN_SEQUENCE, 14),
+                new StarCluster.Anchor("Theta1 Orionis B", ra(5, 35, 16.13), dec(-5, 23, 6.8), 7.96, 21_000, StarKind.MAIN_SEQUENCE, 7),
+                new StarCluster.Anchor("Theta1 Orionis D", ra(5, 35, 17.26), dec(-5, 23, 16.6), 6.71, 32_000, StarKind.MAIN_SEQUENCE, 17),
+                new StarCluster.Anchor("Theta2 Orionis A", ra(5, 35, 22.90), dec(-5, 24, 57.8), 5.02, 34_000, StarKind.MAIN_SEQUENCE, 25),
+                new StarCluster.Anchor("Theta2 Orionis B", ra(5, 35, 26.40), dec(-5, 25, 0.8), 6.38, 29_000, StarKind.MAIN_SEQUENCE, 12)),
+                6.8, 1.7, null));
         out.add(new StarCluster("ngc2244", "NGC 2244", DeepSkyType.OPEN_CLUSTER, rosette, true, seedOf("ngc2244"),
                 0.002, -0.1, 2_000, 1.5, 8.0, List.of(), 150, 0.0, null));
         out.add(new StarCluster("ngc6611", "NGC 6611", DeepSkyType.OPEN_CLUSTER, m16, true, seedOf("ngc6611"),

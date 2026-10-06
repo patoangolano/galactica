@@ -12,8 +12,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <ul>
  *   <li>{@link #view} prepares every volume visible from a point for the galaxy sky baker;</li>
- *   <li>{@link #clustersForStarfield} and {@link StarCluster#members} feed resolved cluster stars
- *       to the starfield;</li>
+ *   <li>{@link #resolvedClusters} and {@link StarCluster#members} feed resolved cluster stars
+ *       to the starfield, with the same per-cluster magnitude limit ({@link #resolution}) the
+ *       view uses to dim each cluster's glow;</li>
+ *   <li>{@link #rebakeDistancePc} tells the sky manager how far the viewer may move before the
+ *       bake must follow the starfield near deep-sky objects;</li>
  *   <li>{@link #near} names the closest catalogued object for the HUD.</li>
  * </ul>
  * Pure Java, thread-safe, deterministic in the galaxy seed. Real objects
@@ -24,12 +27,22 @@ public final class DeepSky {
     public static final double VIEW_RADIUS_PC = 3_000;
     /** Procedural open clusters are enumerated out to this distance (beyond, they are sub-pixel and resolve no stars). */
     public static final double CLUSTER_RADIUS_PC = 2_000;
+    /**
+     * Discrete procedural H II regions fade out between this distance and {@link #VIEW_RADIUS_PC}
+     * while the baker's statistical H II glow fades in over the same band
+     * ({@link #discreteHiiWeight} + {@link #statisticalHiiWeight} = 1).
+     */
+    public static final double HII_CROSSFADE_START_PC = 0.8 * VIEW_RADIUS_PC;
+    /** The starfield is recomputed after this much travel; the sky bake never needs to be finer. */
+    public static final double STARFIELD_STEP_PC = 0.25;
     private static final int MAX_CACHED_CELLS = 30_000;
     private static final Map<Long, DeepSky> INSTANCES = new ConcurrentHashMap<>();
 
     private final long seed;
     private volatile List<DeepSkyObject> globulars;
     private final Map<Long, List<DeepSkyObject>> cells = new ConcurrentHashMap<>();
+    /** Last dust view built: the sky bake and the starfield at the same point share it. */
+    private volatile DeepSkyView lastDust;
 
     private DeepSky(long seed) {
         this.seed = seed;
@@ -37,11 +50,6 @@ public final class DeepSky {
 
     public static DeepSky of(long seed) {
         return INSTANCES.computeIfAbsent(seed, DeepSky::new);
-    }
-
-    /** Common init: nothing to register; builds the catalogue so the first lookup is instant. */
-    public static void init() {
-        DeepSkyCatalog.all();
     }
 
     /**
@@ -118,50 +126,119 @@ public final class DeepSky {
         return out;
     }
 
-    /** Prepared volumes for a sky bake whose pixels subtend {@code pixelAngle} radians. */
-    public DeepSkyView view(double ox, double oy, double oz, double pixelAngle) {
-        return new DeepSkyView(ox, oy, oz, objectsFor(ox, oy, oz), pixelAngle, false);
+    /** Weight of a discrete procedural H II region whose centre is {@code dPc} from the observer. */
+    public static double discreteHiiWeight(double dPc) {
+        return 1 - statisticalHiiWeight(dPc);
     }
 
-    /** Dust volumes only, unblurred, for the extinction of resolved stars. */
-    public DeepSkyView dustView(double ox, double oy, double oz) {
-        return new DeepSkyView(ox, oy, oz, objectsFor(ox, oy, oz), 0, true);
+    /** Weight of the baker's statistical H II glow at distance {@code sPc} along a ray. */
+    public static double statisticalHiiWeight(double sPc) {
+        return DeepMath.smoothstep(HII_CROSSFADE_START_PC, VIEW_RADIUS_PC, sPc);
     }
 
     /**
-     * Clusters that have at least one member bright enough to be drawn as a star from
-     * (ox, oy, oz), i.e. whose resolved magnitude limit reaches their brightest member.
+     * Prepared volumes for a sky bake whose pixels subtend {@code pixelAngle} radians. Each
+     * cluster's glow carries exactly the light of the members {@link #resolvedClusters} does not
+     * hand to the starfield from the same point.
      */
-    public List<StarCluster> clustersForStarfield(double ox, double oy, double oz) {
+    public DeepSkyView view(double ox, double oy, double oz, double pixelAngle) {
+        DeepSkyView dust = dustView(ox, oy, oz);
+        List<DeepSkyObject> objects = objectsFor(ox, oy, oz);
+        return new DeepSkyView(ox, oy, oz, objects, pixelAngle, false,
+                c -> c.unresolvedFraction(resolution(c, ox, oy, oz, dust).limitMv()));
+    }
+
+    /** Dust volumes only, unblurred, for the extinction of resolved stars. Cached for the last point. */
+    public DeepSkyView dustView(double ox, double oy, double oz) {
+        DeepSkyView d = lastDust;
+        if (d != null && d.ox == ox && d.oy == oy && d.oz == oz) return d;
+        d = new DeepSkyView(ox, oy, oz, objectsFor(ox, oy, oz), 0, true);
+        lastDust = d;
+        return d;
+    }
+
+    /**
+     * How a cluster is seen from a point: distance, V extinction to its centre (smooth dust model
+     * plus discrete dark clouds) and the absolute magnitude down to which its members are drawn as
+     * stars ({@code limitMv} below {@link StarCluster#brightestMv} means none are).
+     */
+    public record ClusterResolution(StarCluster cluster, double distancePc, double avMag, double limitMv) {
+        public boolean resolvesAny() {
+            return limitMv >= cluster.brightestMv();
+        }
+    }
+
+    /**
+     * The single definition of a cluster's resolution limit, used by both the sky bake (glow
+     * scale) and the starfield (members drawn), so their light adds up to the cluster's.
+     * Extinction only lowers the limit, so it is skipped when the cluster is unresolved anyway.
+     */
+    public static ClusterResolution resolution(StarCluster c, double ox, double oy, double oz, DeepSkyView dust) {
+        double d = Math.max(1e-6, c.distanceTo(ox, oy, oz));
+        double unextincted = c.resolvedMagnitudeLimit(d, 0);
+        if (unextincted < c.brightestMv()) return new ClusterResolution(c, d, 0, unextincted);
+        double ux = (c.x - ox) / d, uy = (c.y - oy) / d, uz = (c.z - oz) / d;
+        double av = DeepMath.smoothExtinction(ox, oy, oz, ux, uy, uz, d) + (dust != null ? dust.extinction(ux, uy, uz, d) : 0);
+        return new ClusterResolution(c, d, av, c.resolvedMagnitudeLimit(d, av));
+    }
+
+    private List<StarCluster> clusterCandidates(double ox, double oy, double oz, double proceduralRadius) {
         List<StarCluster> out = new ArrayList<>();
         List<DeepSkyObject> cands = new ArrayList<>(DeepSkyCatalog.all());
         cands.addAll(globulars());
-        cands.addAll(proceduralNear(ox, oy, oz, CLUSTER_RADIUS_PC));
-        for (DeepSkyObject o : cands) {
-            if (!(o instanceof StarCluster c)) continue;
-            double d = c.distanceTo(ox, oy, oz);
-            double lim = c.resolvedMagnitudeLimit(d);
-            double brightest = c.population.brightestMv();
-            for (Star s : c.anchorStars()) brightest = Math.min(brightest, s.absoluteMagnitude());
-            if (lim >= brightest) out.add(c);
+        cands.addAll(proceduralNear(ox, oy, oz, proceduralRadius));
+        for (DeepSkyObject o : cands) if (o instanceof StarCluster c) out.add(c);
+        return out;
+    }
+
+    /** Clusters with at least one member drawn as a star from (ox, oy, oz), with their resolution. */
+    public List<ClusterResolution> resolvedClusters(double ox, double oy, double oz) {
+        DeepSkyView dust = dustView(ox, oy, oz);
+        List<ClusterResolution> out = new ArrayList<>();
+        for (StarCluster c : clusterCandidates(ox, oy, oz, CLUSTER_RADIUS_PC)) {
+            ClusterResolution r = resolution(c, ox, oy, oz, dust);
+            if (r.resolvesAny()) out.add(r);
         }
         return out;
     }
 
     /**
      * Cluster member stars within {@code radiusPc} of a point (all members, no brightness cut),
-     * so a navigation layer can treat them as visitable systems. Bounded by {@code maxStars}.
+     * nearest first, so a navigation layer can treat them as visitable systems. Members outside
+     * the query sphere are rejected from their position alone, before stellar evolution
+     * ({@link StarCluster#membersNear}).
      */
     public List<Star> clusterStarsNear(double x, double y, double z, double radiusPc, int maxStars) {
         List<Star> out = new ArrayList<>();
-        for (StarCluster c : clustersForStarfield(x, y, z)) {
+        for (StarCluster c : clusterCandidates(x, y, z, Math.min(CLUSTER_RADIUS_PC, radiusPc + 50))) {
             if (c.distanceTo(x, y, z) > c.radiusPc + radiusPc) continue;
-            c.members(99, s -> {
-                if (out.size() < maxStars && s.distanceTo(x, y, z) <= radiusPc) out.add(s);
-            });
+            out.addAll(c.membersNear(x, y, z, radiusPc, maxStars));
         }
         out.sort((a, b) -> Double.compare(a.distanceTo(x, y, z), b.distanceTo(x, y, z)));
-        return out;
+        return out.size() > maxStars ? new ArrayList<>(out.subList(0, maxStars)) : out;
+    }
+
+    /**
+     * Travel (pc) after which the sky bake should be redone at (x, y, z), given the manager's
+     * usual distance {@code defaultPc}. Near a deep-sky object the bake must keep up with the
+     * starfield (recomputed every {@link #STARFIELD_STEP_PC}): both derive a cluster's resolution
+     * limit from the observer's position, and a nebula a few parsecs across shifts visibly against
+     * the stars. Each object allows a tenth of max(distance to its centre, a quarter of its
+     * radius): at most ~0.2 mag of change in a cluster's limit and ~6 degrees of parallax.
+     */
+    public double rebakeDistancePc(double x, double y, double z, double defaultPc) {
+        double step = defaultPc;
+        double reach = Math.min(10 * defaultPc, CLUSTER_RADIUS_PC);
+        List<DeepSkyObject> cands = new ArrayList<>(DeepSkyCatalog.all());
+        cands.addAll(globulars());
+        cands.addAll(proceduralNear(x, y, z, reach));
+        for (DeepSkyObject o : cands) {
+            if (o.type == DeepSkyType.GALAXY) continue; // tens of kiloparsecs from anywhere in the Milky Way
+            double d = o.distanceTo(x, y, z);
+            if (d - o.radiusPc > reach) continue;
+            step = Math.min(step, 0.1 * Math.max(d, 0.25 * o.radiusPc));
+        }
+        return Math.max(STARFIELD_STEP_PC, step);
     }
 
     // ------------------------------------------------------------------ HUD lookup

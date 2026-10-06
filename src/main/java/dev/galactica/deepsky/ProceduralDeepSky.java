@@ -24,7 +24,8 @@ import java.util.List;
  *   <li>open clusters: young (&lt; 100 Myr) ∝ young-star density, Σ ≈ 60 kpc⁻², older ones
  *       ∝ disk density, Σ ≈ 90 kpc⁻² (Piskunov et al. 2006); embedded-cluster mass function
  *       dN/dM ∝ M^{−2} from 50 to 2 × 10⁴ M☉ (Lada &amp; Lada 2003);</li>
- *   <li>dark molecular clouds ∝ dust density (concentrated in arms), Σ ≈ 40 kpc⁻².</li>
+ *   <li>dark molecular clouds ∝ dust density (concentrated in arms), Σ ≈ 18 kpc⁻² of clouds
+ *       dense enough to read as dark patches against the Milky Way.</li>
  * </ul>
  * Nothing procedural is placed where the real sky is already catalogued: no H II regions within
  * 600 pc of the Sun, no open clusters within 300 pc, and no dense clouds inside the Local Bubble

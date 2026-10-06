@@ -1,5 +1,6 @@
 package dev.galactica.deepsky;
 
+import dev.galactica.galaxy.GalaxyModel;
 import dev.galactica.galaxy.StarCatalog;
 
 /**
@@ -113,6 +114,21 @@ public final class DeepMath {
         out[4] = (xy * xz - xx * yz) * inv;
         out[5] = (xx * yy - xy * xy) * inv;
         return det;
+    }
+
+    /**
+     * V-band extinction (mag) of the smooth dust model ({@link GalaxyModel#dustExtinctionPerPc})
+     * from (ox, oy, oz) to distance d (pc) along unit direction u, 4-point midpoint rule. This is
+     * the one line-of-sight integral shared by the starfield (apparent magnitudes) and the
+     * deep-sky resolution limit of star clusters, so both layers agree on which members are seen.
+     */
+    public static double smoothExtinction(double ox, double oy, double oz, double ux, double uy, double uz, double d) {
+        double av = 0, step = d / 4;
+        for (int i = 0; i < 4; i++) {
+            double t = (i + 0.5) * step;
+            av += GalaxyModel.dustExtinctionPerPc(ox + ux * t, oy + uy * t, oz + uz * t) * step;
+        }
+        return av;
     }
 
     static double smoothstep(double e0, double e1, double v) {

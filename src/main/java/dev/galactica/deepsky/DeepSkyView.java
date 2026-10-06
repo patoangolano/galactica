@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.ToDoubleFunction;
 
 /**
  * Every deep-sky volume as seen from one observer, prepared for fast ray queries.
@@ -46,10 +47,24 @@ public final class DeepSkyView {
     private final int[] cellStart, cellItems, global;
 
     /**
+     * A view in which no cluster member is drawn as a star: every cluster glows with all of its
+     * light (procedural members and anchors).
+     *
      * @param pixelAngle angular size of one output pixel (rad); 0 for exact (unblurred) volumes
      * @param dustOnly   keep only absorbing volumes (for star extinction)
      */
     public DeepSkyView(double ox, double oy, double oz, List<DeepSkyObject> objects, double pixelAngle, boolean dustOnly) {
+        this(ox, oy, oz, objects, pixelAngle, dustOnly, c -> c.unresolvedFraction(Double.NEGATIVE_INFINITY));
+    }
+
+    /**
+     * @param pixelAngle angular size of one output pixel (rad); 0 for exact (unblurred) volumes
+     * @param dustOnly   keep only absorbing volumes (for star extinction)
+     * @param glowScale  per cluster, the scale of its glow volumes (the light of the members the
+     *                   starfield does not draw, {@link StarCluster#unresolvedFraction})
+     */
+    public DeepSkyView(double ox, double oy, double oz, List<DeepSkyObject> objects, double pixelAngle, boolean dustOnly,
+                       ToDoubleFunction<StarCluster> glowScale) {
         this.ox = ox;
         this.oy = oy;
         this.oz = oz;
@@ -63,12 +78,16 @@ public final class DeepSkyView {
         double[] inv = new double[6];
         int k = 0;
         for (DeepSkyObject o : objects) {
+            // Procedural H II regions hand over to the baker's statistical H II glow across the
+            // cross-fade band; the two weights sum to one, so no H II light is counted twice.
+            double objectScale = o.type == DeepSkyType.EMISSION_NEBULA && !o.catalogued
+                    ? DeepSky.discreteHiiWeight(o.distanceTo(ox, oy, oz)) : 1;
             for (Blob b : o.blobs()) {
                 if (dustOnly && b.dust() <= 0) continue;
-                double mult = 1;
+                double mult = objectScale;
                 if (b.glowOf() != null) {
                     StarCluster c = b.glowOf();
-                    mult = glow.computeIfAbsent(c, cl -> cl.unresolvedFraction(cl.distanceTo(ox, oy, oz)));
+                    mult *= glow.computeIfAbsent(c, glowScale::applyAsDouble);
                 }
                 boolean emits = !dustOnly && b.emits() && mult > 1e-4;
                 if (!emits && b.dust() <= 0) continue;

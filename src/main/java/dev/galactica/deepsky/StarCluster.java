@@ -63,27 +63,47 @@ public final class StarCluster extends DeepSkyObject {
         return l;
     }
 
-    /** Absolute magnitude of the faintest member drawn individually for an observer at distance d (pc). */
-    public double resolvedMagnitudeLimit(double dPc) {
+    /**
+     * Absolute magnitude of the faintest member drawn individually for an observer at distance d
+     * (pc) whose line of sight to the cluster has V extinction {@code avMag}: the member must reach
+     * the starfield's limiting magnitude after extinction, and the count is capped at
+     * {@link #MEMBER_BUDGET}. {@link DeepSky#resolution} is the one place both the sky bake and the
+     * starfield get this value from.
+     */
+    public double resolvedMagnitudeLimit(double dPc, double avMag) {
         double dEff = Math.max(dPc, king.halfMassRadius());
-        double byEye = LIMITING_MAGNITUDE - 5 * Math.log10(dEff / 10.0);
+        double byEye = LIMITING_MAGNITUDE - 5 * Math.log10(dEff / 10.0) - Math.max(0, avMag);
         return Math.min(byEye, population.magnitudeForCount(nStars, MEMBER_BUDGET));
     }
 
+    /** Absolute magnitude of the brightest member (anchors included). */
+    public double brightestMv() {
+        double b = population.brightestMv();
+        for (Star s : anchorStars()) b = Math.min(b, s.absoluteMagnitude());
+        return b;
+    }
+
     /**
-     * Fraction of the cluster's light that is NOT drawn as individual stars by an observer at
-     * distance d: 1 far away, falling as the giants and then the main sequence are resolved.
+     * Scale of the cluster's smooth glow (whose volumes carry the expected light of all procedural
+     * members) when members brighter than absolute magnitude {@code limitMv} are drawn as stars.
+     *
+     * <p>The glow keeps the <em>expected</em> light of the procedural members fainter than the
+     * limit, plus every anchor fainter than the limit; the members brighter than the limit are
+     * exactly the stars {@link #members} emits. The faint members are never generated, so their
+     * expectation is the right stand-in for them; the bright ones are the actual draw. No member
+     * is in both layers or in neither, whatever the Poisson draw of the bright end. The value is
+     * 1 when nothing is resolved and may exceed 1 slightly when unresolved anchors are folded into
+     * the glow (far away).
      */
-    public double unresolvedFraction(double dPc) {
-        double lim = resolvedMagnitudeLimit(dPc);
-        double total = luminosityV();
-        if (total <= 0) return 0;
-        double resolved = nStars * population.lumBrighter(lim);
+    public double unresolvedFraction(double limitMv) {
+        double proc = nStars * population.lumPerStar;
+        if (proc <= 0) return 0;
+        double glow = nStars * Math.max(0, population.lumPerStar - population.lumBrighter(limitMv));
         for (Star s : anchorStars()) {
             double mv = s.absoluteMagnitude();
-            if (mv <= lim) resolved += Math.pow(10, -0.4 * (mv - 4.83));
+            if (mv > limitMv) glow += Math.pow(10, -0.4 * (mv - 4.83));
         }
-        return Math.max(0, 1 - resolved / total);
+        return glow / proc;
     }
 
     /** The real anchor stars as {@link Star}s (catalog = true). */
@@ -152,6 +172,68 @@ public final class StarCluster extends DeepSkyObject {
         double radius = kind == StarKind.NEUTRON_STAR ? 12_000.0 / 6.957e8 : Math.sqrt(Math.max(1e-12, lum)) * Math.pow(5772.0 / teff, 2);
         return new Star(ms, name + " " + designation(k, i), x + r * sz * Math.cos(ph), y + r * sz * Math.sin(ph), z + r * cz,
                 kind, st[3], radius, lum, teff, ageGyr, feh, SeedRng.hash(ms, 0x5157_E3L), false);
+    }
+
+    /**
+     * Up to {@code max} members (anchors included, black holes excluded) within {@code radiusPc}
+     * of (px, py, pz), nearest first. Positions are drawn before the expensive stellar evolution,
+     * and the King radius of a member is a monotonic function of its second random number, so the
+     * members that cannot lie in the query sphere are rejected after one hash and two random
+     * numbers; only the nearest {@code max} candidates are evolved into {@link Star}s.
+     */
+    public List<Star> membersNear(double px, double py, double pz, double radiusPc, int max) {
+        List<Star> out = new ArrayList<>();
+        if (max <= 0) return out;
+        double dc = distanceTo(px, py, pz);
+        double rLo = Math.max(0, dc - radiusPc), rHi = dc + radiusPc;
+        double uLo = rLo <= 0 ? 0 : cdfBound(rLo, false), uHi = rHi >= king.rt ? 1 : cdfBound(rHi, true);
+        double r2 = radiusPc * radiusPc;
+        // Max-heap on distance² of {d², k, i}: holds the nearest `max` (+ slack for black holes).
+        int keep = max + 8;
+        java.util.PriorityQueue<double[]> heap = new java.util.PriorityQueue<>(keep + 1, (a, b) -> Double.compare(b[0], a[0]));
+        ClusterPopulation p = population;
+        for (int k = 0; rLo < king.rt && k < p.binCount(); k++) {
+            int n = binCount(k);
+            for (int i = 0; i < n; i++) {
+                SeedRng rng = new SeedRng(SeedRng.hash(seed, k, i));
+                rng.nextDouble(); // mass, same sequence as member(k, i)
+                double u = rng.nextDouble();
+                if (u < uLo || u > uHi) continue;
+                double r = king.radiusAt(u);
+                double cz = 2 * rng.nextDouble() - 1, ph = 2 * Math.PI * rng.nextDouble(), sz = Math.sqrt(1 - cz * cz);
+                double mx = x + r * sz * Math.cos(ph) - px, my = y + r * sz * Math.sin(ph) - py, mz = z + r * cz - pz;
+                double d2 = mx * mx + my * my + mz * mz;
+                if (d2 > r2) continue;
+                if (heap.size() >= keep) {
+                    if (d2 >= heap.peek()[0]) continue;
+                    heap.poll();
+                }
+                heap.add(new double[] {d2, k, i});
+            }
+        }
+        for (double[] h : heap) {
+            Star s = member((int) h[1], (int) h[2]);
+            if (s != null) out.add(s);
+        }
+        for (Star s : anchorStars()) if (s.distanceTo(px, py, pz) <= radiusPc) out.add(s);
+        out.sort((a, b) -> Double.compare(a.distanceTo(px, py, pz), b.distanceTo(px, py, pz)));
+        return out.size() > max ? new ArrayList<>(out.subList(0, max)) : out;
+    }
+
+    /**
+     * Bisection on the monotonic {@link KingProfile#radiusAt}: with {@code upper} false, the largest
+     * u found with radiusAt(u) &lt; r (every u below it lies inside r); with {@code upper} true, the
+     * smallest u found with radiusAt(u) &gt; r (every u above it lies outside r).
+     */
+    private double cdfBound(double r, boolean upper) {
+        double lo = 0, hi = 1;
+        for (int it = 0; it < 40; it++) {
+            double mid = 0.5 * (lo + hi);
+            double rm = king.radiusAt(mid);
+            if (upper ? rm <= r : rm < r) lo = mid;
+            else hi = mid;
+        }
+        return upper ? hi : lo;
     }
 
     private static String designation(int k, int i) {
