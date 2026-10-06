@@ -12,6 +12,7 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.ModelLayerRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -23,7 +24,7 @@ import org.joml.Vector3f;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Client half of the ship: model layers, renderer, key mappings, HUD, and the per-tick pilot loop
+ * Client half of the ship: model layers, pipelines, renderer (vanilla, or GeckoLib when installed), key mappings, HUD, and the per-tick pilot loop
  * (keys → ship before the level ticks it; predicted attitude and velocity → server after).
  */
 public final class ShipClient {
@@ -42,8 +43,15 @@ public final class ShipClient {
     /** Call once from {@code GalacticaClient.onInitializeClient}. */
     public static void initClient() {
         ModelLayerRegistry.registerModelLayer(StarshipModel.HULL_LAYER, StarshipModel::createHullLayer);
-        ModelLayerRegistry.registerModelLayer(StarshipModel.GLOW_LAYER, StarshipModel::createGlowLayer);
-        EntityRenderers.register(ShipEntities.SHIP, StarshipRenderer::new);
+        ModelLayerRegistry.registerModelLayer(StarshipModel.LIGHTS_LAYER, StarshipModel::createLightsLayer);
+        ModelLayerRegistry.registerModelLayer(StarshipModel.CORES_LAYER, StarshipModel::createCoresLayer);
+        ShipRenderTypes.init();
+        // GeckoLib is optional: its classes are only loaded through GeckoShipRendering when the mod is present.
+        if (FabricLoader.getInstance().isModLoaded("geckolib")) {
+            dev.galactica.client.ship.geckolib.GeckoShipRendering.register();
+        } else {
+            EntityRenderers.register(ShipEntities.SHIP, StarshipRenderer::new);
+        }
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("ship_hud"), ShipHud::extract);
 
         ClientTickEvents.START_CLIENT_TICK.register(ShipClient::beforeTick);
