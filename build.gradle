@@ -21,6 +21,34 @@ repositories {
     }
 }
 
+/** Returns the mcpfabric jar when the path property is set and the file matches the pinned SHA-256, else null. */
+def verifiedMcpfabricJar() {
+    def path = project.findProperty('galactica.mcpfabricJar')
+    if (path == null || path.toString().isBlank()) {
+        return null
+    }
+    def jar = file(path.toString())
+    if (!jar.isFile()) {
+        logger.warn("galactica: mcpfabric jar not found at ${jar}; dev runs start without it")
+        return null
+    }
+    def expected = mcpfabric_sha256.toString().trim().toLowerCase(Locale.ROOT)
+    def digest = java.security.MessageDigest.getInstance('SHA-256')
+    jar.withInputStream { input ->
+        byte[] buffer = new byte[65536]
+        int read
+        while ((read = input.read(buffer)) > 0) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    def actual = digest.digest().encodeHex().toString()
+    if (actual != expected) {
+        logger.warn("galactica: mcpfabric jar ${jar} has SHA-256 ${actual}, expected ${expected}; NOT added to the run classpath")
+        return null
+    }
+    return jar
+}
+
 dependencies {
     minecraft("com.mojang:minecraft:${minecraft_version}")
     implementation("net.fabricmc:fabric-loader:${fabric_loader_version}")
@@ -29,6 +57,34 @@ dependencies {
     compileOnly("maven.modrinth:iris:${iris_version}")
     // Optional animated ship renderer (client/ship/geckolib); GeckoLib 5.5.7 for Fabric 26.3, Modrinth version id kSxHvs99, MIT.
     compileOnly("maven.modrinth:geckolib:kSxHvs99")
+
+    // --- Optional integrations: compile against them, never ship or require them (fabric.mod.json "suggests").
+    // 26.x is unobfuscated, so plain compileOnly works; no mod* remap configurations exist or are needed.
+    compileOnly("maven.modrinth:modmenu:${modmenu_version}")          // MIT; entrypoint compat/modmenu
+    compileOnly("maven.modrinth:yacl:${yacl_version}")                // LGPL-3.0+; mod id yet_another_config_lib_v3
+    compileOnly("maven.modrinth:distanthorizonsapi:${dh_api_version}") // DH API jar (sources inside); runtime mod id distanthorizons
+    compileOnly("maven.modrinth:geckolib:${geckolib_version}")        // MIT; detection only for now (OptionalMods.geckolib)
+
+    // --- Dev runtime only (localRuntime: on the run classpath, never in the published POM/jar).
+    localRuntime("maven.modrinth:modmenu:${modmenu_version}")
+    localRuntime("maven.modrinth:yacl:${yacl_version}")
+    localRuntime("maven.modrinth:spark:${spark_version}")             // GPL-3.0 profiler, runtime tool, not linked
+    // mcpfabric agent bridge (research C.3 provenance gate): the jar path is per machine and comes from
+    // -Pgalactica.mcpfabricJar=... or ~/.gradle/gradle.properties, never from this repo. The jar joins the
+    // run classpath only when its SHA-256 equals the hash pinned in gradle.properties (mcpfabric_sha256).
+    def mcpfabricJar = verifiedMcpfabricJar()
+    if (mcpfabricJar != null) {
+        localRuntime(files(mcpfabricJar))
+    }
+    // Heavy renderers are opt-in so the autotest screenshots stay comparable:
+    //   ./gradlew runClient -Pgalactica.dh=true      (Distant Horizons LOD terrain)
+    //   ./gradlew runClient -Pgalactica.bobby=true   (Bobby chunk cache)
+    if (project.findProperty('galactica.dh') == 'true') {
+        localRuntime("maven.modrinth:distanthorizons:${dh_version}")
+    }
+    if (project.findProperty('galactica.bobby') == 'true') {
+        localRuntime("maven.modrinth:bobby:${bobby_version}")
+    }
 
     testImplementation(platform('org.junit:junit-bom:5.13.4'))
     testImplementation('org.junit.jupiter:junit-jupiter')
@@ -92,6 +148,26 @@ loom {
             runDir 'runs/server'
         }
     }
+}
+
+// Fabric GameTest wiring (Loom 1.18.1 FabricApiExtension/GameTestSettings, read from the plugin jar).
+// Creates the `gametest` source set (src/gametest/java + resources, depends on main) and the
+// runGameTest (server, headless) and runClientGameTest (real client window) tasks.
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = 'galactica-test'
+        eula = true
+        enableGameTests = true
+        enableClientGameTests = true
+    }
+}
+
+// Loom hooks runGameTest into `check`, which would boot a server inside every `./gradlew build`.
+// Keep build fast and offline-safe; run the game tests explicitly instead, but still compile them.
+tasks.named('check') {
+    setDependsOn(dependsOn.findAll { !it.toString().contains('GameTest') })
+    dependsOn 'gametestClasses'
 }
 
 processResources {
