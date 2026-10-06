@@ -138,11 +138,15 @@ public final class ExoticOverlay {
     private static int frame, generation;
     private static long uploadDeadline;
 
-    /** Registers the tick hook that frees every texture once the player leaves the space dimension. */
+    /**
+     * Registers the tick hook that frees every texture once the player leaves the space dimension,
+     * and {@link NebulaCloseUp}'s equivalent.
+     */
     public static void initClient() {
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             if (!ENTRIES.isEmpty() && !SpaceSkyRenderer.active()) clear();
         });
+        NebulaCloseUp.initClient();
     }
 
     /**

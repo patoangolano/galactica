@@ -137,44 +137,38 @@ public final class DeepSkyCatalog {
         List<DeepSkyObject> out = new ArrayList<>();
         // ------------------------------------------------------------ emission nebulae
         double[] m42 = lb(209.01, -19.38, 412);
-        out.add(neb("m42", "Orion Nebula (M42)", DeepSkyType.EMISSION_NEBULA, m42, 7, o -> {
-            List<Blob> b = new ArrayList<>(Morphology.hiiRegion(o.seed, frameRandom(o.id, m42, 5.5, 4.4, 3.0), 3_600, 1.0, 3.0, 1));
-            // M43 (De Mairan's Nebula), ionised by NU Ori, 7' north.
-            b.addAll(Morphology.hiiRegion(o.seed ^ 43, frameRandom("m43", lb(208.99, -19.27, 412), 0.5, 0.45, 0.45), 150, 0.1, 2.0, 0));
-            return b;
-        }));
+        out.add(neb("m42", "Orion Nebula (M42)", DeepSkyType.EMISSION_NEBULA, m42, 7, o -> List.of())
+                .withFields(o -> NebulaShapes.orionNebula(o.seed, m42)));
         double[] ic434 = lb(206.95, -16.60, 400);
         out.add(neb("ic434", "Horsehead Nebula (IC 434)", DeepSkyType.EMISSION_NEBULA, ic434, 5, o -> {
-            List<Blob> b = new ArrayList<>(Morphology.hiiRegion(o.seed, frameSky(ic434, 1.2, 3.2, 0.8), 350, 0.05, 2.0, 0));
+            List<Blob> b = new ArrayList<>();
             // The Horsehead: a dark pillar of the L1630 cloud in front of the ionised sheet.
             double[][] sk = skyBasis(ic434);
             double[] head = {ic434[0] - sk[2][0] * 1.5 - sk[0][0] * 0.4, ic434[1] - sk[2][1] * 1.5 - sk[0][1] * 0.4, ic434[2] - sk[2][2] * 1.5 - sk[0][2] * 0.4};
             b.add(Blob.axial(head, sk[0], 0.35, 0.12, new double[3], 0, Blob.dustFor(12, 0.35, 0.12)));
             return b;
-        }));
+        }).withFields(o -> List.of(NebulaShapes.hii(o.seed, frameSky(ic434, 1.2, 3.2, 0.8), 350, 0.05, 2.0, 0, 0.1))));
         double[] loopC = lb(206.0, -17.0, 380);
         double[][] loopSky = skyBasis(loopC);
         double[] loopDir = DeepMath.normalize(new double[] {loopSky[0][0] + 0.6 * loopSky[1][0], loopSky[0][1] + 0.6 * loopSky[1][1], loopSky[0][2] + 0.6 * loopSky[1][2]});
-        out.add(neb("barnards_loop", "Barnard's Loop", DeepSkyType.EMISSION_NEBULA, loopC, 60, o ->
-                Morphology.shell(o.seed, new Morphology.Frame(loopC, loopSky[0], loopSky[1], loopSky[2], 55, 55, 55),
-                        0.05, 12_000, 0.0, 220, loopDir, 0.05, 0)));
+        out.add(neb("barnards_loop", "Barnard's Loop", DeepSkyType.EMISSION_NEBULA, loopC, 72, o -> List.of())
+                .withFields(o -> List.of(NebulaShapes.barnardsLoop(o.seed, new Morphology.Frame(loopC, loopSky[0], loopSky[1], loopSky[2], 55, 55, 55)))));
         // Orion A giant molecular cloud, behind M42 and stretching ~10° south-east (Großschedl et al. 2018).
         double[] orionA = lb(211.5, -19.6, 432);
-        out.add(neb("orion_a", "Orion A Molecular Cloud", DeepSkyType.DARK_NEBULA, orionA, 32, o ->
-                Morphology.darkCloud(o.seed, frameSky(orionA, 24, 5, 9), 4.0, 9, 0.25)));
+        out.add(neb("orion_a", "Orion A Molecular Cloud", DeepSkyType.DARK_NEBULA, orionA, 32, o -> List.of())
+                .withFields(o -> List.of(new DarkField(o.seed, frameSky(orionA, 22, 5, 7), 6.0, 0.6, 0.05))));
         double[] lamOri = eq(ra(5, 35, 0), dec(9, 56, 0), 400);
-        out.add(neb("lambda_ori", "Lambda Orionis Ring", DeepSkyType.EMISSION_NEBULA, lamOri, 36, o ->
-                Morphology.shell(o.seed, frameRandom(o.id, lamOri, 28, 28, 28), 0.12, 2_000, 0.0, 160, null, 0, 0.3)));
+        out.add(neb("lambda_ori", "Lambda Orionis Ring", DeepSkyType.EMISSION_NEBULA, lamOri, 44, o -> List.of())
+                .withFields(o -> List.of(NebulaShapes.lambdaOrionis(o.seed, frameSky(lamOri, 28, 28, 26)))));
         double[] carina = lb(287.6, -0.6, 2300);
-        out.add(neb("ngc3372", "Carina Nebula (NGC 3372)", DeepSkyType.EMISSION_NEBULA, carina, 45, o ->
-                Morphology.hiiRegion(o.seed, frameRandom(o.id, carina, 34, 26, 22), 280_000, 0.8, 6.0, 2)));
+        out.add(neb("ngc3372", "Carina Nebula (NGC 3372)", DeepSkyType.EMISSION_NEBULA, carina, 45, o -> List.of())
+                .withFields(o -> List.of(NebulaShapes.carina(o.seed, frameSky(carina, 26, 22, 20)))));
         double[] m8 = lb(6.0, -1.2, 1250);
-        out.add(neb("m8", "Lagoon Nebula (M8)", DeepSkyType.EMISSION_NEBULA, m8, 28, o ->
-                Morphology.hiiRegion(o.seed, frameSky(m8, 13, 6, 8), 35_000, 0.35, 4.0, 1)));
+        out.add(neb("m8", "Lagoon Nebula (M8)", DeepSkyType.EMISSION_NEBULA, m8, 28, o -> List.of())
+                .withFields(o -> List.of(NebulaShapes.lagoon(o.seed, frameSky(m8, 11, 6, 7)))));
         double[] m16 = lb(17.0, 0.8, 1740);
         out.add(neb("m16", "Eagle Nebula (M16)", DeepSkyType.EMISSION_NEBULA, m16, 22, o -> {
-            Morphology.Frame f = frameRandom(o.id, m16, 9, 8, 8);
-            List<Blob> b = new ArrayList<>(Morphology.hiiRegion(o.seed, f, 50_000, 0.6, 4.0, 0));
+            List<Blob> b = new ArrayList<>();
             // Pillars of Creation: dust columns pointing at NGC 6611, with ionised tips.
             double[][] sk = skyBasis(m16);
             for (int i = 0; i < 3; i++) {
@@ -186,13 +180,13 @@ public final class DeepSkyCatalog {
                 b.add(Blob.sphere(tip, 0.25, Morphology.H_ALPHA, 400, 0));
             }
             return b;
-        }));
+        }).withFields(o -> List.of(NebulaShapes.eagle(o.seed, frameRandom(o.id, m16, 8, 7, 7)))));
         double[] rosette = lb(206.3, -2.1, 1600);
-        out.add(neb("ngc2237", "Rosette Nebula (NGC 2237)", DeepSkyType.EMISSION_NEBULA, rosette, 24, o ->
-                Morphology.shell(o.seed, frameRandom(o.id, rosette, 15, 15, 14), 0.2, 25_000, 0.25, 160, null, 0, 2.0)));
+        out.add(neb("ngc2237", "Rosette Nebula (NGC 2237)", DeepSkyType.EMISSION_NEBULA, rosette, 24, o -> List.of())
+                .withFields(o -> List.of(NebulaShapes.rosette(o.seed, frameRandom(o.id, rosette, 15, 15, 14)))));
         double[] ngc7000 = eq(ra(20, 59, 17), dec(44, 31, 0), 795);
-        out.add(neb("ngc7000", "North America Nebula (NGC 7000)", DeepSkyType.EMISSION_NEBULA, ngc7000, 22, o ->
-                Morphology.hiiRegion(o.seed, frameSky(ngc7000, 13, 12, 8), 4_000, 0.15, 5.0, 2)));
+        out.add(neb("ngc7000", "North America Nebula (NGC 7000)", DeepSkyType.EMISSION_NEBULA, ngc7000, 22, o -> List.of())
+                .withFields(o -> List.of(NebulaShapes.northAmerica(o.seed, NebulaShapes.equatorial(ngc7000, 10, 10, 7)))));
 
         // ------------------------------------------------------------ supernova remnants
         double[] crab = lb(184.56, -5.78, 2000);
@@ -219,20 +213,20 @@ public final class DeepSkyCatalog {
 
         // ------------------------------------------------------------ dark nebulae
         double[] coal = lb(301.0, -1.0, 180);
-        out.add(neb("coalsack", "Coalsack Nebula", DeepSkyType.DARK_NEBULA, coal, 12, o ->
-                Morphology.darkCloud(o.seed, frameSky(coal, 10, 8, 5), 1.0, 3, 1.0)));
+        out.add(neb("coalsack", "Coalsack Nebula", DeepSkyType.DARK_NEBULA, coal, 12, o -> List.of())
+                .withFields(o -> List.of(new DarkField(o.seed, frameSky(coal, 8, 7, 4), 1.2, 1.3, 0.14))));
         double[] b68 = eq(ra(17, 22, 38.2), dec(-23, 49, 34), 125);
         out.add(neb("barnard68", "Barnard 68", DeepSkyType.DARK_NEBULA, b68, 0.1, o ->
                 Morphology.globule(frameRandom(o.id, b68, 0.06, 0.06, 0.06), 30)));
         double[] taurus = eq(ra(4, 30, 0), dec(25, 30, 0), 141);
-        out.add(neb("taurus_cloud", "Taurus Molecular Cloud", DeepSkyType.DARK_NEBULA, taurus, 20, o ->
-                Morphology.darkCloud(o.seed, frameSky(taurus, 16, 11, 6), 2.2, 14, 0.12)));
+        out.add(neb("taurus_cloud", "Taurus Molecular Cloud", DeepSkyType.DARK_NEBULA, taurus, 20, o -> List.of())
+                .withFields(o -> List.of(new DarkField(o.seed, frameSky(taurus, 15, 10, 5), 2.5, 0.3, 0.04))));
         double[] rhoOph = eq(ra(16, 28, 0), dec(-24, 20, 0), 139);
-        out.add(neb("rho_oph_cloud", "Rho Ophiuchi Cloud", DeepSkyType.DARK_NEBULA, rhoOph, 8, o ->
-                Morphology.darkCloud(o.seed, frameRandom(o.id, rhoOph, 8, 5, 5), 3.5, 7, 0.2)));
+        out.add(neb("rho_oph_cloud", "Rho Ophiuchi Cloud", DeepSkyType.DARK_NEBULA, rhoOph, 8, o -> List.of())
+                .withFields(o -> List.of(new DarkField(o.seed, frameRandom(o.id, rhoOph, 6, 4, 4), 3.5, 0.7, 0.06))));
         double[] pipe = eq(ra(17, 25, 0), dec(-26, 0, 0), 130);
-        out.add(neb("pipe_nebula", "Pipe Nebula", DeepSkyType.DARK_NEBULA, pipe, 18, o ->
-                Morphology.darkCloud(o.seed, frameSky(pipe, 5, 15, 3), 2.0, 7, 0.2)));
+        out.add(neb("pipe_nebula", "Pipe Nebula", DeepSkyType.DARK_NEBULA, pipe, 18, o -> List.of())
+                .withFields(o -> List.of(new DarkField(o.seed, frameSky(pipe, 3.5, 13, 2.5), 2.5, 0.5, 0.07))));
 
         // ------------------------------------------------------------ open clusters
         double[] pleiades = lb(166.57, -23.52, 136);
@@ -251,7 +245,7 @@ public final class DeepSkyCatalog {
                 new StarCluster.Anchor("Asterope", ra(3, 45, 54.5), dec(24, 33, 17), 5.76, 10_000, StarKind.MAIN_SEQUENCE, 2.9),
                 new StarCluster.Anchor("HD 23753", ra(3, 48, 20.8), dec(23, 25, 16), 5.45, 12_300, StarKind.MAIN_SEQUENCE, 3.2),
                 new StarCluster.Anchor("18 Tauri", ra(3, 45, 9.7), dec(24, 50, 21), 5.66, 12_800, StarKind.MAIN_SEQUENCE, 3.0)),
-                2.85, 0.12, o -> Morphology.reflection(o.seed, frameRandom("m45_dust", pleiades, 1.6, 1.6, 1.0), 45, 40)));
+                2.85, 0.12, null).withFields(o -> List.of(NebulaShapes.pleiadesDust(o.seed, (StarCluster) o, pleiades))));
         double[] hyades = lb(180.06, -22.34, 47.5);
         out.add(new StarCluster("hyades", "Hyades", DeepSkyType.OPEN_CLUSTER, hyades, true, seedOf("hyades"),
                 0.625, 0.13, 700, 2.7, 10.0, List.of(

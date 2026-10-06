@@ -60,7 +60,10 @@ public final class DeepSky {
         Thread t = new Thread(() -> {
             DeepSky ds = of(galaxySeed);
             ds.globulars();
-            for (DeepSkyObject o : DeepSkyCatalog.all()) o.blobs();
+            for (DeepSkyObject o : DeepSkyCatalog.all()) {
+                o.blobs();
+                o.fields();
+            }
         }, "Galactica deep-sky warmup");
         t.setDaemon(true);
         t.setPriority(Thread.MIN_PRIORITY);

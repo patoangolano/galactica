@@ -153,8 +153,9 @@ public final class ProceduralDeepSky {
             if (distSun(x, y, z) < SUN_EXCLUDE_HII) continue;
             double[] p = {x, y, z};
             out.add(DeepSkyObject.of("hii:" + Long.toHexString(s), designation("HII", x, y, z), DeepSkyType.EMISSION_NEBULA,
-                    p, r * 2.2, false, s, o -> Morphology.hiiRegion(o.seed, Morphology.Frame.random(p, new SeedRng(o.seed ^ 7),
-                            r * rng2(o.seed, 0.8, 1.4), r, r * rng2(o.seed ^ 3, 0.6, 1.0)), l, oiii, dust, (int) (o.seed & 1))));
+                    p, r * 2.2, false, s, o -> List.of()).withFields(o -> List.of(NebulaShapes.proceduralHii(o.seed,
+                    Morphology.Frame.random(p, new SeedRng(o.seed ^ 7), r * rng2(o.seed, 0.8, 1.4), r, r * rng2(o.seed ^ 3, 0.6, 1.0)),
+                    l, oiii, dust, (int) (o.seed & 1)))));
         }
 
         int nYoung = rng.poisson(SIGMA_OC_YOUNG * area * yw);
@@ -188,8 +189,9 @@ public final class ProceduralDeepSky {
             if (distSun(x, y, z) < SUN_EXCLUDE_DARK + r) continue;
             double[] p = {x, y, z};
             out.add(DeepSkyObject.of("dn:" + Long.toHexString(s), designation("DN", x, y, z), DeepSkyType.DARK_NEBULA,
-                    p, r * 1.6, false, s, o -> Morphology.darkCloud(o.seed, Morphology.Frame.random(p, new SeedRng(o.seed ^ 5),
-                            r, r * rng2(o.seed, 0.5, 1.0), r * rng2(o.seed ^ 9, 0.3, 0.7)), av, fil, env)));
+                    p, r * 1.6, false, s, o -> List.of()).withFields(o -> List.of(new DarkField(o.seed,
+                    Morphology.Frame.random(p, new SeedRng(o.seed ^ 5), r, r * rng2(o.seed, 0.5, 1.0), r * rng2(o.seed ^ 9, 0.3, 0.7)),
+                    av, 0.5 * env * av, 0.05 + 0.02 * (fil % 4)))));
         }
         return out;
     }

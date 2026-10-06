@@ -11,7 +11,6 @@ import dev.galactica.sky.Starfield;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ForkJoinPool;
-import java.util.stream.IntStream;
 
 /**
  * The Overworld night sky, computed once from the Sun's position in the procedural galaxy and laid
@@ -37,7 +36,7 @@ public final class EarthSkyBake {
     /** Naked-eye limit under a dark sky (Schaefer 1993, Vistas Astron. 36, 311: ~6.5 for most observers). */
     public static final double LIMITING_MAG = 6.5;
     /** The band is a faint glow to the eye; this caps how opaque its brightest pixel may be. */
-    public static final double GALAXY_OPACITY = 0.85;
+    public static final double GALAXY_OPACITY = 0.9;
 
     /** A star sprite: unit direction in the star-buffer frame, V magnitude, linear-sRGB colour. */
     public record Sprite(String name, float bx, float by, float bz, double mag, float r, float g, float b) {}
@@ -56,30 +55,87 @@ public final class EarthSkyBake {
     }
 
     /**
-     * The Milky Way as seen from Sol, in star-buffer equirect layout, with light-carrying alpha. The
-     * rows are marched in parallel on {@code pool}: a parallel stream started from inside a
-     * ForkJoinPool task runs in that pool, not in the common pool.
+     * The Milky Way as seen from Sol, in star-buffer equirect layout, with light-carrying alpha.
+     *
+     * <p>The galaxy is baked with its deep-sky objects (the Orion Nebula, the Magellanic Clouds,
+     * Andromeda, the Coalsack and the other dark clouds that cut the band) by the two-scale bake
+     * rotated into the star-buffer frame, then mapped by {@link #nakedEye}. Runs on {@code pool}:
+     * a parallel stream started from inside a ForkJoinPool task runs in that pool.
      */
     public static int[] galaxy(int width, int height, ForkJoinPool pool) {
         GalaxySkyBaker baker = new GalaxySkyBaker(Frames.GALAXY_SEED);
         double ox = StarCatalog.SOL.x(), oy = StarCatalog.SOL.y(), oz = StarCatalog.SOL.z();
         float[] hdr = new float[width * height * 3];
-        pool.submit(() -> IntStream.range(0, height).parallel().forEach(j -> {
-            double[] b = new double[3];
-            double[] rgb = new double[3];
-            for (int i = 0; i < width; i++) {
-                GalaxySkyBaker.equirectDirection((i + 0.5) / width, (j + 0.5) / height, b);
-                double[] g = EquatorialFrame.starToGalactocentric(b);
-                baker.march(ox, oy, oz, g[0], g[1], g[2], rgb);
-                int k = (j * width + i) * 3;
-                hdr[k] = (float) rgb[0];
-                hdr[k + 1] = (float) rgb[1];
-                hdr[k + 2] = (float) rgb[2];
-            }
-        })).join();
-        SkyTonemap tm = SkyTonemap.fit(hdr);
-        int[] argb = new int[width * height];
-        for (int i = 0; i < argb.length; i++) argb[i] = lightAlpha(tm.toArgb(hdr[i * 3], hdr[i * 3 + 1], hdr[i * 3 + 2]));
+        double[][] rot = starToGalactic();
+        pool.submit(() -> {
+            baker.bakeEquirectRadiance(ox, oy, oz, width, height, hdr, rot);
+            GalaxySkyBaker.compressHighlights(hdr, width, height, true);
+        }).join();
+        return nakedEye(hdr);
+    }
+
+    /** Rows map a star-buffer direction to the galactocentric ray direction ({@link EquatorialFrame#starToGalactocentric}). */
+    static double[][] starToGalactic() {
+        double[][] m = new double[3][3];
+        for (int c = 0; c < 3; c++) {
+            double[] e = new double[3];
+            e[c] = 1;
+            double[] g = EquatorialFrame.starToGalactocentric(e);
+            for (int r = 0; r < 3; r++) m[r][c] = g[r];
+        }
+        return m;
+    }
+
+    /** Luminance percentiles anchoring the naked-eye mapping: the sky floor and the brightest star clouds. */
+    static final double FLOOR_QUANTILE = 0.78, PEAK_QUANTILE = 0.997;
+    /** Display value of the brightest star clouds: the band is a faint glow, never a white road. */
+    static final double PEAK_DISPLAY = 0.6;
+    /**
+     * Fraction of colour kept: the band is seen near the rod/cone threshold, where colour vision
+     * fades (mesopic vision, Purkinje shift), so it reads almost grey-white with a hint of warmth.
+     */
+    static final double SATURATION = 0.35;
+
+    /**
+     * Maps sky radiance to what a dark-adapted eye sees of the Milky Way under a Bortle-1 sky: the
+     * diffuse light above the sky floor (the 78th percentile: the faint glow of the whole sphere is
+     * the natural background, not the band) scaled to the Scutum–Sagittarius star clouds (the
+     * 99.7th percentile), mapped almost linearly (power 1.15) to at most {@link #PEAK_DISPLAY} of
+     * the display range — so the Great Rift and the Coalsack stay dark, the band's edges fade
+     * instead of ending, and the band stays a faint glow — and
+     * desaturated toward the eye's grey ({@link #SATURATION}). Output is light-carrying ARGB
+     * ({@link #lightAlpha}).
+     */
+    static int[] nakedEye(float[] hdr) {
+        int n = hdr.length / 3;
+        // Percentiles from every 5th pixel: plenty for quantiles, and no second full-size array.
+        int stride = 5, ns = (n + stride - 1) / stride;
+        double[] sorted = new double[ns];
+        for (int i = 0, k = 0; i < n; i += stride) sorted[k++] = SkyTonemap.luminance(hdr[i * 3], hdr[i * 3 + 1], hdr[i * 3 + 2]);
+        java.util.Arrays.sort(sorted);
+        double floor = sorted[(int) (ns * FLOOR_QUANTILE)];
+        double peak = Math.max(floor * 1.01 + 1e-12, sorted[Math.min(ns - 1, (int) (ns * PEAK_QUANTILE))]);
+        int[] argb = new int[n];
+        for (int i = 0; i < n; i++) {
+            double y = SkyTonemap.luminance(hdr[i * 3], hdr[i * 3 + 1], hdr[i * 3 + 2]);
+            double x = Math.max(0, y - floor) / (peak - floor);
+            if (x <= 0 || y <= 0) continue;
+            double m = PEAK_DISPLAY * Math.pow(Math.min(1.6, x), 1.15);
+            m = Math.min(1, m);
+            // Chroma at the pixel's luminance, pulled toward grey.
+            double r = hdr[i * 3] / y, g = hdr[i * 3 + 1] / y, b = hdr[i * 3 + 2] / y;
+            r = 1 + (r - 1) * SATURATION;
+            g = 1 + (g - 1) * SATURATION;
+            b = 1 + (b - 1) * SATURATION;
+            double mx = Math.max(r, Math.max(g, b));
+            // m is a display (gamma-encoded) value, as the sky shell blends in display space; the
+            // chroma ratio is gamma-encoded with it (encoding m itself would lift the faint edge of
+            // the band into a flat plateau).
+            int ri = (int) Math.round(255 * m * Math.pow(r / mx, 1 / 2.2));
+            int gi = (int) Math.round(255 * m * Math.pow(g / mx, 1 / 2.2));
+            int bi = (int) Math.round(255 * m * Math.pow(b / mx, 1 / 2.2));
+            argb[i] = lightAlpha(0xFF000000 | (ri << 16) | (gi << 8) | bi);
+        }
         return argb;
     }
 
