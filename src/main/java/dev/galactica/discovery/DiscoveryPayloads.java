@@ -11,6 +11,9 @@ import java.util.List;
 
 /** The three discovery packets. Registered by {@link Discovery#init()}. */
 public final class DiscoveryPayloads {
+    /** Most survey rows one scan result carries. */
+    public static final int MAX_REVEALED = 64;
+
     private DiscoveryPayloads() {}
 
     /** C2S: "I pointed the spectrometer at this". */
@@ -83,8 +86,10 @@ public final class DiscoveryPayloads {
             b.writeVarInt(awarded);
             b.writeVarInt(balance);
             b.writeUtf(customName);
-            b.writeVarInt(revealed.size());
-            for (Revealed r : revealed) r.write(b);
+            // Writer and reader share one cap, so an oversized list can never desynchronise the stream.
+            int n = Math.min(MAX_REVEALED, revealed.size());
+            b.writeVarInt(n);
+            for (int i = 0; i < n; i++) revealed.get(i).write(b);
         }
 
         private static ScanResult read(RegistryFriendlyByteBuf b) {
@@ -97,7 +102,8 @@ public final class DiscoveryPayloads {
             boolean first = b.readBoolean();
             int awarded = b.readVarInt(), balance = b.readVarInt();
             String name = b.readUtf();
-            int n = Math.min(64, b.readVarInt());
+            int n = b.readVarInt();
+            if (n < 0 || n > MAX_REVEALED) throw new io.netty.handler.codec.DecoderException("Too many revealed planets: " + n);
             List<Revealed> list = new ArrayList<>(n);
             for (int i = 0; i < n; i++) list.add(Revealed.read(b));
             return new ScanResult(t, refusal, rv, d, inside, who, time, first, awarded, balance, name, List.copyOf(list));

@@ -149,6 +149,10 @@ class SurveyAndLedgerTest {
         assertTrue(ScanRules.starVisible(StarCatalog.byName("Sirius A"), 2.64));
         assertFalse(ScanRules.starVisible(StarCatalog.byName("Cygnus X-1"), 2220), "black holes have no light to disperse");
         assertFalse(ScanRules.starVisible(StarCatalog.byName("Proxima Centauri"), 200), "an M dwarf at 200 pc is far too faint");
+        assertTrue(ScanRules.starVisible(StarCatalog.byName("Deneb"), 802), "catalog stars are scannable at any distance, like the sky lists them");
+        assertTrue(ScanRules.starVisible(StarCatalog.byName("Eta Carinae"), 2300));
+        Star farBright = new Star(9, "far", 8000, 0, 0, StarKind.SUPERGIANT, 20, 100, 1e5, 9000, 1, 0, 7, false);
+        assertFalse(ScanRules.starVisible(farBright, ScanRules.MAX_STAR_PC + 50), "procedural stars stop at the luminous shell");
         assertTrue(ScanRules.acceptDeg(6.96e8, 1.5e11) == ScanRules.ACCEPT_DEG);
         assertTrue(ScanRules.acceptDeg(6.4e6, 1.0e7) > 40, "a planet filling the view is accepted across its disc");
     }

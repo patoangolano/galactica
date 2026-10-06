@@ -68,7 +68,10 @@ class SpectraTest {
     void remnantsAndBlackHoles() {
         Star da = star(20_000, StarKind.WHITE_DWARF);
         assertTrue(depth(da, "Hβ") > 0.4, "DA white dwarfs show broad Balmer lines");
-        assertTrue(StellarSpectrum.absorbers(star(8_000, StarKind.WHITE_DWARF)).isEmpty(), "DC are featureless");
+        assertTrue(depth(star(8_000, StarKind.WHITE_DWARF), "Hβ") > 0.1, "cool DA stars still show Balmer lines");
+        assertTrue(depth(star(12_500, StarKind.WHITE_DWARF), "Hβ") > depth(star(6_000, StarKind.WHITE_DWARF), "Hβ"),
+                "DA Balmer lines peak near 12-13 kK");
+        assertTrue(StellarSpectrum.absorbers(star(4_500, StarKind.WHITE_DWARF)).isEmpty(), "below ~5 kK they are featureless DC");
         Star bh = new Star(1, "BH", 0, 0, 0, StarKind.BLACK_HOLE, 10, 0, 0, 0, 1, 0, 1, false);
         assertTrue(StellarSpectrum.of(bh, 0).dark());
     }

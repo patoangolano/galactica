@@ -47,11 +47,16 @@ public final class StellarSpectrum {
                 return out;
             }
             case WHITE_DWARF -> {
-                if (t > 12_000) {
-                    // DA: surface gravity 10^8 cm/s² Stark-broadens Balmer lines to tens of Å.
-                    String[] n = {"Hα", "Hβ", "Hγ", "Hδ"};
-                    double[] w = {656.28, 486.13, 434.05, 410.17};
-                    for (int i = 0; i < n.length; i++) out.add(new Absorber(n[i], w[i], 0.55, 3.5, Absorber.Shape.LINE, "H"));
+                if (t > 5_000) {
+                    // DA: surface gravity 10^8 cm/s² Stark-broadens Balmer lines to tens of Å. The lines are
+                    // strongest near 12–13 kK and fade towards ~5 kK, below which DA stars turn DC
+                    // (Bergeron et al. 1997; Koester 2013, Planets, Stars and Stellar Systems vol. 4).
+                    double depth = 0.65 * peak(t, 12_500, 0.18, 0.35);
+                    if (depth > 0.02) {
+                        String[] n = {"Hα", "Hβ", "Hγ", "Hδ"};
+                        double[] w = {656.28, 486.13, 434.05, 410.17};
+                        for (int i = 0; i < n.length; i++) out.add(new Absorber(n[i], w[i], depth, 3.5, Absorber.Shape.LINE, "H"));
+                    }
                 }
                 return out;
             }

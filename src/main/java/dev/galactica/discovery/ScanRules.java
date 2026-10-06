@@ -45,10 +45,15 @@ public final class ScanRules {
         return s.absoluteMagnitude() + 5 * Math.log10(Math.max(1e-12, distancePc) / 10.0);
     }
 
-    /** A star outside the observer's system is visible to the spectrometer. */
+    /**
+     * A star outside the observer's system is visible to the spectrometer. Same rule as the sky
+     * ({@link Starfield}): catalog stars are listed at any distance, procedural ones only within the
+     * luminous shell. A black hole has no photosphere to see from outside its system.
+     */
     public static boolean starVisible(Star s, double distancePc) {
         if (s.kind() == StarKind.BLACK_HOLE) return false;
-        return distancePc <= MAX_STAR_PC && apparentMagnitude(s, distancePc) <= LIMIT_MAG;
+        if (!s.catalog() && distancePc > MAX_STAR_PC) return false;
+        return apparentMagnitude(s, distancePc) <= LIMIT_MAG;
     }
 
     /** A procedural star's sector is near enough to be worth generating (O(1) rejection of forged addresses). */

@@ -139,7 +139,8 @@ final class TargetFinder {
         Body bestPlanet = null, bestMoon = null;
         double best = Double.MAX_VALUE;
 
-        if (sys != null && sys.kind() != StarKind.BLACK_HOLE) {
+        // A black hole is pickable from inside its own system: the server reads its (dark) spectrum there.
+        if (sys != null) {
             double[] g = Neighbourhood.starPos(sys).metresFrom(here);
             double a = angleTo(g, look);
             if (a <= tolerance(sys.radiusMetres(), g) && a < best) {

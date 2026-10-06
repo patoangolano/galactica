@@ -271,7 +271,8 @@ public final class Discovery {
 
         DiscoveryLedger.Entry e = main.entry();
         ServerPlayNetworking.send(p, new DiscoveryPayloads.ScanResult(t, "", rv, distPc, view.inside(), e.discovererName(),
-                e.gameTime(), main.first(), awarded, ledger.account(who).balance(), e.customName(), List.copyOf(revealed)));
+                e.gameTime(), main.first(), awarded, ledger.account(who).balance(), e.customName(),
+                List.copyOf(revealed.subList(0, Math.min(DiscoveryPayloads.MAX_REVEALED, revealed.size())))));
         if (awarded > 0 || main.first()) broadcast(server, changed);
     }
 

@@ -97,8 +97,8 @@ public final class Kinematics {
 
     /**
      * Measured heliocentric radial velocity of a catalog star (km/s, positive = receding), or NaN
-     * when none is tabulated. Values from SIMBAD (Wenger et al. 2000), which compiles Gaia DR3 and
-     * ground-based spectroscopy; Proxima and α Cen from Kervella et al. (2017), TRAPPIST-1 from
+     * when none is tabulated. Values from SIMBAD (Wenger et al. 2000) as adopted there, with the
+     * source SIMBAD cites on each row; Proxima and α Cen from Kervella et al. (2017), TRAPPIST-1 from
      * Reiners et al. (2018).
      */
     public static double catalogRadialVelocity(long catalogId) {
@@ -106,23 +106,25 @@ public final class Kinematics {
             case -3 -> -21.4;   // α Cen A
             case -4 -> -18.6;   // α Cen B
             case -5 -> -22.2;   // Proxima Centauri
-            case -6 -> -110.5;  // Barnard's Star
-            case -7 -> 19.6;    // Wolf 359
-            case -8 -> -84.7;   // Lalande 21185
+            case -6 -> -110.1;  // Barnard's Star (Fouqué et al. 2018)
+            case -7 -> 19.6;    // Wolf 359 (Fouqué et al. 2018)
+            case -8 -> -84.6;   // Lalande 21185 (Fouqué et al. 2018)
             case -9, -10 -> -5.5; // Sirius A/B (system)
             case -11 -> 16.4;   // ε Eridani
             case -12 -> -16.7;  // τ Ceti
-            case -13 -> -3.2;   // Procyon A
-            case -14 -> -26.1;  // Altair
-            case -15 -> -20.6;  // Vega
+            case -13 -> -4.5;   // Procyon A (Jönsson et al. 2020)
+            case -14 -> -26.6;  // Altair (Gontcharov 2006)
+            case -15 -> -13.5;  // Vega (Adelman et al. 2004)
             case -16 -> 6.5;    // Fomalhaut
             case -17 -> -51.7;  // TRAPPIST-1
             case -18 -> -5.2;   // Arcturus
-            case -19 -> -17.4;  // Polaris
+            case -19 -> -16.4;  // Polaris (Pourbaix et al. 2004)
             case -20 -> 21.9;   // Betelgeuse
             case -21 -> 17.8;   // Rigel
-            case -22 -> -4.5;   // Deneb
-            case -23 -> -3.4;   // Antares
+            case -22 -> -4.9;   // Deneb (Gontcharov 2006)
+            case -23 -> -3.5;   // Antares (Gontcharov 2006)
+            case -24 -> -25.0;  // η Carinae (Wilson 1953, GCRV)
+            case -25 -> -2.7;   // Cygnus X-1, systemic velocity of HD 226868 (Gontcharov 2006)
             default -> Double.NaN;
         };
     }
