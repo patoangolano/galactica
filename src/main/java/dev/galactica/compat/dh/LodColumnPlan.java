@@ -12,13 +12,18 @@ import dev.galactica.planet.TerrainSampler.Material;
  * build height, {@code [bottom, top)}, every height ≥ 1. That is exactly what DH 3.3.4's
  * {@code LodDataBuilder.validateOrThrowApiDataColumn} accepts (read from the decompiled jar).
  *
- * <p><b>Sky light.</b> Open air and the fluid surface get 15. A submerged floor loses one level per
- * block of water, as vanilla light attenuation through water does (DH's own rough-surface generator
- * uses the same rule); solid spans below the surface get 0.
+ * <p><b>Sky light.</b> Each span carries the sky light at its top block: 15 minus one per
+ * light-dampening block above it. Open air and an open fluid surface get 15. Water and ice both
+ * dampen sky light by 1 per block (vanilla {@code BlockBehaviour.getLightDampening}: neither is a
+ * solid render shape nor propagates sky light down), the same rule DH's own rough-surface generator
+ * uses. So under an ice cap the fluid gets 14, and a submerged floor gets 15 − (water + ice depth);
+ * the ice block is already counted in that depth. Solid spans below the surface get 0.
  *
  * <p><b>Slope.</b> {@code TerrainSampler.column} bares rock where the height step to a neighbour is
  * ≥ 3 blocks. A coarse LOD column spans {@code step} blocks, so the slope is the neighbour
- * difference divided by {@code step}: the mean per-block gradient across the column.
+ * difference divided by {@code step} and rounded to the nearest block: the mean per-block gradient
+ * across the column. Rounding up instead would bare rock on every coarse column steeper than
+ * 2 blocks/block, more rock than the full-detail terrain it fades into.
  */
 public final class LodColumnPlan {
     /** Upper bound of spans per column: bedrock, under, filler, top, fluid, ice, air. */
@@ -67,7 +72,7 @@ public final class LodColumnPlan {
         count = 0;
         int maxY = minY + height; // exclusive
         h = Math.max(minY + 1, Math.min(maxY - 2, h));
-        int perBlockSlope = step <= 1 ? slope : (int) Math.ceil(slope / (double) step);
+        int perBlockSlope = perBlockSlope(slope, step);
         t.column(x, z, h, perBlockSlope, column);
         TerrainSampler.Column c = column;
 
@@ -90,7 +95,7 @@ public final class LodColumnPlan {
         if (wet) {
             int fluidTop = Math.min(maxY - 1, c.fluidTop + 1); // exclusive
             if (c.iceCap) {
-                add(c.fluid, surfaceTop, fluidTop - 1, 15, minY);
+                add(c.fluid, surfaceTop, fluidTop - 1, 14, minY); // one ice block above
                 add(Material.ICE, Math.max(surfaceTop, fluidTop - 1), fluidTop, 15, minY);
             } else {
                 add(c.fluid, surfaceTop, fluidTop, 15, minY);
@@ -98,6 +103,15 @@ public final class LodColumnPlan {
             airBottom = fluidTop;
         }
         add(Material.AIR, airBottom, maxY, 15, minY);
+    }
+
+    /**
+     * Mean per-block height gradient of a column {@code step} blocks wide whose neighbour differs
+     * by {@code slope} blocks, rounded half up to whole blocks (the unit {@code TerrainSampler.column}
+     * compares against its bare-rock threshold).
+     */
+    public static int perBlockSlope(int slope, int step) {
+        return step <= 1 ? slope : (int) Math.round(slope / (double) step);
     }
 
     /** Appends a span if it has positive height; Y converted to DH's level-relative coordinates. */

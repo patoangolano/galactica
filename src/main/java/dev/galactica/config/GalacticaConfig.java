@@ -58,8 +58,10 @@ public final class GalacticaConfig {
     public static final int PLANET_TEXTURE_MIN = 128, PLANET_TEXTURE_MAX = 1024;
     public static final double ENTRY_EFFECTS_MIN = 0.0, ENTRY_EFFECTS_MAX = 1.0;
     /**
-     * Warp cap in parsecs per second. The upper bound matches {@code /galactica maxwarp} (1000 pc/s
-     * ≈ 1.0 × 10^11 c); the lower bound is 1 AU per ~6 days, effectively "warp off".
+     * Warp cap in parsecs per second, the same range {@code /galactica maxwarp} accepts. With
+     * 1 pc = 3.0857 × 10^16 m (IAU 2015 B2) and c = 2.9979 × 10^8 m/s, 1 pc/s ≈ 1.03 × 10^8 c: the
+     * upper bound 1000 pc/s ≈ 1.0 × 10^11 c; the lower bound 1e-9 pc/s ≈ 3.1 × 10^4 km/s ≈ 0.10 c
+     * (1 AU in about 81 minutes), effectively "warp off".
      */
     public static final double WARP_MIN_PC_PER_S = 1e-9, WARP_MAX_PC_PER_S = 1000.0;
     public static final double HUD_SCALE_MIN = 0.5, HUD_SCALE_MAX = 2.0;
@@ -156,7 +158,15 @@ public final class GalacticaConfig {
         return seamlessTransitions;
     }
 
-    /** Warp drive cap in pc/s; server code multiplies by {@code Units.PARSEC} for m/s. */
+    /**
+     * Default warp-drive cap in pc/s (× {@code Units.PARSEC} for m/s). <b>Server-side default
+     * only:</b> the live cap is per player, in the {@code Galactica.NAV} attachment
+     * ({@code withMaxSpeed}), and {@code /galactica maxwarp} overrides it. Server code reads this
+     * value only when it first creates a player's NAV attachment, from the config file of the
+     * physical side running the server: the integrated server in singleplayer, the dedicated
+     * server's own {@code config/galactica.json} in multiplayer. Changing it never touches players
+     * who already have a NAV attachment, and a multiplayer client's screen does not affect the server.
+     */
     public double warpMaxPcPerS() {
         return warpMaxPcPerS;
     }

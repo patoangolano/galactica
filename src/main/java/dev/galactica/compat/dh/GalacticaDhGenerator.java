@@ -54,6 +54,8 @@ final class GalacticaDhGenerator implements IDhApiWorldGenerator {
     private volatile IDhApiBlockStateWrapper[] blocks;
     private volatile String biomeFor;
     private volatile IDhApiBiomeWrapper biome;
+    /** One log line per generator for requests against a free slot; races only risk a duplicate line. */
+    private volatile boolean freeSlotLogged;
 
     GalacticaDhGenerator(IDhApiLevelWrapper level, int slot) {
         this.level = level;
@@ -87,11 +89,23 @@ final class GalacticaDhGenerator implements IDhApiWorldGenerator {
     public CompletableFuture<Void> generateLod(int chunkPosMinX, int chunkPosMinZ, int lodPosX, int lodPosZ, byte detailLevel,
                                                IDhApiFullDataSource pooled, EDhApiDistantGeneratorMode mode,
                                                ExecutorService pool, Consumer<IDhApiFullDataSource> resultConsumer) {
+        if (PlanetSlots.runtime(slot) == null) {
+            // Free slot: nothing real to show yet, and the slot can be claimed later this session
+            // (PlanetSlots.claim), so air or placeholder ground written now would persist in DH's
+            // database and contradict the body. Fail fast with a CancellationException, which DH
+            // 3.3.4's ExceptionUtil.isInterruptOrReject treats as an interrupt (task dropped, generator
+            // kept). DH re-queues the position on a later pass; that retry is what lets the real
+            // terrain appear once the slot is claimed, and it now costs no pool task.
+            if (!freeSlotLogged) {
+                freeSlotLogged = true;
+                LOG.info("DH LOD request for surface_{} skipped: the slot has no body (yet)", slot);
+            }
+            return CompletableFuture.failedFuture(new CancellationException("surface_" + slot + " has no body assigned"));
+        }
         return CompletableFuture.runAsync(() -> {
             PlanetSlots.Runtime rt = PlanetSlots.runtime(slot);
             if (rt == null) {
-                // Free slot: nothing real to show yet. Cancelling (rather than writing placeholder
-                // ground) keeps DH from persisting terrain that the next body would contradict.
+                // Runtimes are only cleared at server start/stop; a stop mid-task lands here.
                 throw new CancellationException("surface_" + slot + " has no body assigned");
             }
             fill(rt, chunkPosMinX * 16, chunkPosMinZ * 16, 1 << detailLevel, pooled);

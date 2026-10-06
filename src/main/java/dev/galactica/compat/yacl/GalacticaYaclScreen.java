@@ -93,10 +93,14 @@ public final class GalacticaYaclScreen {
                 .option(Option.<Double>createBuilder()
                         .name(name("warp_max"))
                         .description(desc("warp_max"))
-                        // Logarithmic slider (log10 pc/s from -1 to 3): the useful caps span four decades.
-                        .binding(Math.log10(def.warpMaxPcPerS), () -> Math.log10(Math.max(0.1, draft.warpMaxPcPerS)),
+                        // Logarithmic slider over the config's whole legal range (log10 pc/s from -9 to 3),
+                        // so any value the file or /galactica maxwarp allows round-trips through the screen.
+                        .binding(Math.log10(def.warpMaxPcPerS),
+                                () -> Math.log10(Math.max(GalacticaConfig.WARP_MIN_PC_PER_S, draft.warpMaxPcPerS)),
                                 v -> draft.warpMaxPcPerS = Math.pow(10, v))
-                        .controller(o -> DoubleSliderControllerBuilder.create(o).range(-1.0, 3.0).step(0.05)
+                        .controller(o -> DoubleSliderControllerBuilder.create(o)
+                                .range(Math.log10(GalacticaConfig.WARP_MIN_PC_PER_S), Math.log10(GalacticaConfig.WARP_MAX_PC_PER_S))
+                                .step(0.05)
                                 .formatValue(v -> Component.literal(String.format(Locale.ROOT, "%.3g pc/s", Math.pow(10, v)))))
                         .build())
                 .build();

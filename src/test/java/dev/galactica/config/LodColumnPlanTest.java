@@ -88,6 +88,54 @@ class LodColumnPlanTest {
     }
 
     @Test
+    void coarseSlopeRoundsToNearestBlockNotUp() {
+        assertEquals(2, LodColumnPlan.perBlockSlope(33, 16), "2.06 blocks/block is a 2-block gradient");
+        assertEquals(3, LodColumnPlan.perBlockSlope(40, 16), "2.5 rounds half up");
+        assertEquals(3, LodColumnPlan.perBlockSlope(44, 16));
+        assertEquals(7, LodColumnPlan.perBlockSlope(7, 1), "full detail keeps the raw step");
+        TerrainSampler terran = new TerrainSampler(BodyType.TERRAN, 1L, 1.0, SurfaceGrid.of(1.0e5), false, false);
+        LodColumnPlan plan = new LodColumnPlan();
+        int h = TerrainSampler.SEA_LEVEL + 20;
+        // Mean gradient 2.06 is below the bare-rock threshold of 3: the coarse column stays grass,
+        // as the full-detail blocks it averages over would be.
+        plan.plan(terran, 0, 0, h, 33, 16, MIN_Y, HEIGHT);
+        assertEquals(Material.GRASS_BLOCK, topSolid(plan));
+        plan.plan(terran, 0, 0, h, 44, 16, MIN_Y, HEIGHT);
+        assertEquals(Material.STONE, topSolid(plan));
+    }
+
+    @Test
+    void iceCapDampensSkyLightLikeOneMoreBlockOfWater() {
+        TerrainSampler ocean = new TerrainSampler(BodyType.OCEAN, 7L, 0.8, SurfaceGrid.of(1.0e5), false, true);
+        LodColumnPlan plan = new LodColumnPlan();
+        TerrainSampler.Column ref = new TerrainSampler.Column();
+        int checked = 0;
+        for (int i = 0; i < 20_000 && checked < 20; i++) {
+            int x = i * 977 - 150_000, z = i * 613 + 20_000;
+            int h = ocean.height(x, z);
+            ocean.column(x, z, h, 0, ref);
+            if (!ref.iceCap || ref.fluid == Material.AIR || ref.fluidTop <= h + 1) continue;
+            plan.plan(ocean, x, z, h, 0, 1, MIN_Y, HEIGHT);
+            LodColumnPlan.Span floor = null, fluid = null, ice = null;
+            for (int k = 0; k < plan.count(); k++) {
+                LodColumnPlan.Span s = plan.span(k);
+                if (s.top == h + 1 - MIN_Y) floor = s;
+                if (s.material == Material.ICE) ice = s;
+                else if (s.material == ref.fluid) fluid = s;
+            }
+            assertNotNull(ice, "ice span");
+            assertNotNull(fluid, "fluid span under the ice");
+            assertNotNull(floor);
+            assertEquals(15, ice.skyLight, "the ice top is open to the sky");
+            assertEquals(14, fluid.skyLight, "one ice block above the fluid");
+            int depth = ref.fluidTop - h; // fluid blocks plus the ice block
+            assertEquals(Math.max(0, 15 - depth), floor.skyLight, "floor under " + depth + " blocks of water and ice");
+            checked++;
+        }
+        assertTrue(checked > 0, "the sample must include ice-capped seas");
+    }
+
+    @Test
     void everyMaterialHasAVanillaBlockId() {
         for (Material m : Material.values()) {
             String id = LodColumnPlan.blockId(m);

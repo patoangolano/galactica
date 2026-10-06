@@ -21,6 +21,34 @@ repositories {
     }
 }
 
+/** Returns the mcpfabric jar when the path property is set and the file matches the pinned SHA-256, else null. */
+def verifiedMcpfabricJar() {
+    def path = project.findProperty('galactica.mcpfabricJar')
+    if (path == null || path.toString().isBlank()) {
+        return null
+    }
+    def jar = file(path.toString())
+    if (!jar.isFile()) {
+        logger.warn("galactica: mcpfabric jar not found at ${jar}; dev runs start without it")
+        return null
+    }
+    def expected = mcpfabric_sha256.toString().trim().toLowerCase(Locale.ROOT)
+    def digest = java.security.MessageDigest.getInstance('SHA-256')
+    jar.withInputStream { input ->
+        byte[] buffer = new byte[65536]
+        int read
+        while ((read = input.read(buffer)) > 0) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    def actual = digest.digest().encodeHex().toString()
+    if (actual != expected) {
+        logger.warn("galactica: mcpfabric jar ${jar} has SHA-256 ${actual}, expected ${expected}; NOT added to the run classpath")
+        return null
+    }
+    return jar
+}
+
 dependencies {
     minecraft("com.mojang:minecraft:${minecraft_version}")
     implementation("net.fabricmc:fabric-loader:${fabric_loader_version}")
@@ -39,8 +67,12 @@ dependencies {
     localRuntime("maven.modrinth:modmenu:${modmenu_version}")
     localRuntime("maven.modrinth:yacl:${yacl_version}")
     localRuntime("maven.modrinth:spark:${spark_version}")             // GPL-3.0 profiler, runtime tool, not linked
-    if (file(mcpfabric_jar).exists()) {
-        localRuntime(files(mcpfabric_jar))                              // SHA-256 checked against SHA256SUMS.expected
+    // mcpfabric agent bridge (research C.3 provenance gate): the jar path is per machine and comes from
+    // -Pgalactica.mcpfabricJar=... or ~/.gradle/gradle.properties, never from this repo. The jar joins the
+    // run classpath only when its SHA-256 equals the hash pinned in gradle.properties (mcpfabric_sha256).
+    def mcpfabricJar = verifiedMcpfabricJar()
+    if (mcpfabricJar != null) {
+        localRuntime(files(mcpfabricJar))
     }
     // Heavy renderers are opt-in so the autotest screenshots stay comparable:
     //   ./gradlew runClient -Pgalactica.dh=true      (Distant Horizons LOD terrain)

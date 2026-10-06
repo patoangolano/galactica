@@ -21,8 +21,11 @@ public final class GalacticaConfigScreen extends Screen {
     private static final int BUTTON_W = 200, BUTTON_H = 20, GAP = 4;
     private static final int[] PLANET_SIZES = {128, 256, 512, 1024};
     private static final double[] ENTRY_STEPS = {0.0, 0.25, 0.5, 0.75, 1.0};
-    /** Warp caps a player would actually pick: 1 ly/s (0.31 pc/s) up to the command maximum. */
-    private static final double[] WARP_STEPS = {0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000};
+    /**
+     * Warp caps across the config's whole legal range (1e-9 pc/s ≈ 0.10 c up to 1000 pc/s): coarse
+     * decades below 0.1 pc/s, finer steps where players usually pick.
+     */
+    static final double[] WARP_STEPS = {1e-9, 1e-7, 1e-5, 1e-3, 0.01, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000};
     private static final double[] HUD_STEPS = {0.5, 0.75, 1.0, 1.25, 1.5, 2.0};
 
     private final Screen parent;
@@ -112,7 +115,8 @@ public final class GalacticaConfigScreen extends Screen {
     }
 
     static double nextDouble(double[] steps, double v) {
-        for (double s : steps) if (s > v + 1e-9) return s;
+        // Relative tolerance: the warp steps span twelve decades, so a fixed epsilon would skip 1e-9.
+        for (double s : steps) if (s > v * (1 + 1e-9)) return s;
         return steps[0];
     }
 
