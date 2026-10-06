@@ -113,7 +113,9 @@ class TerrainSamplerTest {
         TerrainSampler mars = of("Mars");
         TerrainSampler.Column c = new TerrainSampler.Column();
         mars.column(0, 0, 150, 0, c);
-        assertEquals(TerrainSampler.Material.RED_SAND, mars.materialAt(c, 150, 0, 0));
+        // Bright red sand, or dark basaltic sand where the macro field puts a dark lowland.
+        TerrainSampler.Material top = mars.materialAt(c, 150, 0, 0);
+        assertTrue(top == TerrainSampler.Material.RED_SAND || top == TerrainSampler.Material.COARSE_DIRT, top.name());
         assertEquals(TerrainSampler.Material.TERRACOTTA, mars.materialAt(c, 145, 0, 0));
         assertEquals(TerrainSampler.Material.STONE, mars.materialAt(c, 100, 0, 0));
         assertEquals(TerrainSampler.Material.AIR, mars.materialAt(c, 151, 0, 0));
