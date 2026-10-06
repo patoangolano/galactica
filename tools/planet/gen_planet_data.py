@@ -147,6 +147,5 @@ for code, entries in (("en_us", en), ("pt_br", pt)):
     merged.update(entries)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(merged, fh, indent=2, ensure_ascii=False)
-        fh.write("
-")
+        fh.write(chr(10))
 print(len(biome_ids), "biomes,", SLOTS, "dimensions")
