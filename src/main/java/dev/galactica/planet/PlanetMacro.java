@@ -241,6 +241,54 @@ public final class PlanetMacro {
     }
 
     /**
+     * {@link Sample#elevation} alone, without the fields only colours need (moisture, aridity, ice
+     * caps): the height path of the generator, which runs for every column and its border. Equal to
+     * {@code sample(x, y, z, o); o.elevation} bit for bit.
+     */
+    public double elevation(double x, double y, double z) {
+        switch (type) {
+            case TERRAN, OCEAN -> {
+                return fbmRot(seed, x * 1.6, y * 1.6, z * 1.6, 6) - seaThreshold();
+            }
+            case DESERT -> {
+                double h = fbmRot(seed, x * 2.0, y * 2.0, z * 2.0, 5);
+                double big = fbmRot(seed ^ 0xDE5E_0003L, x * 0.9, y * 0.9, z * 0.9, 3);
+                double craters = 0.6 * craterField(seed ^ 0xC4A7_0004L, x * 7, y * 7, z * 7);
+                return 0.6 * big + 0.15 * h + 0.5 * craters;
+            }
+            case BARREN -> {
+                double base = fbmRot(seed, x * 1.2, y * 1.2, z * 1.2, 4);
+                double craters = craterField(seed ^ 0xC4A7_000AL, x * 4, y * 4, z * 4)
+                        + 0.6 * craterField(seed ^ 0xC4A7_000BL, x * 11, y * 11, z * 11);
+                return base + 0.5 * craters;
+            }
+            case ICE -> {
+                double tone = fbmRot(seed, x * 1.5, y * 1.5, z * 1.5, 3);
+                double dirt = clamp((0.62 - albedo) / 0.4, 0, 1);
+                double r1 = 1 - Math.abs(fbmRot(seed ^ 0x1CE0_0006L, x * 5, y * 5, z * 5, 1));
+                double r2 = 1 - Math.abs(fbmRot(seed ^ 0x1CE0_0007L, x * 11, y * 11, z * 11, 1));
+                double crack = 0.75 * smooth(0.90, 0.985, Math.max(r1, r2 * 0.98)) * (1 - 0.6 * dirt);
+                double craters = dirt > 0 ? dirt * 1.2 * craterField(seed ^ 0xC4A7_0008L, x * 6, y * 6, z * 6) : 0;
+                return 0.4 * tone - 0.35 * crack + 0.5 * craters;
+            }
+            case LAVA -> {
+                double tone = fbmRot(seed, x * 2.5, y * 2.5, z * 2.5, 3);
+                if (albedo > 0.4) {
+                    double pat = smooth(-0.05, -0.25, craterField(seed ^ 0xC4A7_000DL, x * 5, y * 5, z * 5));
+                    return 0.25 + 0.2 * tone - 0.6 * pat;
+                }
+                return 0.45 - tone;
+            }
+            case GREENHOUSE -> {
+                return fbmRot(seed, x * 2, y * 2, z * 2, 3);
+            }
+            default -> {
+                return 0;
+            }
+        }
+    }
+
+    /**
      * The rest of the primary octave series beyond what the imager resolves, from
      * {@link #IMAGER_OCTAVES} (or the type's own octave count) down to a ~64-block wavelength on a
      * map sphere of {@code radiusBlocks}, in the same normalisation as {@link Sample#elevation}.

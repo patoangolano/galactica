@@ -9,8 +9,6 @@ import dev.galactica.sky.PlanetImager;
 import dev.galactica.system.Body;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 
-import java.util.EnumMap;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.IntStream;
@@ -187,6 +185,21 @@ public final class SurfaceClipmap {
         return levels[k];
     }
 
+    /**
+     * True when level k fits on the body: a level wider than half the map circumference would wrap
+     * more than half a lap and fold over itself on the sphere (Phobos' whole map is 69 k blocks), so
+     * it is neither baked nor drawn.
+     */
+    public boolean usable(int k) {
+        return levels[k].span() <= grid.width() / 2;
+    }
+
+    /** The coarsest {@linkplain #usable usable} level, or −1 on a body too small for any. */
+    public int coarsestUsable() {
+        for (int k = LEVELS - 1; k >= 0; k--) if (usable(k)) return k;
+        return -1;
+    }
+
     public DynamicTexture globe() {
         return globeUploaded ? globe : null;
     }
@@ -205,6 +218,7 @@ public final class SurfaceClipmap {
             BAKER.execute(this::bakeGlobe);
         }
         for (int k = Math.max(0, minLevel); k < LEVELS; k++) {
+            if (!usable(k)) break;
             Level l = levels[k];
             double snap = l.spacing * 16;
             double cx = grid.wrapX(Math.round(x / snap) * snap), cz = Math.round(z / snap) * snap;
@@ -247,7 +261,7 @@ public final class SurfaceClipmap {
     /** Height at map (x, z) from the finest uploaded level that holds it, or NaN. */
     public double height(double x, double z) {
         for (Level l : levels) {
-            if (!l.ready()) continue;
+            if (!l.ready() || !usable(l.index)) continue;
             double dx = grid.wrapX(x - l.cx);
             double h = l.height(l.cx + dx, z);
             if (!Double.isNaN(h)) return h;
@@ -387,25 +401,28 @@ public final class SurfaceClipmap {
         };
     }
 
-    private static Map<TerrainSampler.Material, double[]> albedo;
-    private static final float[] LAVA = new float[3];
+    /**
+     * Linear albedo per material: the block's map colour hue at the target broadband albedo, and
+     * the lava glow colour. A lazy holder (JLS §12.4.2): built once, then read lock-free by every
+     * baking thread.
+     */
+    private static final class Albedo {
+        static final double[][] TABLE = new double[TerrainSampler.Material.values().length][];
+        static final double[] LAVA = new double[3];
 
-    /** Linear albedo per material: the block's map colour hue at the target broadband albedo. */
-    private static synchronized Map<TerrainSampler.Material, double[]> albedoTable() {
-        if (albedo == null) {
-            Map<TerrainSampler.Material, double[]> m = new EnumMap<>(TerrainSampler.Material.class);
+        static {
             for (TerrainSampler.Material mat : TerrainSampler.Material.values()) {
                 if (mat == TerrainSampler.Material.AIR) continue;
                 int c = PlanetChunkGenerator.mapColour(mat);
                 double r = decode((c >> 16) & 0xFF), g = decode((c >> 8) & 0xFF), b = decode(c & 0xFF);
                 double lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
                 double k = lum > 1e-6 ? targetAlbedo(mat) / lum : 0;
-                m.put(mat, new double[] {r * k, g * k, b * k});
+                TABLE[mat.ordinal()] = new double[] {r * k, g * k, b * k};
             }
-            Blackbody.linearRgb(1400, LAVA);
-            albedo = m;
+            float[] lava = new float[3];
+            Blackbody.linearRgb(1400, lava);
+            for (int i = 0; i < 3; i++) LAVA[i] = lava[i];
         }
-        return albedo;
     }
 
     /** One texel: water by depth like the imager's seas, lava as emission, land by material and shade. */
@@ -419,14 +436,13 @@ public final class SurfaceClipmap {
             b = lerp(dep, 0.110, 0.075);
             shade = 1;
         } else if (m == TerrainSampler.Material.LAVA) {
-            albedoTable(); // fills LAVA
             // Glow at the imager's lava strength, stored pre-divided so the exposure below restores it.
-            r = LAVA[0] * 0.9 / PlanetImager.EXPOSURE;
-            g = LAVA[1] * 0.9 / PlanetImager.EXPOSURE;
-            b = LAVA[2] * 0.9 / PlanetImager.EXPOSURE;
+            r = Albedo.LAVA[0] * 0.9 / PlanetImager.EXPOSURE;
+            g = Albedo.LAVA[1] * 0.9 / PlanetImager.EXPOSURE;
+            b = Albedo.LAVA[2] * 0.9 / PlanetImager.EXPOSURE;
             shade = 1;
         } else {
-            double[] a = albedoTable().get(m);
+            double[] a = Albedo.TABLE[m.ordinal()];
             if (a == null) a = new double[] {0.1, 0.1, 0.1};
             r = a[0];
             g = a[1];

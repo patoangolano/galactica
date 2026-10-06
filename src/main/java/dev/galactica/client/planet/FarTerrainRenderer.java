@@ -36,9 +36,15 @@ import java.util.List;
  * so mountains beyond the horizon still poke over it. Each clipmap level draws the annulus it is the
  * finest level for; finer levels fade into coarser ones through the clipmap's alpha border.
  *
- * <p><b>Air.</b> Ground colour is multiplied by the transmittance of the path and a second, untextured
- * layer adds the airlight (Koschmieder 1924) from {@link AtmosphereGradient}, so distant terrain melts
- * into the horizon sky with the same colour on both sides of the space switch.
+ * <p><b>Air.</b> Koschmieder's law (1924), L = G·T + L_h·(1 − T), is itself an over-blend: the ground
+ * is drawn lit but unattenuated, and a second, untextured layer is blended over it with colour L_h
+ * (the horizon sky of {@link AtmosphereGradient}, per channel weighted by its own 1 − T) and alpha
+ * 1 − T, so distant terrain melts into the horizon sky. Heights above the datum go through the
+ * slot's {@link AtmosphereGradient.AltitudeMap}, the same altitude the sky dome uses.
+ *
+ * <p><b>Cost.</b> The skirt is rebuilt when the camera moves by max(2, 1 % of its height) blocks, the
+ * sun moves, the fade changes or a clipmap level lands, and at most every
+ * {@link #MIN_REBUILD_NANOS} ns unless a new level landed.
  *
  * <p><b>Pass.</b> Drawn in the sky pass ({@code END_SKY}, Iris-safe like every other sky layer) on a
  * shell of radius {@link #R_SHELL}: no depth is written, so the vanilla chunks drawn later cover the
@@ -55,6 +61,8 @@ public final class FarTerrainRenderer {
     private static final int RINGS = 24, SEGMENTS = 96;
     /** Highest relief that can show over the horizon, blocks. */
     private static final double TALLEST = 250;
+    /** Fastest rebuild rate while moving: 10 per second. */
+    static final long MIN_REBUILD_NANOS = 100_000_000L;
 
     private record Part(int firstVertex, int quads, DynamicTexture texture) {}
 
@@ -62,6 +70,7 @@ public final class FarTerrainRenderer {
     private static final List<Part> PARTS = new ArrayList<>();
     private static double builtX = Double.NaN, builtY, builtZ, builtSun0, builtSun1, builtSun2, builtAlpha;
     private static int builtGeneration = -1;
+    private static long builtAt;
 
     /** Frees GPU buffers (the clipmap is released by its owner). */
     public static void release() {
@@ -77,7 +86,7 @@ public final class FarTerrainRenderer {
      * when the camera, the sun or the clipmap changed. {@code sunMc} is the unit direction to the sun
      * in camera-world axes; {@code renderChunks} vanilla's effective render distance.
      */
-    public static void prepare(Body body, Vec3 cam, double[] sunMc, int renderChunks) {
+    public static void prepare(Body body, Vec3 cam, double[] sunMc, int renderChunks, AtmosphereGradient.AltitudeMap altitude) {
         if (cam.y < BAKE_Y || !body.type().solidSurface) {
             if (buffer != null) release();
             return;
@@ -90,10 +99,16 @@ public final class FarTerrainRenderer {
             if (buffer != null) release();
             return;
         }
-        boolean moved = Double.isNaN(builtX) || Math.abs(cam.x - builtX) > 2 || Math.abs(cam.y - builtY) > 2 || Math.abs(cam.z - builtZ) > 2
+        double step = Math.max(2, 0.01 * (cam.y - TerrainSampler.SEA_LEVEL));
+        boolean landed = clip.generation() != builtGeneration;
+        boolean moved = Double.isNaN(builtX) || landed
+                || Math.abs(clip.grid().wrapX(cam.x - builtX)) > step || Math.abs(cam.y - builtY) > step || Math.abs(cam.z - builtZ) > step
                 || Math.abs(sunMc[0] - builtSun0) + Math.abs(sunMc[1] - builtSun1) + Math.abs(sunMc[2] - builtSun2) > 0.003
-                || Math.abs(alpha - builtAlpha) > 0.02 || clip.generation() != builtGeneration;
+                || Math.abs(alpha - builtAlpha) > 0.02;
         if (!moved) return;
+        long now = System.nanoTime();
+        if (!landed && !Double.isNaN(builtX) && now - builtAt < MIN_REBUILD_NANOS) return;
+        builtAt = now;
         builtX = cam.x;
         builtY = cam.y;
         builtZ = cam.z;
@@ -102,7 +117,7 @@ public final class FarTerrainRenderer {
         builtSun2 = sunMc[2];
         builtAlpha = alpha;
         builtGeneration = clip.generation();
-        rebuild(body, clip, cam, sunMc, renderChunks, alpha);
+        rebuild(body, clip, cam, sunMc, renderChunks, alpha, altitude);
     }
 
     /** Draws the skirt inside the open sky pass. */
@@ -136,7 +151,8 @@ public final class FarTerrainRenderer {
 
     // ---------------------------------------------------------------- mesh
 
-    private static void rebuild(Body body, SurfaceClipmap clip, Vec3 cam, double[] sun, int renderChunks, double alpha) {
+    private static void rebuild(Body body, SurfaceClipmap clip, Vec3 cam, double[] sun, int renderChunks, double alpha,
+                                AtmosphereGradient.AltitudeMap altitude) {
         if (buffer != null) buffer.close();
         buffer = null;
         PARTS.clear();
@@ -145,9 +161,8 @@ public final class FarTerrainRenderer {
         double camH = cam.y - TerrainSampler.SEA_LEVEL;
         double r0 = Math.max(32, renderChunks * 16 * 0.85);
         double rMax = horizonDistance(rb, camH) + horizonDistance(rb, TALLEST);
-        SurfaceClipmap.Level coarsest = clip.level(SurfaceClipmap.LEVELS - 1);
-        rMax = Math.min(rMax, coarsest.span() * 0.5);
-        if (rMax <= r0) return;
+        int top = clip.coarsestUsable();
+        if (top < 0 || rMax <= r0) return;
         AtmosphereGradient atm = AtmosphereGradient.of(body);
         double muSun = sun[1];
         // Direct light on the far ground: the sun's elevation (Lambert on level ground) through the air.
@@ -158,19 +173,27 @@ public final class FarTerrainRenderer {
         int quadsTotal = 0;
         double[] inner = new double[SurfaceClipmap.LEVELS], outer = new double[SurfaceClipmap.LEVELS];
         boolean[] use = new boolean[SurfaceClipmap.LEVELS];
-        double prevOpaque = r0;
-        for (int k = 0; k < SurfaceClipmap.LEVELS; k++) {
+        double prevOpaque = r0, covered = r0;
+        for (int k = 0; k <= top; k++) {
             SurfaceClipmap.Level l = clip.level(k);
             if (!l.ready()) continue;
-            double half = l.span() * 0.5 - SurfaceClipmap.FADE * l.spacing * 0.5;
+            // A level is centred where it was last baked, which lags the camera by up to an eighth of
+            // its span plus the snap: measure what it really covers around the camera (Chebyshev
+            // distance to its edge, the largest circle inside the square).
+            double off = Math.max(Math.abs(grid.wrapX(cam.x - l.centreX())), Math.abs(cam.z - l.centreZ()));
+            double edge = l.span() * 0.5 - off;
+            double fadeBand = SurfaceClipmap.FADE * l.spacing;
             inner[k] = Math.max(r0, prevOpaque * 0.9);
-            outer[k] = Math.min(rMax, half);
+            outer[k] = Math.min(rMax, edge - 0.5 * fadeBand);
             if (outer[k] > inner[k]) {
                 use[k] = true;
                 quadsTotal += RINGS * SEGMENTS;
+                covered = Math.max(covered, outer[k]);
             }
-            prevOpaque = Math.max(prevOpaque, l.span() * 0.5 - SurfaceClipmap.FADE * l.spacing);
+            prevOpaque = Math.max(prevOpaque, edge - fadeBand);
         }
+        // The airlight layer stops where the ground does.
+        rMax = Math.min(rMax, covered);
         if (quadsTotal == 0) return;
         quadsTotal += RINGS * SEGMENTS; // airlight layer
 
@@ -205,9 +228,8 @@ public final class FarTerrainRenderer {
                             q[c][2] = (float) (vz * R_SHELL);
                             q[c][3] = (float) l.u(lx);
                             q[c][4] = (float) l.v(lz);
-                            atm.horizontal(n * mpb, Math.max(0, (camH + (h - TerrainSampler.SEA_LEVEL)) * 0.5 * mpb),
-                                    vx * sun[0] + vy * sun[1] + vz * sun[2], muSun, in, tr);
-                            qc[c] = argb(enc(tr[0] * sunT[0] * lambert), enc(tr[1] * sunT[1] * lambert), enc(tr[2] * sunT[2] * lambert), alpha);
+                            // Lit but unattenuated: the airlight layer over it applies the path's transmittance.
+                            qc[c] = argb(enc(sunT[0] * lambert), enc(sunT[1] * lambert), enc(sunT[2] * lambert), alpha);
                         }
                         if (!ok) continue;
                         emitInward(b, q, qc);
@@ -238,9 +260,9 @@ public final class FarTerrainRenderer {
                             q[c][2] = (float) (vz * R_SHELL * 0.995);
                             q[c][3] = 0.5f;
                             q[c][4] = 0.5f;
-                            atm.horizontal(n * mpb, Math.max(0, (camH + (h - TerrainSampler.SEA_LEVEL)) * 0.5 * mpb),
-                                    vx * sun[0] + vy * sun[1] + vz * sun[2], muSun, in, tr);
-                            qc[c] = additive(in, alpha);
+                            double meanAlt = 0.5 * (altitude.metres(camH) + altitude.metres(h - TerrainSampler.SEA_LEVEL));
+                            atm.horizontal(n * mpb, meanAlt, vx * sun[0] + vy * sun[1] + vz * sun[2], muSun, in, tr);
+                            qc[c] = over(in, tr, alpha);
                         }
                         emitInward(b, q, qc);
                         emitted++;
@@ -261,14 +283,14 @@ public final class FarTerrainRenderer {
     }
 
     /**
-     * Encodes linear light L as an alpha-blended colour that adds L over what is behind:
-     * a = max channel (display), rgb = display/a, so out = rgb·a + dst·(1 − a) ≈ L + dst·(1 − a).
+     * Koschmieder over-blend: alpha = 1 − T̄ (mean transmittance) and colour = inscatter/(1 − T̄) per
+     * channel, where inscatter = L_h·(1 − T) is what the path adds. Blended over unattenuated ground G
+     * it gives G·T̄ + L_h·(1 − T): the law, with one extinction for all three channels.
      */
-    static int additive(double[] linear, double alpha) {
-        double r = enc(linear[0]), g = enc(linear[1]), b = enc(linear[2]);
-        double a = Math.min(1, Math.max(r, Math.max(g, b)));
+    static int over(double[] inscatter, double[] transmittance, double fade) {
+        double a = 1 - (transmittance[0] + transmittance[1] + transmittance[2]) / 3;
         if (a < 1e-4) return 0;
-        return argb(r / a, g / a, b / a, a * alpha);
+        return argb(enc(inscatter[0] / a), enc(inscatter[1] / a), enc(inscatter[2] / a), a * fade);
     }
 
     static double enc(double linear) {

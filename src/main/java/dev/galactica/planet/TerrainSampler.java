@@ -153,9 +153,25 @@ public final class TerrainSampler {
         grid.spherePoint(x, z, s);
         double r = grid.radiusBlocks();
         double ux = s[0] / r, uy = s[2] / r, uz = s[1] / r;
-        PlanetMacro.Sample m = SAMPLE.get();
-        macro.sample(ux, uy, uz, m);
-        double macroE = m.elevation + macro.tail(ux, uy, uz, r);
+        return heightAt(s, macro.elevation(ux, uy, uz) + macro.tail(ux, uy, uz, r));
+    }
+
+    /**
+     * {@link #height(int, int)} that also leaves every macro field of the column in {@code out}, for
+     * {@link #column(int, int, int, int, Column, PlanetMacro.Sample)}: the generator evaluates the
+     * macro series once per column instead of twice.
+     */
+    public int height(int x, int z, PlanetMacro.Sample out) {
+        double[] s = POINT.get();
+        grid.spherePoint(x, z, s);
+        double r = grid.radiusBlocks();
+        double ux = s[0] / r, uy = s[2] / r, uz = s[1] / r;
+        macro.sample(ux, uy, uz, out);
+        return heightAt(s, out.elevation + macro.tail(ux, uy, uz, r));
+    }
+
+    /** Surface Y at map-sphere point s (blocks) whose macro elevation, tail included, is {@code macroE}. */
+    private int heightAt(double[] s, double macroE) {
         double e = elevation(s[0], s[1], s[2], macroE);
         double h;
         if (macro.hasSea()) {
@@ -275,6 +291,13 @@ public final class TerrainSampler {
      * highest ground, dark maria, ice-moon lineae.
      */
     public void column(int x, int z, int h, int slope, Column c) {
+        PlanetMacro.Sample m = SAMPLE.get();
+        macroAt(x, z, m);
+        column(x, z, h, slope, c, m);
+    }
+
+    /** {@link #column(int, int, int, int, Column)} with the column's macro fields already sampled. */
+    public void column(int x, int z, int h, int slope, Column c, PlanetMacro.Sample m) {
         c.height = h;
         c.fluid = Material.AIR;
         c.fluidTop = h;
@@ -282,8 +305,6 @@ public final class TerrainSampler {
         c.under = Material.STONE;
         boolean steep = slope >= 3;
         double tint = Noise.value(seed + 505, x / 9.0, 0, z / 9.0);
-        PlanetMacro.Sample m = SAMPLE.get();
-        macroAt(x, z, m);
         switch (type) {
             case TERRAN -> {
                 // Highland measure on the imager's scale: e = (h − sea)/(1.6·A) ≈ macro elevation.

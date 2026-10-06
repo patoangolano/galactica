@@ -109,4 +109,26 @@ class AtmosphereGradientTest {
         assertEquals(2.0, AtmosphereGradient.airmass(0.5), 0.01);
         assertEquals(37.92, AtmosphereGradient.airmass(0), 0.1);
     }
+
+    @Test
+    void surfaceAltitudeMeetsTheEntryShell() {
+        Body earth = sol("Earth");
+        SurfaceGrid grid = SurfaceGrid.of(earth.radiusMetres());
+        double entry = earth.atmosphereTopMetres(), entryBlocks = 600 - TerrainSampler.SEA_LEVEL;
+        AtmosphereGradient.AltitudeMap map = AtmosphereGradient.AltitudeMap.of(grid.metresPerBlock(), entryBlocks, entry);
+        assertEquals(0, map.metres(-20), 0);
+        assertEquals(grid.metresPerBlock(), map.metres(1e-3) / 1e-3, grid.metresPerBlock() * 1e-3, "true scale at the ground");
+        assertEquals(entry, map.metres(entryBlocks), entry * 1e-6, "the entry Y is the entry altitude");
+        double prev = -1;
+        for (int y = 0; y <= 1100; y += 10) {
+            double z = map.metres(y);
+            assertTrue(z > prev, "monotonic at " + y);
+            prev = z;
+        }
+        AtmosphereGradient a = AtmosphereGradient.of(earth);
+        assertTrue(a.brightness(map.metres(30)) > 0.9, "a hilltop keeps the ground sky");
+        assertTrue(a.brightness(map.metres(entryBlocks)) < 1e-4, "black at the switch, as space shows it");
+        AtmosphereGradient.AltitudeMap thin = AtmosphereGradient.AltitudeMap.of(10, 500, 2_000);
+        assertEquals(1_000, thin.metres(250), 1e-9, "a shell below m·Y_e maps linearly");
+    }
 }

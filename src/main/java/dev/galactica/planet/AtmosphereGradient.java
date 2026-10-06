@@ -213,6 +213,44 @@ public final class AtmosphereGradient {
         return la <= 0 ? 0 : Math.min(1.5, luminance(b) / la);
     }
 
+    // ---------------------------------------------------------------- surface altitude
+
+    /**
+     * Physical altitude of a camera in a surface slot. The slot's world is only a few hundred blocks
+     * tall, while the space ↔ surface switch happens at the entry shell (Earth: H·ln(10⁶) ≈ 117 km).
+     * Near the ground one block is {@code metresPerBlock} metres of height, as it is horizontally;
+     * higher up the scale grows exponentially so that the entry Y lands exactly on the entry altitude:
+     * <pre>
+     *   z(y) = m·s·(e^(y/s) − 1),   with s solving  m·s·(e^(Y_e/s) − 1) = z_e
+     * </pre> (y blocks above the datum, m metres per block, Y_e the entry height in blocks, z_e the
+     * entry altitude). dz/dy = m at the ground, z(Y_e) = z_e, monotonic in between, so the sky both
+     * sides of the switch is computed at the same altitude. When z_e ≤ m·Y_e the map is linear with
+     * slope z_e/Y_e instead.
+     */
+    public record AltitudeMap(double metresPerBlock, double scaleBlocks, double linearSlope) {
+
+        public static AltitudeMap of(double metresPerBlock, double entryBlocks, double entryAltitudeM) {
+            double m = Math.max(1e-6, metresPerBlock), d = Math.max(1, entryBlocks), z = Math.max(0, entryAltitudeM);
+            if (z <= m * d) return new AltitudeMap(m, Double.POSITIVE_INFINITY, z / d);
+            // f(s) = m·s·(e^(d/s) − 1) falls monotonically from ∞ (s → 0) to m·d (s → ∞): bisect ln s.
+            double lo = Math.log(d / 700), hi = Math.log(d * 1e9);
+            for (int i = 0; i < 200; i++) {
+                double mid = 0.5 * (lo + hi), s = Math.exp(mid);
+                double f = m * s * Math.expm1(d / s);
+                if (f > z) lo = mid;
+                else hi = mid;
+            }
+            return new AltitudeMap(m, Math.exp(0.5 * (lo + hi)), m);
+        }
+
+        /** Altitude in metres of a point {@code blocksAboveDatum} above the datum (0 at or below it). */
+        public double metres(double blocksAboveDatum) {
+            double y = Math.max(0, blocksAboveDatum);
+            if (Double.isInfinite(scaleBlocks)) return linearSlope * y;
+            return metresPerBlock * scaleBlocks * Math.expm1(Math.min(600, y / scaleBlocks));
+        }
+    }
+
     // ---------------------------------------------------------------- physics helpers
 
     /** Kasten &amp; Young (1989) relative air mass for elevation sine μ (μ ≤ 0 → horizon value ≈ 38). */
@@ -222,8 +260,8 @@ public final class AtmosphereGradient {
         return 1 / (m + 0.50572 * Math.pow(96.07995 - zenithDeg, -1.6364));
     }
 
-    /** Sun disc above the horizon, fading through civil twilight (sun down to −6°). */
-    static double sunVisibility(double muSun) {
+    /** Sun disc above the horizon, fading through civil twilight (sun down to −6°): the day weight. */
+    public static double sunVisibility(double muSun) {
         return PlanetMacro.smooth(-0.105, 0.02, muSun);
     }
 

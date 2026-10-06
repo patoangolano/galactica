@@ -152,4 +152,42 @@ class PlanetMacroTest {
     private static double dot(double[] a, double[] b) {
         return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     }
+
+    @Test
+    void elevationOnlyPathEqualsTheFullSample() {
+        PlanetMacro.Sample o = new PlanetMacro.Sample();
+        SeedRng rng = new SeedRng(99);
+        for (BodyType type : BodyType.values()) {
+            if (!type.solidSurface) continue;
+            for (double albedo : new double[] {0.15, 0.3, 0.6}) {
+                PlanetMacro m = new PlanetMacro(type, 1234 + type.ordinal(), type == BodyType.TERRAN, albedo);
+                for (int i = 0; i < 300; i++) {
+                    double[] d = randomDir(rng);
+                    m.sample(d[0], d[1], d[2], o);
+                    assertEquals(o.elevation, m.elevation(d[0], d[1], d[2]), 0, type + " albedo " + albedo);
+                }
+            }
+        }
+    }
+
+    @Test
+    void generatorPassThroughMatchesSeparateCalls() {
+        Body earth = sol("Earth");
+        SurfaceGrid grid = SurfaceGrid.of(earth.radiusMetres());
+        TerrainSampler t = TerrainSampler.of(earth, grid);
+        PlanetMacro.Sample full = new PlanetMacro.Sample(), ref = new PlanetMacro.Sample();
+        TerrainSampler.Column a = new TerrainSampler.Column(), b = new TerrainSampler.Column();
+        for (int i = 0; i < 400; i++) {
+            int x = i * 9_973 - 2_000_000, z = (i * 31_337) % 900_000 - 450_000;
+            int h = t.height(x, z, full);
+            assertEquals(t.height(x, z), h);
+            t.macroAt(x, z, ref);
+            assertEquals(ref.aridity, full.aridity, 0);
+            assertEquals(ref.iceCap, full.iceCap, 0);
+            t.column(x, z, h, 0, a);
+            t.column(x, z, h, 0, b, full);
+            assertEquals(a.visible(), b.visible());
+            assertEquals(a.filler, b.filler);
+        }
+    }
 }

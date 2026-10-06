@@ -109,10 +109,22 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
 
     private static ChunkAccess fill(ChunkAccess chunk, TerrainSampler t) {
         int bx = chunk.getPos().getMinBlockX(), bz = chunk.getPos().getMinBlockZ();
-        // Heights with a one-column border, for slopes across chunk edges.
+        // Heights with a one-column border, for slopes across chunk edges. Inner columns keep their
+        // full macro sample for the materials pass; the border needs only the elevation.
         int[] h = new int[18 * 18];
-        for (int dz = 0; dz < 18; dz++)
-            for (int dx = 0; dx < 18; dx++) h[dz * 18 + dx] = t.height(bx + dx - 1, bz + dz - 1);
+        PlanetMacro.Sample[] macro = new PlanetMacro.Sample[16 * 16];
+        for (int dz = 0; dz < 18; dz++) {
+            for (int dx = 0; dx < 18; dx++) {
+                boolean inner = dx >= 1 && dx <= 16 && dz >= 1 && dz <= 16;
+                if (inner) {
+                    PlanetMacro.Sample m = new PlanetMacro.Sample();
+                    macro[(dz - 1) * 16 + dx - 1] = m;
+                    h[dz * 18 + dx] = t.height(bx + dx - 1, bz + dz - 1, m);
+                } else {
+                    h[dz * 18 + dx] = t.height(bx + dx - 1, bz + dz - 1);
+                }
+            }
+        }
 
         Heightmap oceanFloor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
         Heightmap surface = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE_WG);
@@ -126,7 +138,7 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
                     int slope = Math.max(Math.max(Math.abs(hc - h[i - 1]), Math.abs(hc - h[i + 1])),
                             Math.max(Math.abs(hc - h[i - 18]), Math.abs(hc - h[i + 18])));
                     int wx = bx + x, wz = bz + z;
-                    t.column(wx, wz, hc, slope, c);
+                    t.column(wx, wz, hc, slope, c, macro[z * 16 + x]);
                     int top = Math.min(maxY, Math.max(hc, c.fluid != TerrainSampler.Material.AIR ? c.fluidTop : hc));
                     BlockState topSolid = null, topAny = null;
                     for (int y = minY; y <= top; y++) {

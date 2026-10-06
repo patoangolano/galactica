@@ -15,6 +15,8 @@ import dev.galactica.nav.Frames;
 import dev.galactica.nav.GalacticPos;
 import dev.galactica.planet.AtmosphereGradient;
 import dev.galactica.planet.BodyFrame;
+import dev.galactica.planet.PlanetEntry;
+import dev.galactica.planet.SurfaceAtmosphere;
 import dev.galactica.planet.SurfaceGrid;
 import dev.galactica.science.Blackbody;
 import dev.galactica.science.Units;
@@ -53,72 +55,132 @@ import java.util.List;
  * acos(R/d)), since the shell projection would otherwise fold the far side onto the near.
  *
  * <p><b>Light.</b> Lambert ground (Lommel–Seeliger blend on airless regolith, as the imager) under
- * the star's blackbody colour, times the direct-sun and view-path transmittances; the veil adds the
- * single-scattered airlight of {@link AtmosphereGradient#lookDown}.
+ * the star's blackbody colour, times the direct-sun transmittance. The view path is one over-blended
+ * veil (Koschmieder's form): alpha 1 − T̄ and colour inscatter/(1 − T̄) from
+ * {@link AtmosphereGradient#lookDown}, so the ground is attenuated once.
+ *
+ * <p><b>Hand-over.</b> A body starts baking its clipmap once it passes {@link #BAKE_HALF_ANGLE}; it is
+ * claimed from the sprite only above {@link #CLAIM_HALF_ANGLE}, only if it was the largest such body
+ * last frame and only once its globe is uploaded, so the planet never vanishes while a bake runs.
+ * Cloud-deck worlds (Venus-like, steam, Titan-like haze) are never claimed: from space their deck
+ * is what you see, and the imager's sprite already paints it.
+ *
+ * <p><b>Cost.</b> The mesh (≈15 k quads) is rebuilt only when the eye moves by more than a quarter
+ * pixel at the nearest ground, the star direction or the body's spin moves comparably, or a clipmap
+ * level lands.
  */
 public final class NearPlanetRenderer {
     private NearPlanetRenderer() {}
 
     /** Above this angular radius the near renderer replaces the sprite. */
     public static final double CLAIM_HALF_ANGLE = Math.toRadians(20);
+    /** Above this angular radius the body's clipmap starts baking, so it is ready by the claim. */
+    public static final double BAKE_HALF_ANGLE = Math.toRadians(15);
     static final float R_SHELL = 89f;
     private static final int CAP_RINGS = 32, CAP_SEGMENTS = 80, LEVEL_GRID = 32, DOME_LAT = 16, DOME_LON = 32;
     private static final double PX_PER_RAD = 885.0;
+    /** Largest view shift (radians) that keeps the last mesh: a quarter pixel. */
+    private static final double SHIFT_EPS = 0.25 / PX_PER_RAD;
 
     private record Part(int firstVertex, int quads, DynamicTexture texture, boolean wrapU) {}
 
     private record Candidate(Body body, double halfAngle, Star star, GalacticPos bodyPos, GalacticPos starPos, GalacticPos eye, double t) {}
 
-    private static Candidate candidate;
+    /** Largest bakeable body this frame, and the one drawn (claimed) this frame. */
+    private static Candidate largest, claimed;
+    /** The largest bakeable body of the previous frame: the only one that may be claimed. */
+    private static long winnerId = Long.MIN_VALUE;
     private static GpuBuffer buffer;
-    private static final List<Part> PARTS = new ArrayList<>();
+    private static final List<Part> SKY_PARTS = new ArrayList<>(), PARTS = new ArrayList<>();
     private static boolean active;
+    private static final Ctx CTX = new Ctx();
+    // What the current mesh was built from.
+    private static long builtBody = Long.MIN_VALUE;
+    private static int builtGeneration = -1, builtMinLevel = -1;
+    private static final double[] builtRel = new double[3], builtToStar = new double[3];
+    private static double builtSpin;
 
-    /** True when this body is close enough that the near renderer should draw it instead of the sprite. */
-    public static boolean claims(Body b, double halfAngle) {
-        return b.type().solidSurface && halfAngle > CLAIM_HALF_ANGLE;
+    /** Bodies the near renderer can draw: solid, and not hidden under a global cloud or haze deck. */
+    static boolean eligible(Body b) {
+        if (!b.type().solidSurface) return false;
+        SurfaceAtmosphere.SkyClass sky = SurfaceAtmosphere.skyClass(b);
+        return sky != SurfaceAtmosphere.SkyClass.YELLOW && sky != SurfaceAtmosphere.SkyClass.STEAM
+                && sky != SurfaceAtmosphere.SkyClass.ORANGE;
     }
 
     /** Start of a space-sky frame. */
     public static void beginFrame() {
-        candidate = null;
+        largest = null;
+        claimed = null;
     }
 
     /**
-     * Offers a claimed body for this frame; the largest on screen wins. Positions are galactic:
-     * the body's centre, its star and the eye.
+     * Offers a body for this frame (positions galactic: its centre, its star and the eye). Bodies
+     * above {@link #BAKE_HALF_ANGLE} start baking; returns true when the near renderer draws this
+     * body this frame, in which case the caller skips its sprite.
      */
-    public static void offer(Body b, double halfAngle, Star star, GalacticPos bodyPos, GalacticPos starPos, GalacticPos eye, double t) {
-        if (candidate == null || halfAngle > candidate.halfAngle()) candidate = new Candidate(b, halfAngle, star, bodyPos, starPos, eye, t);
+    public static boolean offer(Body b, double halfAngle, Star star, GalacticPos bodyPos, GalacticPos starPos, GalacticPos eye, double t) {
+        if (halfAngle <= BAKE_HALF_ANGLE || !eligible(b)) return false;
+        Candidate c = new Candidate(b, halfAngle, star, bodyPos, starPos, eye, t);
+        if (largest == null || halfAngle > largest.halfAngle()) largest = c;
+        if (claimed != null || halfAngle <= CLAIM_HALF_ANGLE || b.id() != winnerId) return false;
+        SurfaceClipmap clip = SurfaceClipmap.current();
+        if (clip == null || clip.body().id() != b.id() || clip.globe() == null) return false;
+        claimed = c;
+        return true;
     }
 
     /**
-     * End of the frame's preparation, before the sky pass opens: bakes/uploads the clipmap and builds
-     * the meshes for the claimed body, or frees everything when nothing is close.
+     * End of the frame's preparation, before the sky pass opens: bakes/uploads the clipmap of the
+     * claimed (or else the largest) body and rebuilds the mesh of the claimed one when it moved;
+     * frees everything when nothing is close.
      */
     public static void endFrame() {
-        if (buffer != null) buffer.close();
-        buffer = null;
-        PARTS.clear();
-        if (candidate == null) {
+        Candidate target = claimed != null ? claimed : largest;
+        winnerId = largest != null ? largest.body().id() : Long.MIN_VALUE;
+        if (claimed == null) freeMesh();
+        if (target == null) {
             if (active) {
                 active = false;
-                SurfaceClipmap c = SurfaceClipmap.current();
                 // The surface overlay owns the clipmap on the ground; in space only we let it go.
-                if (c != null) SurfaceClipmap.releaseAll();
+                if (SurfaceClipmap.current() != null) SurfaceClipmap.releaseAll();
             }
             return;
         }
         active = true;
-        build(candidate);
+        Ctx x = CTX;
+        if (!x.setup(target)) {
+            freeMesh();
+            return;
+        }
+        SurfaceClipmap clip = SurfaceClipmap.of(target.body());
+        int minLevel = minLevel(x, clip);
+        clip.request(x.subX, x.subZ, minLevel);
+        clip.upload();
+        if (claimed == null) return;
+        if (!changed(x, clip, minLevel)) return;
+        freeMesh();
+        build(x, clip, minLevel);
     }
 
-    /** Draws the claimed body inside the open space-sky pass. */
+    /**
+     * Draws the atmosphere dome seen from inside the air. Call in the space-sky pass right after the
+     * Milky Way and the stars, before the sun and the near bodies, so the sun is not veiled by it.
+     */
+    public static void drawSky(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
+        drawParts(pass, quads, modelView, SKY_PARTS);
+    }
+
+    /** Draws the claimed body inside the open space-sky pass, after the resolved planets. */
     public static void draw(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
-        if (buffer == null || PARTS.isEmpty()) return;
+        drawParts(pass, quads, modelView, PARTS);
+    }
+
+    private static void drawParts(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView, List<Part> parts) {
+        if (buffer == null || parts.isEmpty()) return;
         GpuSampler clamp = SkyTextures.linearClamp(), wrapU = SkyTextures.linearWrapU();
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(modelView, new Vector4f(1, 1, 1, 1));
-        for (Part p : PARTS) {
+        for (Part p : parts) {
             pass.pushDebugGroup(() -> "Galactica near planet");
             pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.END_SKY));
             pass.setUniform("DynamicTransforms", transforms);
@@ -130,20 +192,65 @@ public final class NearPlanetRenderer {
         }
     }
 
+    private static void freeMesh() {
+        if (buffer != null) buffer.close();
+        buffer = null;
+        PARTS.clear();
+        SKY_PARTS.clear();
+        builtBody = Long.MIN_VALUE;
+    }
+
     // ---------------------------------------------------------------- build
 
-    /** Per-frame geometry context: everything in galactic axes, metres, relative to the eye. */
+    /** Per-frame geometry context: everything in galactic axes, metres, relative to the eye. Reused. */
     private static final class Ctx {
         Body body;
-        double[] rel = new double[3]; // eye → centre
-        double d, radius, altitude;
-        double[] pole, e1, e2, toStar = new double[3], up = new double[3];
+        final double[] rel = new double[3]; // eye → centre
+        double d, radius, altitude, subX, subZ;
+        double[] pole, e1, e2;
+        final double[] toStar = new double[3], up = new double[3];
         double spin;
         float starR, starG, starB, brightness;
         AtmosphereGradient atm;
         boolean airless;
         SurfaceGrid grid;
         final double[] in = new double[3], tr = new double[3], sunT = new double[3];
+        final double[] p = new double[3], v = new double[3], tp = new double[3];
+        final float[] rgb = new float[3];
+
+        /** Fills the context for a candidate; false when the eye is inside the body. */
+        boolean setup(Candidate cand) {
+            Body b = cand.body();
+            body = b;
+            double[] r = cand.bodyPos().metresFrom(cand.eye());
+            System.arraycopy(r, 0, rel, 0, 3);
+            d = Math.sqrt(dot(rel, rel));
+            radius = b.radiusMetres();
+            altitude = d - radius;
+            if (altitude <= 0) return false;
+            for (int k = 0; k < 3; k++) up[k] = -rel[k] / d;
+            pole = BodyFrame.pole(cand.star(), b);
+            e1 = BodyFrame.meridianZero(pole);
+            e2 = cross(pole, e1);
+            spin = BodyFrame.spinAngle(b, cand.t());
+            double[] ts = cand.starPos().metresFrom(cand.bodyPos());
+            double ns = Math.sqrt(dot(ts, ts));
+            for (int k = 0; k < 3; k++) toStar[k] = ts[k] / ns;
+            Blackbody.linearRgb(Math.max(1000, cand.star().temperature()), rgb);
+            starR = rgb[0];
+            starG = rgb[1];
+            starB = rgb[2];
+            // Same auto-exposure as the sprite: flux^0.3 clamped, so the hand-over does not change brightness.
+            double flux = cand.star().luminosity() / Math.max(1e-12, Math.pow(ns / Units.AU, 2));
+            brightness = (float) Math.max(0.2, Math.min(1.0, Math.pow(flux, 0.3)));
+            atm = AtmosphereGradient.of(b);
+            airless = atm.vacuum() || !(b.surfacePressureBar() > 0.05);
+            grid = SurfaceGrid.of(radius);
+            double[] ll = BodyFrame.latLon(cand.star(), b, cand.t(), up);
+            subX = grid.blockX(ll[1]);
+            subZ = grid.blockZ(ll[0]);
+            return true;
+        }
 
         /** Galactic unit normal of body-fixed latitude/longitude. */
         void normal(double lat, double lon, double[] out) {
@@ -152,81 +259,72 @@ public final class NearPlanetRenderer {
         }
     }
 
-    private static void build(Candidate cand) {
-        Body b = cand.body();
-        Ctx x = new Ctx();
-        x.body = b;
-        x.rel = cand.bodyPos().metresFrom(cand.eye());
-        x.d = Math.sqrt(dot(x.rel, x.rel));
-        x.radius = b.radiusMetres();
-        x.altitude = x.d - x.radius;
-        if (x.altitude <= 0) return;
-        for (int k = 0; k < 3; k++) x.up[k] = -x.rel[k] / x.d;
-        x.pole = BodyFrame.pole(cand.star(), b);
-        x.e1 = BodyFrame.meridianZero(x.pole);
-        x.e2 = cross(x.pole, x.e1);
-        x.spin = BodyFrame.spinAngle(b, cand.t());
-        double[] ts = cand.starPos().metresFrom(cand.bodyPos());
-        double ns = Math.sqrt(dot(ts, ts));
-        for (int k = 0; k < 3; k++) x.toStar[k] = ts[k] / ns;
-        float[] rgb = new float[3];
-        Blackbody.linearRgb(Math.max(1000, cand.star().temperature()), rgb);
-        x.starR = rgb[0];
-        x.starG = rgb[1];
-        x.starB = rgb[2];
-        // Same auto-exposure as the sprite: flux^0.3 clamped, so the hand-over does not change brightness.
-        double flux = cand.star().luminosity() / Math.max(1e-12, Math.pow(ns / Units.AU, 2));
-        x.brightness = (float) Math.max(0.2, Math.min(1.0, Math.pow(flux, 0.3)));
-        x.atm = AtmosphereGradient.of(b);
-        x.airless = x.atm.vacuum() || !(b.surfacePressureBar() > 0.05);
-        x.grid = SurfaceGrid.of(x.radius);
-
-        // Clipmap around the sub-camera point, down to the level the screen can resolve.
-        SurfaceClipmap clip = SurfaceClipmap.of(b);
-        double[] ll = BodyFrame.latLon(cand.star(), b, cand.t(), x.up);
-        double subX = x.grid.blockX(ll[1]), subZ = x.grid.blockZ(ll[0]);
+    /** Finest clipmap level the screen can resolve at nadir. */
+    private static int minLevel(Ctx x, SurfaceClipmap clip) {
         double footprint = x.altitude / x.grid.metresPerBlock() / PX_PER_RAD; // blocks per pixel at nadir
-        int minLevel = SurfaceClipmap.LEVELS;
         for (int k = 0; k < SurfaceClipmap.LEVELS; k++) {
-            if (clip.level(k).spacing >= footprint * 0.5) {
-                minLevel = k;
-                break;
-            }
+            if (clip.level(k).spacing >= footprint * 0.5) return k;
         }
-        clip.request(subX, subZ, minLevel);
-        clip.upload();
+        return SurfaceClipmap.LEVELS;
+    }
 
+    /** True when the last mesh no longer matches what the eye sees (quarter-pixel tolerances). */
+    private static boolean changed(Ctx x, SurfaceClipmap clip, int minLevel) {
+        boolean same = buffer != null && builtBody == x.body.id() && builtGeneration == clip.generation() && builtMinLevel == minLevel;
+        if (same) {
+            double dr = 0, ds = 0;
+            for (int k = 0; k < 3; k++) {
+                dr += (x.rel[k] - builtRel[k]) * (x.rel[k] - builtRel[k]);
+                ds += (x.toStar[k] - builtToStar[k]) * (x.toStar[k] - builtToStar[k]);
+            }
+            double tol = SHIFT_EPS * x.altitude; // eye shift seen at the nearest ground
+            same = dr < tol * tol && Math.sqrt(ds) < 4 * SHIFT_EPS && x.radius * Math.abs(x.spin - builtSpin) < tol;
+        }
+        if (same) return false;
+        builtBody = x.body.id();
+        builtGeneration = clip.generation();
+        builtMinLevel = minLevel;
+        System.arraycopy(x.rel, 0, builtRel, 0, 3);
+        System.arraycopy(x.toStar, 0, builtToStar, 0, 3);
+        builtSpin = x.spin;
+        return true;
+    }
+
+    private static void build(Ctx x, SurfaceClipmap clip, int minLevel) {
+        Body b = x.body;
         int stride = DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize();
         int maxQuads = DOME_LAT * DOME_LON + 3 * CAP_RINGS * CAP_SEGMENTS + SurfaceClipmap.LEVELS * LEVEL_GRID * LEVEL_GRID + CAP_SEGMENTS * 4;
         try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(maxQuads * 4 * stride)) {
             BufferBuilder buf = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
             int[] vertex = {0};
-            double atmTop = b.atmosphereTopMetres();
-            if (!x.atm.vacuum() && x.altitude < atmTop) addPart(vertex, dome(buf, x), SurfaceClipmap.white(), false);
+            // Inside the entry shell's neighbourhood only: the take-off point sits at 1.5× its altitude.
+            if (!x.atm.vacuum() && x.altitude < 1.5 * PlanetEntry.entryAltitude(b)) {
+                addPart(SKY_PARTS, vertex, dome(buf, x), SurfaceClipmap.white(), false);
+            }
             DynamicTexture globe = clip.globe();
             double horizon = Math.acos(Math.min(1, x.radius / x.d)) * 0.9995;
-            if (globe != null) addPart(vertex, cap(buf, x, horizon, 0), globe, true);
-            for (int k = SurfaceClipmap.LEVELS - 1; k >= Math.min(minLevel, SurfaceClipmap.LEVELS - 1); k--) {
+            if (globe != null) addPart(PARTS, vertex, cap(buf, x, horizon, 0), globe, true);
+            for (int k = clip.coarsestUsable(); k >= Math.min(minLevel, SurfaceClipmap.LEVELS - 1); k--) {
                 SurfaceClipmap.Level l = clip.level(k);
-                if (l.ready()) addPart(vertex, level(buf, x, l), l.texture(), false);
+                if (l.ready()) addPart(PARTS, vertex, level(buf, x, l), l.texture(), false);
             }
             DynamicTexture clouds = clip.clouds();
             if (clouds != null && (b.type() == BodyType.TERRAN || b.type() == BodyType.OCEAN)) {
-                addPart(vertex, cap(buf, x, horizon, 1), clouds, true);
+                addPart(PARTS, vertex, cap(buf, x, horizon, 1), clouds, true);
             }
             if (!x.atm.vacuum()) {
-                addPart(vertex, cap(buf, x, horizon, 2), SurfaceClipmap.white(), false);
-                if (x.altitude > 0.5 * x.atm.scaleHeight()) addPart(vertex, limb(buf, x), SurfaceClipmap.white(), false);
+                addPart(PARTS, vertex, cap(buf, x, horizon, 2), SurfaceClipmap.white(), false);
+                if (x.altitude > 0.5 * x.atm.scaleHeight()) addPart(PARTS, vertex, limb(buf, x), SurfaceClipmap.white(), false);
             }
-            if (PARTS.isEmpty()) return;
+            if (PARTS.isEmpty() && SKY_PARTS.isEmpty()) return;
             try (MeshData mesh = buf.buildOrThrow()) {
                 buffer = RenderSystem.getDevice().createBuffer(() -> "Galactica near planet", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
             }
         }
     }
 
-    private static void addPart(int[] vertex, int quads, DynamicTexture texture, boolean wrapU) {
-        if (quads > 0 && texture != null) PARTS.add(new Part(vertex[0], quads, texture, wrapU));
+    private static void addPart(List<Part> into, int[] vertex, int quads, DynamicTexture texture, boolean wrapU) {
+        if (quads > 0 && texture != null) into.add(new Part(vertex[0], quads, texture, wrapU));
         vertex[0] += quads * 4;
     }
 
@@ -347,7 +445,7 @@ public final class NearPlanetRenderer {
                     double ph = 2 * Math.PI * ss / CAP_SEGMENTS;
                     for (int m = 0; m < 3; m++) dir[m] = Math.cos(a) * centre[m] + Math.sin(a) * (Math.cos(ph) * t1[m] + Math.sin(ph) * t2[m]);
                     // Tangent point of this ray on the shell, its local up and sun elevation.
-                    double[] tp = new double[3];
+                    double[] tp = x.tp;
                     double along = dot(x.rel, dir);
                     for (int m = 0; m < 3; m++) tp[m] = dir[m] * along - x.rel[m];
                     double tn = Math.sqrt(dot(tp, tp));
@@ -371,17 +469,20 @@ public final class NearPlanetRenderer {
      * returns the colour for the layer mode (0 ground, 1 clouds, 2 airlight).
      */
     private static int surfaceVertex(Ctx x, double[] nrm, float[] q, int mode, double cloudLift) {
-        double[] p = new double[3];
+        double[] p = x.p, v = x.v;
         double lift = x.radius * (1 + cloudLift * x.atm.scaleHeight() / x.radius);
         for (int m = 0; m < 3; m++) p[m] = x.rel[m] + lift * nrm[m];
         double len = Math.sqrt(dot(p, p));
-        double[] v = {p[0] / len, p[1] / len, p[2] / len};
+        for (int m = 0; m < 3; m++) v[m] = p[m] / len;
         set(q, v, q[3], q[4], R_SHELL - mode * 0.2f);
         double mu0 = dot(nrm, x.toStar), mu = Math.max(1e-3, -dot(v, nrm)), cosScatter = dot(v, x.toStar);
-        x.atm.lookDown(mu, cosScatter, mu0, x.altitude, x.in, x.tr);
         if (mode == 2) {
+            // The view path as one over-blend: alpha 1 − T̄, colour inscatter/(1 − T̄) (Koschmieder's form).
+            x.atm.lookDown(mu, cosScatter, mu0, x.altitude, x.in, x.tr);
             scale(x.in, x);
-            return additive(x.in);
+            double a = 1 - (x.tr[0] + x.tr[1] + x.tr[2]) / 3;
+            if (a < 1e-4) return 0;
+            return argb(enc(x.in[0] / a), enc(x.in[1] / a), enc(x.in[2] / a), a);
         }
         double direct;
         if (mu0 <= 0) direct = 0;
@@ -390,9 +491,10 @@ public final class NearPlanetRenderer {
         x.atm.sunTransmittance(mu0, x.sunT);
         if (x.atm.vacuum()) x.sunT[0] = x.sunT[1] = x.sunT[2] = mu0 > 0 ? 1 : 0;
         double k = x.brightness * (mode == 1 ? PlanetImager.EXPOSURE * 0.78 : 1);
-        double r = (direct * x.sunT[0] + 0.004) * x.tr[0] * x.starR * k;
-        double g = (direct * x.sunT[1] + 0.004) * x.tr[1] * x.starG * k;
-        double b = (direct * x.sunT[2] + 0.004) * x.tr[2] * x.starB * k;
+        // Unattenuated by the view path: the veil over it applies the transmittance once.
+        double r = (direct * x.sunT[0] + 0.004) * x.starR * k;
+        double g = (direct * x.sunT[1] + 0.004) * x.starG * k;
+        double b = (direct * x.sunT[2] + 0.004) * x.starB * k;
         return argb(enc(r), enc(g), enc(b), 1);
     }
 
@@ -406,11 +508,12 @@ public final class NearPlanetRenderer {
 
     /** Galactic direction to a shell vertex in Minecraft axes. */
     private static void set(float[] q, double[] dirGalactic, double u, double v, float radius) {
-        double[] m = Frames.galacticToMc(dirGalactic[0], dirGalactic[1], dirGalactic[2]);
-        double n = Math.sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
-        q[0] = (float) (m[0] / n * radius);
-        q[1] = (float) (m[1] / n * radius);
-        q[2] = (float) (m[2] / n * radius);
+        // Frames.galacticToMc without the allocation: (gx, gy, gz) → (gx, gz, −gy).
+        double mx = dirGalactic[0], my = dirGalactic[2], mz = -dirGalactic[1];
+        double n = Math.sqrt(mx * mx + my * my + mz * mz);
+        q[0] = (float) (mx / n * radius);
+        q[1] = (float) (my / n * radius);
+        q[2] = (float) (mz / n * radius);
         q[3] = (float) u;
         q[4] = (float) v;
     }
