@@ -68,6 +68,8 @@ public class Starship extends VehicleEntity {
     private static final EntityDataAccessor<Integer> DATA_SPOOL = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.INT);
     /** World-frame gravity, m/s²: computed by the server (only it knows the pilot's galactic frame), used by the pilot's prediction. */
     private static final EntityDataAccessor<Vector3fc> DATA_GRAVITY = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.VECTOR3);
+    /** RCS command bits ({@link ShipAnimator#rcsMask}) for the puffs other players see. */
+    private static final EntityDataAccessor<Byte> DATA_RCS = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.BYTE);
 
     public static final float MAX_HYDROGEN = 400F, MAX_HULL = 100F;
     public static final int MAX_EXOTIC = 64;
@@ -87,6 +89,9 @@ public class Starship extends VehicleEntity {
     private static ToDoubleFunction<Level> gravityModel = l -> Units.EARTH_GRAVITY;
 
     private final Quaternionf attitude = new Quaternionf(), attitudeO = new Quaternionf();
+    /** Client, ships this client does not control: synced attitude handed over on tick boundaries. */
+    private final AttitudeSync attitudeSync = new AttitudeSync();
+    private final Quaternionf turnScratch = new Quaternionf();
     // Pilot-side prediction inputs, fed by the client every tick before the entity ticks.
     private Input pilotInput = Input.EMPTY;
     private float rollAxis, mouseYaw, mousePitch;
@@ -95,6 +100,9 @@ public class Starship extends VehicleEntity {
     // Server-side bookkeeping.
     private @Nullable JumpTargetInfo pendingJump;
     private int lastReportTick, lastMainBurnTick = Integer.MIN_VALUE / 2;
+    // Client-side visual state (gear, canopy, gimbal), ticked for every ship the client sees.
+    private float gear = 1F, gearO = 1F, canopy, canopyO, gimbalYaw, gimbalYawO, gimbalPitch, gimbalPitchO;
+    private boolean gearDown = true;
 
     public Starship(EntityType<? extends Starship> type, Level level) {
         super(type, level);
@@ -143,13 +151,14 @@ public class Starship extends VehicleEntity {
         b.define(DATA_THRUST, 0F);
         b.define(DATA_SPOOL, 0);
         b.define(DATA_GRAVITY, new Vector3f(0F, (float) -Units.EARTH_GRAVITY, 0F));
+        b.define(DATA_RCS, (byte) 0);
     }
 
     @Override
     public void onSyncedDataUpdated(EntityDataAccessor<?> key) {
         super.onSyncedDataUpdated(key);
         if (!level().isClientSide() || isLocalInstanceAuthoritative()) return;
-        if (DATA_ATTITUDE.equals(key)) attitude.set(entityData.get(DATA_ATTITUDE));
+        if (DATA_ATTITUDE.equals(key)) attitudeSync.receive(entityData.get(DATA_ATTITUDE), attitude, attitudeO);
         else if (DATA_COUPLED.equals(key)) coupled = entityData.get(DATA_COUPLED);
     }
 
@@ -171,6 +180,64 @@ public class Starship extends VehicleEntity {
 
     public Quaternionfc attitude() { return attitude; }
 
+    /** RCS command bits ({@link ShipAnimator}): predicted for the local pilot (with roll), synced for everyone else. */
+    public int rcsMask() {
+        if (level().isClientSide() && isLocalInstanceAuthoritative()) {
+            Input in = pilotInput;
+            return ShipAnimator.rcsMask((in.jump() ? 1 : 0) - (in.shift() ? 1 : 0),
+                    (in.right() ? 1 : 0) - (in.left() ? 1 : 0), rollAxis);
+        }
+        return entityData.get(DATA_RCS);
+    }
+
+    /** Landing-gear extension, 0 stowed … 1 down, interpolated. */
+    public float gearExtension(float partialTick) { return gearO + (gear - gearO) * partialTick; }
+
+    /** Canopy opening, 0 shut … 1 open, interpolated. */
+    public float canopyOpening(float partialTick) { return canopyO + (canopy - canopyO) * partialTick; }
+
+    /** Main-engine gimbal, degrees about the body Y (yaw) and X (pitch) axes, interpolated. */
+    public float gimbalYaw(float partialTick) { return gimbalYawO + (gimbalYaw - gimbalYawO) * partialTick; }
+
+    public float gimbalPitch(float partialTick) { return gimbalPitchO + (gimbalPitch - gimbalPitchO) * partialTick; }
+
+    /** Whether the gear is commanded down (for the GeckoLib controller, which plays whole clips). */
+    public boolean gearCommandedDown() { return gearDown; }
+
+    /** Client: advances gear, canopy and gimbal one tick. */
+    private void visualTick() {
+        gearO = gear;
+        canopyO = canopy;
+        gimbalYawO = gimbalYaw;
+        gimbalPitchO = gimbalPitch;
+        gearDown = ShipAnimator.gearDown(gearDown, onGround(), heightAboveGround(12));
+        gear = ShipAnimator.approach(gear, gearDown ? 1F : 0F, (float) ShipFlightModel.TICK, ShipAnimator.GEAR_SECONDS);
+        boolean open = ShipAnimator.canopyOpen(getPassengers().size());
+        canopy = ShipAnimator.approach(canopy, open ? 1F : 0F, (float) ShipFlightModel.TICK, ShipAnimator.CANOPY_SECONDS);
+        // Body-frame turn this tick: q_prev⁻¹ · q_now, as a rotation vector in degrees.
+        Quaternionf d = turnScratch.set(attitudeO).conjugate().mul(attitude);
+        if (d.w < 0) d.set(-d.x, -d.y, -d.z, -d.w);
+        float angle = 2F * (float) Math.acos(Math.min(1F, d.w));
+        float s = (float) Math.sqrt(Math.max(1e-12F, 1F - d.w * d.w));
+        float deg = (float) Math.toDegrees(angle);
+        float yawRate = d.y / s * deg, pitchRate = d.x / s * deg;
+        boolean burning = Math.abs(throttle()) > 0.01F;
+        gimbalYaw = ShipAnimator.gimbalStep(gimbalYaw, burning ? ShipAnimator.gimbalTarget(yawRate) : 0F);
+        gimbalPitch = ShipAnimator.gimbalStep(gimbalPitch, burning ? ShipAnimator.gimbalTarget(pitchRate) : 0F);
+    }
+
+    /** Blocks between the hull's underside (the gear feet) and the first collidable block below, up to {@code max}. */
+    private double heightAboveGround(int max) {
+        net.minecraft.core.BlockPos.MutableBlockPos p = new net.minecraft.core.BlockPos.MutableBlockPos();
+        int x = net.minecraft.util.Mth.floor(getX()), z = net.minecraft.util.Mth.floor(getZ()), y0 = net.minecraft.util.Mth.floor(getY());
+        for (int i = 0; i <= max; i++) {
+            p.set(x, y0 - i, z);
+            if (!level().isInWorldBounds(p)) break;
+            if (!level().getBlockState(p).getCollisionShape(level(), p).isEmpty()) return Math.max(0, getY() - (y0 - i + 1));
+        }
+        return Double.POSITIVE_INFINITY;
+    }
+
     public Quaternionf getAttitude(float partialTick, Quaternionf dest) {
         return attitudeO.slerp(attitude, partialTick, dest);
     }
@@ -179,6 +246,7 @@ public class Starship extends VehicleEntity {
     public void setAttitude(Quaternionfc q) {
         attitude.set(q).normalize();
         attitudeO.set(attitude);
+        attitudeSync.reset(attitude);
         entityData.set(DATA_ATTITUDE, new Quaternionf(attitude));
         syncRotationFields();
     }
@@ -205,6 +273,7 @@ public class Starship extends VehicleEntity {
     public void tick() {
         if (getHurtTime() > 0) setHurtTime(getHurtTime() - 1);
         attitudeO.set(attitude);
+        attitudeSync.apply(attitude, level().isClientSide() && !isLocalInstanceAuthoritative());
         super.tick();
         if (isLocalInstanceAuthoritative()) {
             if (level().isClientSide()) pilotStep();
@@ -213,6 +282,7 @@ public class Starship extends VehicleEntity {
             if (onGround()) setDeltaMovement(getDeltaMovement().multiply(0.7, 1.0, 0.7)); // landing-skid friction
         }
         if (!level().isClientSide()) serverStep();
+        else visualTick();
         // A powered ship lands under thrust, so height lost while descending is not a fall: without this the
         // vanilla vehicle rules hand the accumulated fall distance to the crew on touchdown and kill them.
         resetFallDistance();
@@ -266,6 +336,11 @@ public class Starship extends VehicleEntity {
             if (throttle != 0) lastMainBurnTick = tickCount;
             if (throttle != 0) setHydrogen(hydrogen() - Math.abs(throttle) * (float) (ShipFlightModel.TICK / ShipFlightModel.MAIN_SECONDS_PER_HYDROGEN));
             if (entityData.get(DATA_THRUST) != throttle) entityData.set(DATA_THRUST, throttle);
+            byte rcs = (byte) ShipAnimator.rcsMask((in.jump() ? 1 : 0) - (in.shift() ? 1 : 0),
+                    (in.right() ? 1 : 0) - (in.left() ? 1 : 0), 0F);
+            if (entityData.get(DATA_RCS) != rcs) entityData.set(DATA_RCS, rcs);
+        } else if (entityData.get(DATA_RCS) != 0) {
+            entityData.set(DATA_RCS, (byte) 0);
         }
         int spool = spoolTicks();
         if (spool > 0) {

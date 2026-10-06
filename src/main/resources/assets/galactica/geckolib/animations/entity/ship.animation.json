@@ -1,0 +1,174 @@
+{
+ "format_version": "1.8.0",
+ "animations": {
+  "gear.retract": {
+   "loop": "hold_on_last_frame",
+   "animation_length": 1.5,
+   "bones": {
+    "gear_front": {
+     "rotation": {
+      "0.0": [
+       0,
+       0,
+       0
+      ],
+      "1.5": [
+       95.0,
+       0,
+       0
+      ]
+     }
+    },
+    "gear_left": {
+     "rotation": {
+      "0.0": [
+       0,
+       0,
+       0
+      ],
+      "1.5": [
+       -92.0,
+       0,
+       0
+      ]
+     }
+    },
+    "gear_right": {
+     "rotation": {
+      "0.0": [
+       0,
+       0,
+       0
+      ],
+      "1.5": [
+       -92.0,
+       0,
+       0
+      ]
+     }
+    }
+   }
+  },
+  "gear.extend": {
+   "loop": "hold_on_last_frame",
+   "animation_length": 1.5,
+   "bones": {
+    "gear_front": {
+     "rotation": {
+      "0.0": [
+       95.0,
+       0,
+       0
+      ],
+      "1.5": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "gear_left": {
+     "rotation": {
+      "0.0": [
+       -92.0,
+       0,
+       0
+      ],
+      "1.5": [
+       0,
+       0,
+       0
+      ]
+     }
+    },
+    "gear_right": {
+     "rotation": {
+      "0.0": [
+       -92.0,
+       0,
+       0
+      ],
+      "1.5": [
+       0,
+       0,
+       0
+      ]
+     }
+    }
+   }
+  },
+  "gear.up": {
+   "loop": "hold_on_last_frame",
+   "animation_length": 0.05,
+   "bones": {
+    "gear_front": {
+     "rotation": {
+      "0.0": [
+       95.0,
+       0,
+       0
+      ]
+     }
+    },
+    "gear_left": {
+     "rotation": {
+      "0.0": [
+       -92.0,
+       0,
+       0
+      ]
+     }
+    },
+    "gear_right": {
+     "rotation": {
+      "0.0": [
+       -92.0,
+       0,
+       0
+      ]
+     }
+    }
+   }
+  },
+  "canopy.open": {
+   "loop": "hold_on_last_frame",
+   "animation_length": 1.2,
+   "bones": {
+    "canopy": {
+     "rotation": {
+      "0.0": [
+       0,
+       0,
+       0
+      ],
+      "1.2": [
+       38.0,
+       0,
+       0
+      ]
+     }
+    }
+   }
+  },
+  "canopy.close": {
+   "loop": "hold_on_last_frame",
+   "animation_length": 1.2,
+   "bones": {
+    "canopy": {
+     "rotation": {
+      "0.0": [
+       38.0,
+       0,
+       0
+      ],
+      "1.2": [
+       0,
+       0,
+       0
+      ]
+     }
+    }
+   }
+  }
+ }
+}

@@ -27,6 +27,8 @@ dependencies {
     implementation("net.fabricmc.fabric-api:fabric-api:${fabric_version}")
     // Shader compatibility hooks only; Iris is optional at runtime.
     compileOnly("maven.modrinth:iris:${iris_version}")
+    // Optional animated ship renderer (client/ship/geckolib); GeckoLib 5.5.7 for Fabric 26.3, Modrinth version id kSxHvs99, MIT.
+    compileOnly("maven.modrinth:geckolib:kSxHvs99")
 
     testImplementation(platform('org.junit:junit-bom:5.13.4'))
     testImplementation('org.junit.jupiter:junit-jupiter')
