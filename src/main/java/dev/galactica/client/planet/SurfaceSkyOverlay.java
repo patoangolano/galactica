@@ -61,6 +61,11 @@ import java.util.OptionalDouble;
  *
  * <p>Same technique as the space sky: vanilla {@code END_SKY} pipeline, our own textures on
  * Sampler0, every texture resolved before the pass opens.
+ *
+ * <p>Per frame only the cheap part runs: positions from cached orbits. The system's body list is
+ * generated once per landing, and the vertex buffers are rebuilt only when something moved by more
+ * than {@link #MOVE_EPS} (a third of a pixel at normal FOV): the sky turns 0.015° a tick, so that is
+ * every few frames instead of every frame. Leaving the surface frees the buffers and painted textures.
  */
 public final class SurfaceSkyOverlay {
     private SurfaceSkyOverlay() {}
@@ -68,19 +73,39 @@ public final class SurfaceSkyOverlay {
     private static final float R_GALAXY = 100f, R_NEAR = 90f;
     private static final double PX_PER_RAD = 885.0, RESOLVE_RAD = 0.0045, DOT_SIZE = 0.0016;
 
+    /** Largest direction or size change (radians) that keeps last frame's vertex buffers. */
+    private static final double MOVE_EPS = 4e-4;
+    private static final int ALPHA_EPS = 3;
+
     private record Quad(float dx, float dy, float dz, double size, int argb) {}
-    private record Painted(float dx, float dy, float dz, double halfAngle, double distance, DynamicTexture texture, float brightness) {}
+    private record Painted(long id, float dx, float dy, float dz, double halfAngle, double distance, DynamicTexture texture, float brightness) {}
 
     private static GpuBuffer sphere, quads, painted;
     private static int sphereIndices, quadIndices;
     private static final List<Painted> PAINTED = new ArrayList<>();
+    private static List<Quad> builtQuads = List.of();
+    private static List<Painted> builtPainted = List.of();
     private static PlanetAddress cachedAddress;
     private static PlanetAddress.Resolved cached;
+    private static List<Body> cachedSystem = List.of();
 
-    /** True in a surface slot whose body the client knows. */
+    /**
+     * True in a surface slot whose body the client knows. Called by the sky mixin every frame in every
+     * dimension, so it is also where the overlay lets go of its GPU resources after take-off.
+     */
     public static boolean active() {
         Minecraft mc = Minecraft.getInstance();
-        return mc.level != null && mc.player != null && PlanetSlots.slotOf(mc.level.dimension()) >= 0 && resolved(mc) != null;
+        boolean on = mc.level != null && mc.player != null && PlanetSlots.slotOf(mc.level.dimension()) >= 0 && resolved(mc) != null;
+        if (!on && (quads != null || painted != null || cachedAddress != null)) release();
+        return on;
+    }
+
+    /** The body under the local player, or null off-planet. */
+    public static Body currentBody() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null || PlanetSlots.slotOf(mc.level.dimension()) < 0) return null;
+        PlanetAddress.Resolved r = resolved(mc);
+        return r != null ? r.body() : null;
     }
 
     private static PlanetAddress.Resolved resolved(Minecraft mc) {
@@ -89,8 +114,22 @@ public final class SurfaceSkyOverlay {
         if (!st.address().equals(cachedAddress)) {
             cachedAddress = st.address();
             cached = st.address().resolve(SkyManager.get().galaxy());
+            cachedSystem = cached != null ? SystemGenerator.generate(cached.star()) : List.of();
         }
         return cached;
+    }
+
+    private static void release() {
+        if (quads != null) quads.close();
+        if (painted != null) painted.close();
+        quads = painted = null;
+        builtQuads = List.of();
+        builtPainted = List.of();
+        PAINTED.clear();
+        cachedAddress = null;
+        cached = null;
+        cachedSystem = List.of();
+        SurfaceSprites.clear();
     }
 
     /** Call after vanilla's sky pass has closed, with the frame's extracted sky state. */
@@ -138,11 +177,13 @@ public final class SurfaceSkyOverlay {
             double ang = Math.asin(Math.min(1, star.radiusMetres() / dStar));
             list.add(quad(sun, Math.min(1.2, Math.max(2 * ang, 4 * DOT_SIZE)), argb(rgb[0], rgb[1], rgb[2], rain)));
         }
-        for (Body planet : SystemGenerator.generate(star)) {
+        for (Body planet : cachedSystem) {
             addBody(list, star, starPos, eye, here, planet, null, t, m, magStar, washout, rain);
             for (Body moon : planet.moons()) addBody(list, star, starPos, eye, here, planet, moon, t, m, magStar, washout, rain);
         }
-        rebuild(list);
+        PAINTED.sort((x, y) -> Double.compare(y.distance(), x.distance()));
+        if (!sameQuads(list, builtQuads)) rebuildQuads(list);
+        if (!samePainted(PAINTED, builtPainted)) rebuildPainted();
         SurfaceSprites.evict();
 
         GpuTextureView galaxyView = SkyTextures.galaxy().getTextureView();
@@ -220,38 +261,70 @@ public final class SurfaceSkyOverlay {
         DynamicTexture tex = SurfaceSprites.get(b, v, 2 * halfAngle * PX_PER_RAD);
         double flux = star.luminosity() / Math.max(1e-12, Math.pow(orbitRadius / Units.AU, 2));
         float brightness = (float) Math.max(0.2, Math.min(1.0, Math.pow(flux, 0.3)));
-        PAINTED.add(new Painted((float) f[0], (float) f[1], (float) f[2], halfAngle, d, tex, brightness));
+        PAINTED.add(new Painted(b.id(), (float) f[0], (float) f[1], (float) f[2], halfAngle, d, tex, brightness));
     }
 
     // ---------------------------------------------------------------- geometry
 
-    private static void rebuild(List<Quad> list) {
+    private static boolean sameQuads(List<Quad> now, List<Quad> built) {
+        if (now.size() != built.size()) return false;
+        for (int i = 0; i < now.size(); i++) {
+            Quad a = now.get(i), b = built.get(i);
+            if (!near(a.dx(), a.dy(), a.dz(), b.dx(), b.dy(), b.dz()) || Math.abs(a.size() - b.size()) > MOVE_EPS
+                    || (a.argb() & 0xFFFFFF) != (b.argb() & 0xFFFFFF) || Math.abs((a.argb() >>> 24) - (b.argb() >>> 24)) > ALPHA_EPS) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean samePainted(List<Painted> now, List<Painted> built) {
+        if (now.size() != built.size()) return false;
+        for (int i = 0; i < now.size(); i++) {
+            Painted a = now.get(i), b = built.get(i);
+            if (a.id() != b.id() || !near(a.dx(), a.dy(), a.dz(), b.dx(), b.dy(), b.dz()) || Math.abs(a.halfAngle() - b.halfAngle()) > MOVE_EPS) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Unit directions within {@link #MOVE_EPS} radians (chord length ≈ angle at these scales). */
+    private static boolean near(float ax, float ay, float az, float bx, float by, float bz) {
+        float x = ax - bx, y = ay - by, z = az - bz;
+        return x * x + y * y + z * z < MOVE_EPS * MOVE_EPS;
+    }
+
+    private static void rebuildQuads(List<Quad> list) {
         if (quads != null) {
             quads.close();
             quads = null;
         }
+        builtQuads = List.copyOf(list);
+        if (list.isEmpty()) return;
+        try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(list.size() * 4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
+            BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
+            for (Quad q : list) spriteQuad(b, q.dx(), q.dy(), q.dz(), R_NEAR, q.size(), q.argb());
+            try (MeshData mesh = b.buildOrThrow()) {
+                quadIndices = mesh.drawState().indexCount();
+                quads = RenderSystem.getDevice().createBuffer(() -> "Galactica surface sky bodies", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+            }
+        }
+    }
+
+    /** Geometry only: textures and brightness are bound per draw, so they never force a rebuild. */
+    private static void rebuildPainted() {
         if (painted != null) {
             painted.close();
             painted = null;
         }
-        if (!list.isEmpty()) {
-            try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(list.size() * 4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
-                BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
-                for (Quad q : list) spriteQuad(b, q.dx(), q.dy(), q.dz(), R_NEAR, q.size(), q.argb());
-                try (MeshData mesh = b.buildOrThrow()) {
-                    quadIndices = mesh.drawState().indexCount();
-                    quads = RenderSystem.getDevice().createBuffer(() -> "Galactica surface sky bodies", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
-                }
-            }
-        }
-        if (!PAINTED.isEmpty()) {
-            PAINTED.sort((x, y) -> Double.compare(y.distance(), x.distance()));
-            try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(PAINTED.size() * 4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
-                BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
-                for (Painted p : PAINTED) spriteQuad(b, p.dx(), p.dy(), p.dz(), R_NEAR - 1f, p.halfAngle(), 0xFFFFFFFF);
-                try (MeshData mesh = b.buildOrThrow()) {
-                    painted = RenderSystem.getDevice().createBuffer(() -> "Galactica surface sky planets", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
-                }
+        builtPainted = List.copyOf(PAINTED);
+        if (PAINTED.isEmpty()) return;
+        try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(PAINTED.size() * 4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
+            BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
+            for (Painted p : PAINTED) spriteQuad(b, p.dx(), p.dy(), p.dz(), R_NEAR - 1f, p.halfAngle(), 0xFFFFFFFF);
+            try (MeshData mesh = b.buildOrThrow()) {
+                painted = RenderSystem.getDevice().createBuffer(() -> "Galactica surface sky planets", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
             }
         }
     }

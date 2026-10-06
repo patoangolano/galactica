@@ -14,7 +14,9 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -22,7 +24,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.level.portal.TeleportTransition;
@@ -31,6 +35,7 @@ import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -42,13 +47,20 @@ import java.util.UUID;
  * moved, vehicle and passengers together, to the body's slot dimension at {@link #ENTRY_Y} above the
  * sub-observer point: the latitude and longitude directly beneath them at that instant, through
  * {@link BodyFrame} and {@link SurfaceGrid}. A suited player without a ship keeps flight for the
- * descent and loses it on touchdown in survival, so an EVA landing is a controlled one.
+ * descent and loses it on touchdown, on climbing or after a timeout in survival ({@link EvaDescent}),
+ * so an EVA landing is a controlled one. Air thicker than 0.1 bar glows for the first seconds
+ * ({@link EntryHeating}): flame and smoke around the arrival here, a HUD tint on the client.
  *
  * <p><b>Exit.</b> Rising above {@link #EXIT_Y} returns to space on the same radial, two radii from the
  * centre (farther for tiny moons, so the exit never lands inside the entry shell again).
  *
  * <p><b>Gravity.</b> The GRAVITY attribute gets a total multiplier of g/g⊕, the same lever
- * {@code NavServer} uses for zero-g: Mars falls at 0.38 of vanilla's 0.08 blocks/tick².
+ * {@code NavServer} uses for zero-g: Mars falls at 0.38 of vanilla's 0.08 blocks/tick². Safe fall
+ * distance and fall damage follow impact energy ({@link SurfaceGravity}), for the player and a living
+ * mount alike; every other entity is scaled in {@code Entity.getGravity()} ({@link PlanetGravity}).
+ *
+ * <p><b>Map edges.</b> East and west wrap; walking over a pole arrives on the far meridian
+ * ({@link SurfaceGrid#overPole}).
  */
 public final class PlanetEntry {
     private PlanetEntry() {}
@@ -60,7 +72,21 @@ public final class PlanetEntry {
     private static final int REENTRY_COOLDOWN_TICKS = 100;
 
     private static final Identifier GRAVITY = Galactica.id("planet_gravity");
+    private static final Identifier SAFE_FALL = Galactica.id("planet_safe_fall");
+    private static final Identifier FALL_DAMAGE = Galactica.id("planet_fall_damage");
     private static final Map<UUID, Integer> COOLDOWN = new HashMap<>();
+    /** Per-player arrival bookkeeping: lowest Y of an EVA descent, and when they arrived (heating, timeout). */
+    private static final Map<UUID, Arrival> ARRIVALS = new HashMap<>();
+
+    private static final class Arrival {
+        final long tick;
+        double lowestY;
+
+        Arrival(long tick, double y) {
+            this.tick = tick;
+            this.lowestY = y;
+        }
+    }
     private static final Map<UUID, Long> NO_SLOT_WARNED = new HashMap<>();
 
     public static final AttachmentType<SurfaceState> SURFACE = AttachmentRegistry.create(Galactica.id("surface"),
@@ -77,6 +103,7 @@ public final class PlanetEntry {
             PlanetSlots.onServerStopped(s);
             COOLDOWN.clear();
             NO_SLOT_WARNED.clear();
+            ARRIVALS.clear();
         });
     }
 
@@ -165,7 +192,10 @@ public final class PlanetEntry {
                     return false;
                 }
                 PlanetAddress addr = PlanetAddress.of(Galactica.GALAXY, s, match);
-                if (addr == null) return false;
+                if (addr == null) {
+                    p.sendSystemMessage(Component.translatable("galactica.planet.unreachable", match.name()));
+                    return false;
+                }
                 double lat = 0, lon = 0;
                 if (here != null) {
                     double[] off = BodyFrame.offsetFromStar(s, planet, moon, t);
@@ -235,59 +265,101 @@ public final class PlanetEntry {
             p.onUpdateAbilities();
         }
         p.setAttached(SURFACE, new SurfaceState(slot, addr, eva && !keepsFlight));
+        ARRIVALS.put(p.getUUID(), new Arrival(p.level().getServer().getTickCount(), p.getRootVehicle().getY()));
         applyGravity(p, body);
+        // Locale.ROOT: the server's locale must not decide the decimal mark every client reads.
         p.sendOverlayMessage(Component.translatable("galactica.planet.entering", body.name(),
-                String.format("%.2f", body.surfaceGravityG()), String.format("%.3g", body.surfacePressureBar())));
+                String.format(Locale.ROOT, "%.2f", body.surfaceGravityG()), String.format(Locale.ROOT, "%.3g", body.surfacePressureBar())));
     }
 
     // ---------------------------------------------------------------- on the surface
 
     /**
      * Call every tick for every player. On a surface: keeps gravity at the body's value, wraps the
-     * longitude seam, ends EVA descent on touchdown and takes off above {@link #EXIT_Y}. Anywhere
-     * else it only removes the gravity modifier.
+     * longitude seam and the poles, ends EVA descent flight, shows entry heating and takes off above
+     * {@link #EXIT_Y}. Anywhere else it only removes the gravity modifiers.
      */
     public static void tickSurface(ServerPlayer p) {
         int slot = PlanetSlots.slotOf(p.level().dimension());
         if (slot < 0) {
             clearGravity(p);
+            ARRIVALS.remove(p.getUUID());
             return;
         }
         PlanetSlots.Runtime rt = PlanetSlots.runtime(slot);
         MinecraftServer server = p.level().getServer();
         if (rt == null) {
             // The slot was recycled under a logged-out player: nothing to stand on here any more.
-            toSpace(p, null, null, null);
+            // Operators who /execute into an empty slot on purpose are left alone.
+            if (!p.isCreative() && !p.isSpectator()) toSpace(p, null, null, null);
             return;
         }
         SurfaceState state = p.getAttached(SURFACE);
         if (state == null || state.slot() != slot || !state.address().equals(rt.address())) {
             p.setAttached(SURFACE, state = new SurfaceState(slot, rt.address(), false));
         }
+        Entity root = p.getRootVehicle();
+        boolean drives = root == p || root.getControllingPassenger() == p;
         applyGravity(p, rt.body());
+        if (root != p && drives && root instanceof LivingEntity mount) applyFallRules(mount, rt.body());
         if ((p.tickCount % 20) == 0) PlanetSlots.get(server).touch(slot, server.overworld().getGameTime());
 
-        if (state.descending() && p.onGround() && p.getVehicle() == null) {
-            if (!p.isCreative() && !p.isSpectator()) {
-                p.getAbilities().mayfly = false;
-                p.getAbilities().flying = false;
-                p.onUpdateAbilities();
+        Arrival arrival = ARRIVALS.get(p.getUUID());
+        long since = arrival != null ? server.getTickCount() - arrival.tick : Long.MAX_VALUE;
+        if (state.descending()) {
+            if (arrival != null) arrival.lowestY = Math.min(arrival.lowestY, p.getY());
+            // No bookkeeping (server restarted mid-descent) counts as timed out: never fly for free.
+            boolean ends = arrival == null || p.getVehicle() != null
+                    || EvaDescent.ends(p.onGround(), p.getY(), arrival.lowestY, since);
+            if (ends) {
+                if (!p.isCreative() && !p.isSpectator()) {
+                    p.getAbilities().mayfly = false;
+                    p.getAbilities().flying = false;
+                    p.onUpdateAbilities();
+                    if (!p.onGround()) p.sendOverlayMessage(Component.translatable("galactica.planet.descent_over"));
+                }
+                p.setAttached(SURFACE, state = state.landed());
             }
-            p.setAttached(SURFACE, state.landed());
+        }
+        // One emitter per vehicle: its driver, or each player on foot.
+        if (arrival != null && since < EntryHeating.DURATION_TICKS && (drives || root.getControllingPassenger() == null && firstPlayerAboard(root) == p)) {
+            heat(root, rt.body(), since);
         }
 
-        Entity root = p.getRootVehicle();
         if (root.getY() > EXIT_Y) {
             toSpace(p, rt, root, state);
             return;
         }
+        if (!drives) return; // the driver moves the vehicle across the map edges
         SurfaceGrid g = rt.grid();
-        if (Math.abs(root.getX()) >= g.halfWidth() + 1 && (root == p || root.getControllingPassenger() == p)) {
+        double[] pole = g.overPole(root.getX(), root.getZ());
+        if (pole != null) {
+            // Over the pole: same latitude on the far meridian, now facing back towards the equator.
+            Vec3 v = root.getDeltaMovement();
+            root.teleport(new TeleportTransition((ServerLevel) root.level(), new Vec3(pole[0], root.getY(), pole[1]),
+                    new Vec3(-v.x, v.y, -v.z), root.getYRot() + 180f, root.getXRot(), TeleportTransition.DO_NOTHING));
+        } else if (Math.abs(root.getX()) >= g.halfWidth() + 1) {
             // Walking off the east edge of the map arrives from the west: the surface is a closed sphere.
             double wrapped = g.wrapX(root.getX());
             root.teleport(new TeleportTransition((ServerLevel) root.level(), new Vec3(wrapped, root.getY(), root.getZ()),
                     root.getDeltaMovement(), root.getYRot(), root.getXRot(), TeleportTransition.DO_NOTHING));
         }
+    }
+
+    private static ServerPlayer firstPlayerAboard(Entity root) {
+        for (Entity e : root.getIndirectPassengers()) if (e instanceof ServerPlayer sp) return sp;
+        return null;
+    }
+
+    /** Flame and smoke streaming up past the arrival, seen by everyone nearby. */
+    private static void heat(Entity root, Body body, long since) {
+        double intensity = EntryHeating.intensity(body.surfacePressureBar(), since);
+        if (intensity <= 0) return;
+        ServerLevel level = (ServerLevel) root.level();
+        double w = root.getBbWidth() * 0.6 + 0.4;
+        int flames = (int) Math.ceil(14 * intensity), smoke = (int) Math.ceil(6 * intensity);
+        level.sendParticles(ParticleTypes.FLAME, root.getX(), root.getY() - 0.3, root.getZ(), flames, w, 0.4, w, 0.06);
+        level.sendParticles(ParticleTypes.LARGE_SMOKE, root.getX(), root.getY() + root.getBbHeight(), root.getZ(), smoke, w, 0.3, w, 0.03);
     }
 
     /** Takes off: back to galactica:space on the local radial at {@link #exitDistance}. */
@@ -310,6 +382,7 @@ public final class PlanetEntry {
             target = Neighbourhood.starPos(r.star()).plusMetres(off[0] + dir[0] * d, off[1] + dir[1] * d, off[2] + dir[2] * d);
         }
         Vec3 spot = new Vec3(0.5, 0, 0.5);
+        if (root != p && root instanceof LivingEntity mount) clearGravity(mount);
         Entity arrived = root.teleport(new TeleportTransition(space, spot, Vec3.ZERO, root.getYRot(), root.getXRot(),
                 TeleportTransition.PLAY_PORTAL_SOUND));
         int until = server.getTickCount() + REENTRY_COOLDOWN_TICKS;
@@ -325,25 +398,44 @@ public final class PlanetEntry {
                 }
             }
             rider.removeAttached(SURFACE);
+            ARRIVALS.remove(rider.getUUID());
             clearGravity(rider);
             COOLDOWN.put(rider.getUUID(), until);
             if (rt != null) rider.sendOverlayMessage(Component.translatable("galactica.planet.leaving", rt.body().name()));
         }
     }
 
+    /** Gravity, safe fall distance and fall damage of the body, as total multipliers on vanilla's. */
     private static void applyGravity(ServerPlayer p, Body body) {
-        AttributeInstance g = p.getAttribute(Attributes.GRAVITY);
-        if (g == null) return;
-        double amount = body.surfaceGravityG() - 1.0;
-        AttributeModifier current = g.getModifier(GRAVITY);
+        setModifier(p, Attributes.GRAVITY, GRAVITY, SurfaceGravity.factor(body.surfaceGravityG()) - 1.0);
+        applyFallRules(p, body);
+    }
+
+    /** A mount's own gravity comes from {@link PlanetGravity}; its legs still need the fall rules. */
+    private static void applyFallRules(LivingEntity e, Body body) {
+        double g = body.surfaceGravityG();
+        setModifier(e, Attributes.SAFE_FALL_DISTANCE, SAFE_FALL, SurfaceGravity.safeFallDistance(g) / SurfaceGravity.VANILLA_SAFE_FALL - 1.0);
+        setModifier(e, Attributes.FALL_DAMAGE_MULTIPLIER, FALL_DAMAGE, SurfaceGravity.fallDamageMultiplier(g) - 1.0);
+    }
+
+    private static void setModifier(LivingEntity e, Holder<Attribute> attribute, Identifier id, double amount) {
+        AttributeInstance a = e.getAttribute(attribute);
+        if (a == null) return;
+        AttributeModifier current = a.getModifier(id);
         if (current == null || current.amount() != amount) {
-            g.addOrUpdateTransientModifier(new AttributeModifier(GRAVITY, amount, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+            a.addOrUpdateTransientModifier(new AttributeModifier(id, amount, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
         }
     }
 
-    private static void clearGravity(ServerPlayer p) {
-        AttributeInstance g = p.getAttribute(Attributes.GRAVITY);
-        if (g != null && g.hasModifier(GRAVITY)) g.removeModifier(GRAVITY);
+    private static void clearGravity(LivingEntity e) {
+        removeModifier(e, Attributes.GRAVITY, GRAVITY);
+        removeModifier(e, Attributes.SAFE_FALL_DISTANCE, SAFE_FALL);
+        removeModifier(e, Attributes.FALL_DAMAGE_MULTIPLIER, FALL_DAMAGE);
+    }
+
+    private static void removeModifier(LivingEntity e, Holder<Attribute> attribute, Identifier id) {
+        AttributeInstance a = e.getAttribute(attribute);
+        if (a != null && a.hasModifier(id)) a.removeModifier(id);
     }
 
     // ---------------------------------------------------------------- queries

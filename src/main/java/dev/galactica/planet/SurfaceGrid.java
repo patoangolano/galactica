@@ -58,6 +58,18 @@ public record SurfaceGrid(double radiusMetres, double width) {
         return Math.max(-Math.PI / 2, Math.min(Math.PI / 2, -z / radiusBlocks()));
     }
 
+    /**
+     * Walking over a pole on a sphere arrives on the opposite meridian, heading back towards the
+     * equator. For a point past a pole (|z| > {@link #poleZ()}) returns that point, {x', z'}: z mirrored
+     * back inside the pole row and x moved half a lap; null while inside the map. Rows beyond a pole
+     * would otherwise all sample the pole itself, an endless strip of identical terrain.
+     */
+    public double[] overPole(double x, double z) {
+        double pole = poleZ();
+        if (Math.abs(z) <= pole) return null;
+        return new double[] {wrapX(x + halfWidth()), Math.signum(z) * 2 * pole - z};
+    }
+
     public double blockX(double lon) {
         return wrapX(lon / (2 * Math.PI) * width);
     }

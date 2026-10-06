@@ -83,6 +83,12 @@ final class SurfaceSprites {
         }
     }
 
+    /** Frees every painted texture: called when the player leaves the surface. */
+    static void clear() {
+        for (Entry e : ENTRIES.values()) if (e.texture != null) e.texture.close();
+        ENTRIES.clear();
+    }
+
     private static double dot(double[] a, double[] b) {
         return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     }

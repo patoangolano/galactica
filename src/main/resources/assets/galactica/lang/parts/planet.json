@@ -46,7 +46,10 @@
     "galactica.planet.leaving": "Leaving %s",
     "galactica.planet.no_slot": "All %s landing sites hold other worlds. Restart the server to recycle the oldest.",
     "galactica.planet.not_landable": "%s (%s) has no solid surface to land on",
-    "galactica.planet.unknown": "No body named %s"
+    "galactica.planet.unknown": "No body named %s",
+    "galactica.planet.unreachable": "Cannot fix a landing site on %s from here",
+    "galactica.planet.heating": "Entry heating",
+    "galactica.planet.descent_over": "Descent flight ended"
   },
   "pt_br": {
     "biome.galactica.planet_lava_blue": "Mundo de lava, céu azul",
@@ -95,6 +98,9 @@
     "galactica.planet.leaving": "Saindo de %s",
     "galactica.planet.no_slot": "Todos os %s locais de pouso guardam outros mundos. Reinicie o servidor para reciclar os mais antigos.",
     "galactica.planet.not_landable": "%s (%s) não tem superfície sólida para pousar",
-    "galactica.planet.unknown": "Nenhum corpo chamado %s"
+    "galactica.planet.unknown": "Nenhum corpo chamado %s",
+    "galactica.planet.unreachable": "Não é possível definir um local de pouso em %s daqui",
+    "galactica.planet.heating": "Aquecimento de reentrada",
+    "galactica.planet.descent_over": "Voo de descida encerrado"
   }
 }
