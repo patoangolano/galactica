@@ -7,6 +7,16 @@ import dev.galactica.nav.GalacticPos;
 import dev.galactica.nav.NavServer;
 import dev.galactica.nav.NavState;
 import dev.galactica.nav.Neighbourhood;
+import dev.galactica.planet.transfer.EarthOverworld;
+import dev.galactica.planet.transfer.EntryAerothermo;
+import dev.galactica.planet.transfer.PlasmaStatePayload;
+import dev.galactica.planet.transfer.TransferAltitude;
+import dev.galactica.planet.transfer.TransferKinematics;
+import dev.galactica.planet.transfer.TransferKinematics.LocalFrame;
+import dev.galactica.planet.transfer.TransferNet;
+import dev.galactica.planet.transfer.TransferPreparePayload;
+import dev.galactica.ship.ShipFlightModel;
+import dev.galactica.ship.Starship;
 import dev.galactica.star.Star;
 import dev.galactica.system.Body;
 import dev.galactica.system.SystemGenerator;
@@ -14,9 +24,10 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -25,12 +36,14 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
-import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.Attribute;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Quaternionf;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -40,19 +53,26 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Landing and take-off between galactica:space and the surface slots (spec §5).
+ * Landing and take-off between galactica:space and the surface slots (spec §5), made seamless in M7.
  *
- * <p><b>Entry.</b> A player (or the ship they ride) that drops below the top of a landable body's
- * atmosphere ({@link Body#atmosphereTopMetres()}, or {@link #AIRLESS_ENTRY_M} for airless bodies) is
- * moved, vehicle and passengers together, to the body's slot dimension at {@link #ENTRY_Y} above the
- * sub-observer point: the latitude and longitude directly beneath them at that instant, through
- * {@link BodyFrame} and {@link SurfaceGrid}. A suited player without a ship keeps flight for the
- * descent and loses it on touchdown, on climbing or after a timeout in survival ({@link EvaDescent}),
- * so an EVA landing is a controlled one. Air thicker than 0.1 bar glows for the first seconds
- * ({@link EntryHeating}): flame and smoke around the arrival here, a HUD tint on the client.
+ * <p><b>Approach.</b> A craft (ship, or a suited player) that drops below the top of a landable body's
+ * atmosphere ({@link Body#atmosphereTopMetres()}, or {@link #AIRLESS_ENTRY_M} for airless bodies) is on
+ * approach: its slot is claimed, chunks under the projected switch point are loaded through
+ * {@link ApproachTickets}, the client is armed to skip the loading screen ({@link TransferPreparePayload}) and
+ * the plasma state is streamed ({@link PlasmaStatePayload}).
  *
- * <p><b>Exit.</b> Rising above {@link #EXIT_Y} returns to space on the same radial, two radii from the
- * centre (farther for tiny moons, so the exit never lands inside the entry shell again).
+ * <p><b>Switch.</b> Altitude is one continuous scale ({@link TransferAltitude}): the switch fires when the
+ * real altitude falls to that of surface row {@link #ENTRY_Y}, and the craft arrives at the same altitude above
+ * the sub-point, with no portal sound ({@link TeleportTransition#DO_NOTHING}), its velocity converted to surface
+ * axes (minus the ground's own rotation, slowed by Allen–Eggers drag down to terminal speed,
+ * {@link EntryAerothermo#speedAt}) and its attitude re-expressed in the local east/up/south frame
+ * ({@link TransferKinematics}).
+ *
+ * <p><b>Exit.</b> Rising above {@link #EXIT_Y} returns to space on the same radial at the same real altitude,
+ * with velocity and attitude carried back; re-entry is armed again only above 1.3 × the switch altitude.
+ *
+ * <p><b>Earth.</b> Earth of Sol lands in minecraft:overworld ({@link EarthOverworld}); a ship climbing above
+ * {@link #EXIT_Y} in the Overworld launches to orbit above Earth at the matching point.
  *
  * <p><b>Gravity.</b> The GRAVITY attribute gets a total multiplier of g/g⊕, the same lever
  * {@code NavServer} uses for zero-g: Mars falls at 0.38 of vanilla's 0.08 blocks/tick². Safe fall
@@ -65,76 +85,153 @@ import java.util.UUID;
 public final class PlanetEntry {
     private PlanetEntry() {}
 
-    public static final double ENTRY_Y = 600, EXIT_Y = 1200;
+    public static final double ENTRY_Y = TransferAltitude.ENTRY_Y, EXIT_Y = TransferAltitude.EXIT_Y;
     /** Entry shell of a body with no air: low orbit altitude for the Moon, high enough to brake in. */
     public static final double AIRLESS_ENTRY_M = 100_000;
     /** No re-entry for 5 s after leaving, so a take-off cannot bounce straight back down. */
     private static final int REENTRY_COOLDOWN_TICKS = 100;
+    /** A climb within this many blocks of {@link #EXIT_Y} arms the client for the take-off switch. */
+    private static final double EXIT_ARM_BAND = 120;
+    /** Fastest hand-off speed, blocks/tick: the add-entity packet's velocity range and chunk streaming. */
+    public static final double MAX_TRANSFER_BLOCKS_PER_TICK = 3.9;
+    /** Longest look-ahead for the approach ticket, seconds. */
+    private static final double MAX_ETA_SECONDS = 60;
 
     private static final Identifier GRAVITY = Galactica.id("planet_gravity");
     private static final Identifier SAFE_FALL = Galactica.id("planet_safe_fall");
     private static final Identifier FALL_DAMAGE = Galactica.id("planet_fall_damage");
     private static final Map<UUID, Integer> COOLDOWN = new HashMap<>();
-    /** Per-player arrival bookkeeping: lowest Y of an EVA descent, and when they arrived (heating, timeout). */
+    /** Per-player arrival bookkeeping: lowest Y of an EVA descent, when they arrived, plasma glow. */
     private static final Map<UUID, Arrival> ARRIVALS = new HashMap<>();
+    /** Per-leader approach state while inside an entry shell. */
+    private static final Map<UUID, Approach> APPROACHES = new HashMap<>();
+    /** After a take-off: re-entry into that body waits until the craft is above 1.3 × the switch altitude. */
+    private static final Map<UUID, Rearm> REARM = new HashMap<>();
+    private static final Map<UUID, Long> NO_SLOT_WARNED = new HashMap<>();
 
     private static final class Arrival {
         final long tick;
         double lowestY;
+        /** Overworld EVA descents keep their own flag; slots use {@link SurfaceState#descending()}. */
+        boolean overworldDescent;
 
         Arrival(long tick, double y) {
             this.tick = tick;
             this.lowestY = y;
         }
     }
-    private static final Map<UUID, Long> NO_SLOT_WARNED = new HashMap<>();
+
+    private record Rearm(long bodyId, double switchAltitude) {}
+
+    /** Where an entry lands: a slot level, or the Overworld for Earth. */
+    private record Dest(ServerLevel level, int slot, SurfaceGrid grid, double seaLevel, EarthOverworld earth) {
+        double x(double lon) {
+            return earth != null ? earth.blockX(lon) : grid.blockX(lon);
+        }
+
+        double z(double lat) {
+            return earth != null ? earth.blockZ(lat) : grid.blockZ(lat);
+        }
+
+        double switchAltitude() {
+            return TransferAltitude.switchAltitude(seaLevel, grid.metresPerBlock());
+        }
+    }
+
+    private static final class Approach {
+        final long bodyId;
+        final PlanetAddress address;
+        final PlanetAddress.Resolved resolved;
+        final Dest dest;
+        long lastPrepare = Long.MIN_VALUE;
+
+        Approach(long bodyId, PlanetAddress address, PlanetAddress.Resolved resolved, Dest dest) {
+            this.bodyId = bodyId;
+            this.address = address;
+            this.resolved = resolved;
+            this.dest = dest;
+        }
+    }
 
     public static final AttachmentType<SurfaceState> SURFACE = AttachmentRegistry.create(Galactica.id("surface"),
             b -> b.persistent(SurfaceState.CODEC)
                     .copyOnDeath()
                     .syncWith(SurfaceState.STREAM_CODEC, AttachmentSyncPredicate.targetOnly()));
 
-    /** Registers the generator and biome source codecs and the slot lifecycle. Call from onInitialize. */
+    /**
+     * Registers the generator and biome source codecs, the slot lifecycle, the approach ticket type, the
+     * transfer packets and the plasma particle. Call from onInitialize.
+     */
     public static void init() {
         Registry.register(BuiltInRegistries.CHUNK_GENERATOR, Galactica.id("planet"), PlanetChunkGenerator.CODEC);
         Registry.register(BuiltInRegistries.BIOME_SOURCE, Galactica.id("planet"), PlanetBiomeSource.CODEC);
+        ApproachTickets.init();
+        TransferNet.init();
         ServerLifecycleEvents.SERVER_STARTING.register(PlanetSlots::onServerStarting);
         ServerLifecycleEvents.SERVER_STOPPED.register(s -> {
             PlanetSlots.onServerStopped(s);
             COOLDOWN.clear();
             NO_SLOT_WARNED.clear();
             ARRIVALS.clear();
+            APPROACHES.clear();
+            REARM.clear();
+            ApproachTickets.clear();
         });
     }
 
-    /** Altitude above the surface where entry triggers. */
+    /** Altitude above the surface where the approach (heating, chunk pre-load) begins. */
     public static double entryAltitude(Body b) {
         double top = b.atmosphereTopMetres();
         return top > 0 ? top : AIRLESS_ENTRY_M;
     }
 
-    /** Distance from the centre where a take-off puts you: two radii, or clear of the entry shell. */
-    public static double exitDistance(Body b) {
-        return Math.max(2 * b.radiusMetres(), b.radiusMetres() + 1.5 * entryAltitude(b));
+    // ---------------------------------------------------------------- Earth
+
+    private static PlanetAddress.Resolved earth;
+    private static PlanetAddress earthAddress;
+
+    /** Earth of Sol, resolved once. */
+    static PlanetAddress.Resolved earth() {
+        if (earth == null) {
+            for (Body b : SystemGenerator.generate(StarCatalog.SOL)) {
+                if ("Earth".equals(b.name())) {
+                    earth = new PlanetAddress.Resolved(StarCatalog.SOL, b, null);
+                    earthAddress = PlanetAddress.of(Galactica.GALAXY, StarCatalog.SOL, b);
+                }
+            }
+        }
+        return earth;
     }
 
-    // ---------------------------------------------------------------- entry
+    static boolean isEarth(PlanetAddress a) {
+        return a != null && EarthOverworld.isEarth(a.catalog(), a.planet(), a.moon()) && earth() != null;
+    }
 
-    /** Called every tick for players in galactica:space; lands them if they are inside an entry shell. */
+    private static EarthOverworld overworldMap(MinecraftServer server) {
+        BlockPos spawn = server.overworld().getRespawnData().pos();
+        return new EarthOverworld(SurfaceGrid.of(earth().body().radiusMetres()), spawn.getX() + 0.5, spawn.getZ() + 0.5);
+    }
+
+    // ---------------------------------------------------------------- approach and entry
+
+    /** Called every tick for players in galactica:space; approaches and lands them when inside an entry shell. */
     public static boolean tryEnter(ServerPlayer p) {
         if (p.level().dimension() != Galactica.SPACE || p.isSpectator()) return false;
+        Entity root = p.getRootVehicle();
+        if (!isLeader(p, root)) return false;
+        MinecraftServer server = p.level().getServer();
         Integer until = COOLDOWN.get(p.getUUID());
         if (until != null) {
-            if (p.level().getServer().getTickCount() < until) return false;
+            if (server.getTickCount() < until) return false;
             COOLDOWN.remove(p.getUUID());
         }
-        Entity root = p.getRootVehicle();
         NavState nav = p.getAttachedOrCreate(Galactica.NAV);
+        double t = nav.timeSeconds();
         GalacticPos here = Frames.playerPos(nav, root.getX(), root.getY(), root.getZ());
         Neighbourhood nb = NavServer.neighbourhood(p);
         Neighbourhood.Located hit = null;
         double best = Double.MAX_VALUE;
-        for (Neighbourhood.Located l : nb.locateBodies(here, nav.timeSeconds())) {
+        for (Neighbourhood.Located l : nb.locateBodies(here, t)) {
             Body b = l.body();
             if (!b.type().solidSurface) continue;
             double alt = l.pos().distanceMetres(here) - b.radiusMetres();
@@ -143,18 +240,72 @@ public final class PlanetEntry {
                 hit = l;
             }
         }
-        if (hit == null) return false;
-        Star star = nb.systemStar(here);
-        PlanetAddress addr = star == null ? null : PlanetAddress.of(Galactica.GALAXY, star, hit.body());
-        if (addr == null) {
-            COOLDOWN.put(p.getUUID(), p.level().getServer().getTickCount() + REENTRY_COOLDOWN_TICKS);
+        if (hit == null) {
+            abortApproach(p);
             return false;
         }
-        PlanetAddress.Resolved r = new PlanetAddress.Resolved(star, hit.parent() != null ? hit.parent() : hit.body(),
-                hit.parent() != null ? hit.body() : null);
-        double[] dir = here.metresFrom(hit.pos());
-        double[] ll = BodyFrame.latLon(star, hit.body(), nav.timeSeconds(), dir);
-        return enter(p, addr, r, ll[0], ll[1]);
+        Body body = hit.body();
+        Rearm rearm = REARM.get(p.getUUID());
+        if (rearm != null) {
+            if (rearm.bodyId() == body.id() && !TransferAltitude.reentryArmed(best, rearm.switchAltitude())) return false;
+            REARM.remove(p.getUUID());
+        }
+
+        Approach a = APPROACHES.get(p.getUUID());
+        if (a == null || a.bodyId != body.id()) {
+            abortApproach(p);
+            Star star = nb.systemStar(here);
+            PlanetAddress addr = star == null ? null : PlanetAddress.of(Galactica.GALAXY, star, body);
+            if (addr == null) {
+                COOLDOWN.put(p.getUUID(), server.getTickCount() + REENTRY_COOLDOWN_TICKS);
+                return false;
+            }
+            PlanetAddress.Resolved r = new PlanetAddress.Resolved(star, hit.parent() != null ? hit.parent() : body,
+                    hit.parent() != null ? body : null);
+            Dest dest = destination(p, addr, r);
+            if (dest == null) return false;
+            a = new Approach(body.id(), addr, r, dest);
+            APPROACHES.put(p.getUUID(), a);
+        }
+
+        // Local frame and ground-relative velocity (TransferKinematics: Krakensbane frame on the space side).
+        double[] radial = here.metresFrom(hit.pos());
+        double rMag = Math.sqrt(radial[0] * radial[0] + radial[1] * radial[1] + radial[2] * radial[2]);
+        double[] up = {radial[0] / rMag, radial[1] / rMag, radial[2] / rMag};
+        double[] pole = BodyFrame.pole(a.resolved.star(), body);
+        LocalFrame frame = LocalFrame.at(pole, up);
+        double[] vGal = TransferKinematics.spaceMcToGalactic(new double[] {root.getDeltaMovement().x, root.getDeltaMovement().y, root.getDeltaMovement().z});
+        if (nav.speed() > 0) {
+            Vec3 look = p.getLookAngle();
+            double[] g = Frames.mcToGalactic(look.x, look.y, look.z);
+            for (int i = 0; i < 3; i++) vGal[i] += g[i] * nav.speed();
+        }
+        double[] spin = TransferKinematics.spinVelocity(pole, TransferKinematics.spinRate(body.rotationHours()), radial);
+        double[] vGround = TransferKinematics.groundRelative(vGal, spin);
+        double speed = Math.sqrt(vGround[0] * vGround[0] + vGround[1] * vGround[1] + vGround[2] * vGround[2]);
+
+        double[] ll = BodyFrame.latLon(a.resolved.star(), body, t, radial);
+        double hSwitch = a.dest.switchAltitude();
+        List<ServerPlayer> riders = ridersOf(p);
+        streamPlasma(riders, root, body, best, speed, normalize(TransferKinematics.galacticToSpaceMc(vGround)), eva(root));
+
+        if (best <= hSwitch) {
+            return enter(p, a.address, a.resolved, a.dest, ll[0], ll[1], best, vGround, frame);
+        }
+        // Projected switch point: sub-point plus ground track × time to the switch.
+        double vEast = dot(vGround, frame.east()), vNorth = dot(vGround, frame.north()), vUp = dot(vGround, frame.up());
+        double eta = TransferAltitude.secondsToSwitch(best, hSwitch, -vUp, MAX_ETA_SECONDS);
+        double radius = body.radiusMetres();
+        double lat = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, ll[0] + vNorth * eta / radius));
+        double lon = ll[1] + vEast * eta / (radius * Math.max(0.05, Math.cos(ll[0])));
+        ApproachTickets.hold(p.getUUID(), a.dest.level(), a.dest.x(lon), a.dest.z(lat));
+        long now = server.getTickCount();
+        int etaTicks = (int) Math.ceil(eta * 20);
+        if (now - a.lastPrepare >= 5 || etaTicks < 40) {
+            a.lastPrepare = now;
+            prepare(riders, a.dest.slot(), a.address, lat, lon, hSwitch, etaTicks, true);
+        }
+        return false;
     }
 
     /**
@@ -207,20 +358,31 @@ public final class PlanetEntry {
                         lon = ll[1];
                     }
                 }
-                return enter(p, addr, new PlanetAddress.Resolved(s, planet, moon), lat, lon);
+                PlanetAddress.Resolved r = new PlanetAddress.Resolved(s, planet, moon);
+                Dest dest = destination(p, addr, r);
+                if (dest == null) return false;
+                abortApproach(p);
+                double[] up = BodyFrame.direction(s, match, t, lat, lon);
+                LocalFrame frame = LocalFrame.at(BodyFrame.pole(s, match), up);
+                return enter(p, addr, r, dest, lat, lon, dest.switchAltitude(), new double[3], frame);
             }
         }
         p.sendSystemMessage(Component.translatable("galactica.planet.unknown", bodyName));
         return false;
     }
 
-    private static boolean enter(ServerPlayer p, PlanetAddress addr, PlanetAddress.Resolved r, double lat, double lon) {
+    /** The level an entry lands in: Earth's Overworld or a claimed slot; null (with a warning) when none is free. */
+    private static Dest destination(ServerPlayer p, PlanetAddress addr, PlanetAddress.Resolved r) {
         MinecraftServer server = p.level().getServer();
+        if (isEarth(addr)) {
+            EarthOverworld map = overworldMap(server);
+            return new Dest(server.overworld(), TransferPreparePayload.OVERWORLD, map.grid(), TransferAltitude.OVERWORLD_SEA_LEVEL, map);
+        }
         PlanetSlots slots = PlanetSlots.get(server);
         long now = server.overworld().getGameTime();
         int slot = slots.claim(addr, now, Galactica.GALAXY);
-        ServerLevel dest = slot < 0 ? null : server.getLevel(PlanetSlots.key(slot));
-        if (dest == null) {
+        ServerLevel level = slot < 0 ? null : server.getLevel(PlanetSlots.key(slot));
+        if (level == null) {
             // Back off: the address lookup scans a whole sector for procedural stars.
             COOLDOWN.put(p.getUUID(), server.getTickCount() + REENTRY_COOLDOWN_TICKS);
             Long warned = NO_SLOT_WARNED.get(p.getUUID());
@@ -228,20 +390,59 @@ public final class PlanetEntry {
                 NO_SLOT_WARNED.put(p.getUUID(), now);
                 p.sendSystemMessage(Component.translatable("galactica.planet.no_slot", PlanetSlots.COUNT));
             }
-            return false;
+            return null;
         }
         PlanetSlots.Runtime rt = PlanetSlots.runtime(slot);
         SurfaceGrid grid = rt != null ? rt.grid() : SurfaceGrid.of(r.body().radiusMetres());
-        Vec3 target = new Vec3(Math.floor(grid.blockX(lon)) + 0.5, ENTRY_Y, Math.floor(grid.blockZ(lat)) + 0.5);
+        return new Dest(level, slot, grid, TerrainSampler.SEA_LEVEL, null);
+    }
+
+    /**
+     * The switch. {@code vGround} is the ground-relative velocity in galactic m/s; it is slowed by drag
+     * from the atmosphere top down to {@code altitude}, converted to surface blocks/tick and handed over with
+     * the attitude, without a portal sound.
+     */
+    private static boolean enter(ServerPlayer p, PlanetAddress addr, PlanetAddress.Resolved r, Dest dest,
+                                 double lat, double lon, double altitude, double[] vGround, LocalFrame frame) {
+        Body body = r.body();
+        double mpb = dest.grid().metresPerBlock();
+        double y = Math.max(ENTRY_Y - 64, Math.min(ENTRY_Y, TransferAltitude.blockY(altitude, dest.seaLevel(), mpb)));
+        Vec3 target = new Vec3(Math.floor(dest.x(lon)) + 0.5, y, Math.floor(dest.z(lat)) + 0.5);
 
         Entity root = p.getRootVehicle();
         boolean eva = root == p;
-        if (eva) {
-            p.teleport(new TeleportTransition(dest, target, Vec3.ZERO, p.getYRot(), p.getXRot(), TeleportTransition.PLAY_PORTAL_SOUND));
-        } else {
-            root.teleport(new TeleportTransition(dest, target, Vec3.ZERO, root.getYRot(), root.getXRot(), TeleportTransition.PLAY_PORTAL_SOUND));
+        // Drag: Allen–Eggers from the atmosphere top, never below terminal speed (EntryAerothermo.speedAt).
+        double speed = Math.sqrt(dot(vGround, vGround));
+        double[] vSlowed = vGround.clone();
+        if (speed > 0) {
+            double sinGamma = Math.max(0, -dot(vGround, frame.up())) / speed;
+            double after = EntryAerothermo.speedAt(speed, sinGamma, EntryAerothermo.surfaceDensity(body), body.scaleHeight(),
+                    eva ? EntryAerothermo.EVA_BALLISTIC : EntryAerothermo.SHIP_BALLISTIC, body.surfaceGravity(), altitude);
+            for (int i = 0; i < 3; i++) vSlowed[i] *= after / speed;
         }
-        for (ServerPlayer rider : ridersOf(p)) arrive(rider, slot, addr, r.body(), eva && rider == p);
+        double[] v = clamp(TransferKinematics.toSurface(vSlowed, frame, mpb), MAX_TRANSFER_BLOCKS_PER_TICK);
+        Vec3 velocity = new Vec3(v[0], v[1], v[2]);
+        double[] look = TransferKinematics.directionToSurface(TransferKinematics.lookVector(root.getYRot(), root.getXRot()), frame);
+        double[] angles = TransferKinematics.lookAngles(look);
+        double[] attitude = null;
+        if (root instanceof Starship ship) {
+            var q = ship.attitude();
+            attitude = TransferKinematics.attitudeToSurface(new double[] {q.x(), q.y(), q.z(), q.w()}, frame);
+        }
+
+        List<ServerPlayer> riders = ridersOf(p);
+        // The arming packet must precede the respawn packet: same connection, same order.
+        prepare(riders, dest.slot(), addr, lat, lon, dest.switchAltitude(), 0, true);
+        ApproachTickets.release(p.getUUID());
+        APPROACHES.remove(p.getUUID());
+
+        Entity arrived = root.teleport(new TeleportTransition(dest.level(), target, velocity, (float) angles[0], (float) angles[1],
+                TeleportTransition.DO_NOTHING));
+        if (arrived instanceof Starship ship) {
+            if (attitude != null) ship.setAttitude(new Quaternionf((float) attitude[0], (float) attitude[1], (float) attitude[2], (float) attitude[3]));
+            ship.setDeltaMovement(velocity);
+        }
+        for (ServerPlayer rider : riders) arrive(rider, dest, addr, body, eva && rider == p);
         return true;
     }
 
@@ -256,37 +457,65 @@ public final class PlanetEntry {
         return out;
     }
 
-    private static void arrive(ServerPlayer p, int slot, PlanetAddress addr, Body body, boolean eva) {
-        p.setAttached(Galactica.NAV, p.getAttachedOrCreate(Galactica.NAV).withSpeed(0));
+    /** One player decides for a vehicle: its driver, else the first player aboard; on foot, the player. */
+    private static boolean isLeader(ServerPlayer p, Entity root) {
+        if (root == p) return true;
+        Entity driver = root.getControllingPassenger();
+        return driver != null ? driver == p : firstPlayerAboard(root) == p;
+    }
+
+    private static boolean eva(Entity root) {
+        return !(root instanceof Starship);
+    }
+
+    private static void arrive(ServerPlayer p, Dest dest, PlanetAddress addr, Body body, boolean eva) {
+        // Velocity now lives in the entity's delta movement: the warp drive in NavState is not zeroed here,
+        // and NavServer re-anchors the frame (speed 0) on take-off.
         boolean keepsFlight = p.isCreative() || p.isSpectator();
         if (!keepsFlight) {
             p.getAbilities().mayfly = eva;
             p.getAbilities().flying = eva;
             p.onUpdateAbilities();
         }
-        p.setAttached(SURFACE, new SurfaceState(slot, addr, eva && !keepsFlight));
+        Arrival arrival = new Arrival(p.level().getServer().getTickCount(), Math.max(ENTRY_Y, p.getRootVehicle().getY()));
+        if (dest.earth() != null) {
+            p.removeAttached(SURFACE);
+            arrival.overworldDescent = eva && !keepsFlight;
+            clearGravity(p);
+        } else {
+            p.setAttached(SURFACE, new SurfaceState(dest.slot(), addr, eva && !keepsFlight));
+            applyGravity(p, body);
+        }
         // The descent starts at the entry altitude. Reading the position here is unsafe: a cross-dimension
         // teleport may not have moved the player yet, and a stale low Y from the last planet would end the
         // descent flight at once and drop the player from ENTRY_Y.
-        ARRIVALS.put(p.getUUID(), new Arrival(p.level().getServer().getTickCount(), Math.max(ENTRY_Y, p.getRootVehicle().getY())));
-        applyGravity(p, body);
+        ARRIVALS.put(p.getUUID(), arrival);
         // Locale.ROOT: the server's locale must not decide the decimal mark every client reads.
         p.sendOverlayMessage(Component.translatable("galactica.planet.entering", body.name(),
                 String.format(Locale.ROOT, "%.2f", body.surfaceGravityG()), String.format(Locale.ROOT, "%.3g", body.surfacePressureBar())));
+    }
+
+    private static void abortApproach(ServerPlayer p) {
+        if (APPROACHES.remove(p.getUUID()) != null) ApproachTickets.release(p.getUUID());
     }
 
     // ---------------------------------------------------------------- on the surface
 
     /**
      * Call every tick for every player. On a surface: keeps gravity at the body's value, wraps the
-     * longitude seam and the poles, ends EVA descent flight, shows entry heating and takes off above
-     * {@link #EXIT_Y}. Anywhere else it only removes the gravity modifiers.
+     * longitude seam and the poles, ends EVA descent flight, streams entry plasma and takes off above
+     * {@link #EXIT_Y}. In the Overworld it runs Earth's descents and launches. Anywhere else it only removes
+     * the gravity modifiers.
      */
     public static void tickSurface(ServerPlayer p) {
         int slot = PlanetSlots.slotOf(p.level().dimension());
         if (slot < 0) {
             clearGravity(p);
-            ARRIVALS.remove(p.getUUID());
+            if (p.level().dimension() == Level.OVERWORLD) {
+                tickOverworld(p);
+            } else {
+                ARRIVALS.remove(p.getUUID());
+            }
             return;
         }
         PlanetSlots.Runtime rt = PlanetSlots.runtime(slot);
@@ -294,7 +523,7 @@ public final class PlanetEntry {
         if (rt == null) {
             // The slot was recycled under a logged-out player: nothing to stand on here any more.
             // Operators who /execute into an empty slot on purpose are left alone.
-            if (!p.isCreative() && !p.isSpectator()) toSpace(p, null, null, null);
+            if (!p.isCreative() && !p.isSpectator()) bareExit(p);
             return;
         }
         SurfaceState state = p.getAttached(SURFACE);
@@ -310,31 +539,18 @@ public final class PlanetEntry {
         Arrival arrival = ARRIVALS.get(p.getUUID());
         long since = arrival != null ? server.getTickCount() - arrival.tick : Long.MAX_VALUE;
         if (state.descending()) {
-            if (arrival != null) arrival.lowestY = Math.min(arrival.lowestY, p.getY());
-            // No bookkeeping (server restarted mid-descent) counts as timed out: never fly for free.
-            boolean ends = arrival == null || p.getVehicle() != null
-                    || EvaDescent.ends(p.onGround(), p.getY(), arrival.lowestY, since);
-            if (ends) {
-                if (!p.isCreative() && !p.isSpectator()) {
-                    p.getAbilities().mayfly = false;
-                    p.getAbilities().flying = false;
-                    p.onUpdateAbilities();
-                    if (!p.onGround()) p.sendOverlayMessage(Component.translatable("galactica.planet.descent_over"));
-                }
-                p.setAttached(SURFACE, state = state.landed());
+            if (endDescent(p, arrival, since)) p.setAttached(SURFACE, state = state.landed());
+        }
+        SurfaceGrid g = rt.grid();
+        if (isLeader(p, root)) {
+            surfacePlasma(p, root, rt.body(), g, TerrainSampler.SEA_LEVEL);
+            if (root.getY() > EXIT_Y) {
+                toSpace(p, root, rt.resolved(), rt.address(), g, TerrainSampler.SEA_LEVEL, g.latitude(root.getZ()), g.longitude(root.getX()));
+                return;
             }
-        }
-        // One emitter per vehicle: its driver, or each player on foot.
-        if (arrival != null && since < EntryHeating.DURATION_TICKS && (drives || root.getControllingPassenger() == null && firstPlayerAboard(root) == p)) {
-            heat(root, rt.body(), since);
-        }
-
-        if (root.getY() > EXIT_Y) {
-            toSpace(p, rt, root, state);
-            return;
+            armExit(p, root, slot, rt.address(), g, TerrainSampler.SEA_LEVEL, g.latitude(root.getZ()), g.longitude(root.getX()));
         }
         if (!drives) return; // the driver moves the vehicle across the map edges
-        SurfaceGrid g = rt.grid();
         double[] pole = g.overPole(root.getX(), root.getZ());
         if (pole != null) {
             // Over the pole: same latitude on the far meridian, now facing back towards the equator.
@@ -349,64 +565,187 @@ public final class PlanetEntry {
         }
     }
 
+    /** Earth in the Overworld: EVA descents from orbit, entry plasma, and ships climbing out to space. */
+    private static void tickOverworld(ServerPlayer p) {
+        MinecraftServer server = p.level().getServer();
+        Arrival arrival = ARRIVALS.get(p.getUUID());
+        if (arrival != null && arrival.overworldDescent) {
+            if (endDescent(p, arrival, server.getTickCount() - arrival.tick)) arrival.overworldDescent = false;
+        }
+        PlanetAddress.Resolved r = earth();
+        if (r == null || earthAddress == null) return;
+        Entity root = p.getRootVehicle();
+        if (!isLeader(p, root)) return;
+        EarthOverworld map = overworldMap(server);
+        // Only arrivals from space glow: a vanilla elytra flight is far too slow to heat anyway.
+        if (arrival != null) surfacePlasma(p, root, r.body(), map.grid(), TransferAltitude.OVERWORLD_SEA_LEVEL);
+        // Climbing a ship out of the Overworld launches to orbit; players on foot or elytra stay home.
+        if (!(root instanceof Starship)) return;
+        double lat = map.latitude(root.getZ()), lon = map.longitude(root.getX());
+        if (root.getY() > EXIT_Y) {
+            toSpace(p, root, r, earthAddress, map.grid(), TransferAltitude.OVERWORLD_SEA_LEVEL, lat, lon);
+            return;
+        }
+        armExit(p, root, TransferPreparePayload.OVERWORLD, earthAddress, map.grid(), TransferAltitude.OVERWORLD_SEA_LEVEL, lat, lon);
+    }
+
+    /** Ends an EVA descent flight on touchdown, climb or timeout; true when it ended. */
+    private static boolean endDescent(ServerPlayer p, Arrival arrival, long since) {
+        if (arrival != null) arrival.lowestY = Math.min(arrival.lowestY, p.getY());
+        // No bookkeeping (server restarted mid-descent) counts as timed out: never fly for free.
+        boolean ends = arrival == null || p.getVehicle() != null || EvaDescent.ends(p.onGround(), p.getY(), arrival.lowestY, since);
+        if (!ends) return false;
+        if (!p.isCreative() && !p.isSpectator()) {
+            p.getAbilities().mayfly = false;
+            p.getAbilities().flying = false;
+            p.onUpdateAbilities();
+            if (!p.onGround()) p.sendOverlayMessage(Component.translatable("galactica.planet.descent_over"));
+        }
+        return true;
+    }
+
     private static ServerPlayer firstPlayerAboard(Entity root) {
         for (Entity e : root.getIndirectPassengers()) if (e instanceof ServerPlayer sp) return sp;
         return null;
     }
 
-    /** Flame and smoke streaming up past the arrival, seen by everyone nearby. */
-    private static void heat(Entity root, Body body, long since) {
-        double intensity = EntryHeating.intensity(body.surfacePressureBar(), since);
-        if (intensity <= 0) return;
-        ServerLevel level = (ServerLevel) root.level();
-        double w = root.getBbWidth() * 0.6 + 0.4;
-        int flames = (int) Math.ceil(14 * intensity), smoke = (int) Math.ceil(6 * intensity);
-        level.sendParticles(ParticleTypes.FLAME, root.getX(), root.getY() - 0.3, root.getZ(), flames, w, 0.4, w, 0.06);
-        level.sendParticles(ParticleTypes.LARGE_SMOKE, root.getX(), root.getY() + root.getBbHeight(), root.getZ(), smoke, w, 0.3, w, 0.03);
+    /** A climb close to the take-off row arms the riders' clients so the switch shows no loading screen. */
+    private static void armExit(ServerPlayer p, Entity root, int slot, PlanetAddress addr, SurfaceGrid g, double seaLevel,
+                                double lat, double lon) {
+        double climb = root.getDeltaMovement().y;
+        if (root.getY() < EXIT_Y - EXIT_ARM_BAND || climb <= 0) return;
+        if ((p.tickCount % 5) != 0) return;
+        int eta = (int) Math.ceil((EXIT_Y - root.getY()) / Math.max(climb, 0.05));
+        prepare(ridersOf(p), TransferPreparePayload.SPACE, addr, lat, lon,
+                TransferAltitude.exitAltitude(seaLevel, g.metresPerBlock()), Math.min(eta, 1200), false);
     }
 
-    /** Takes off: back to galactica:space on the local radial at {@link #exitDistance}. */
-    private static void toSpace(ServerPlayer p, PlanetSlots.Runtime rt, Entity root, SurfaceState state) {
+    /** Takes off: back to galactica:space on the local radial, at the same real altitude, keeping velocity and attitude. */
+    private static void toSpace(ServerPlayer p, Entity root, PlanetAddress.Resolved r, PlanetAddress addr, SurfaceGrid grid,
+                                double seaLevel, double lat, double lon) {
         MinecraftServer server = p.level().getServer();
         ServerLevel space = server.getLevel(Galactica.SPACE);
         if (space == null) return;
-        if (root == null) root = p.getRootVehicle();
         List<ServerPlayer> riders = ridersOf(p);
         NavState nav = p.getAttachedOrCreate(Galactica.NAV);
-        GalacticPos target = null;
-        if (rt != null) {
-            double t = nav.timeSeconds();
-            PlanetAddress.Resolved r = rt.resolved();
-            Body b = r.body();
-            double lat = rt.grid().latitude(root.getZ()), lon = rt.grid().longitude(root.getX());
-            double[] dir = BodyFrame.direction(r.star(), b, t, lat, lon);
-            double[] off = BodyFrame.offsetFromStar(r.star(), r.planet(), r.moon(), t);
-            double d = exitDistance(b);
-            target = Neighbourhood.starPos(r.star()).plusMetres(off[0] + dir[0] * d, off[1] + dir[1] * d, off[2] + dir[2] * d);
+        double t = nav.timeSeconds();
+        Body b = r.body();
+        double mpb = grid.metresPerBlock();
+        double altitude = TransferAltitude.realAltitude(root.getY(), seaLevel, mpb);
+        double[] dir = BodyFrame.direction(r.star(), b, t, lat, lon);
+        double[] off = BodyFrame.offsetFromStar(r.star(), r.planet(), r.moon(), t);
+        double d = b.radiusMetres() + altitude;
+        GalacticPos target = Neighbourhood.starPos(r.star()).plusMetres(off[0] + dir[0] * d, off[1] + dir[1] * d, off[2] + dir[2] * d);
+
+        double[] pole = BodyFrame.pole(r.star(), b);
+        LocalFrame frame = LocalFrame.at(pole, dir);
+        Vec3 dm = root.getDeltaMovement();
+        double[] vGround = TransferKinematics.fromSurface(new double[] {dm.x, dm.y, dm.z}, frame, mpb);
+        double[] spin = TransferKinematics.spinVelocity(pole, TransferKinematics.spinRate(b.rotationHours()),
+                new double[] {dir[0] * d, dir[1] * d, dir[2] * d});
+        // The space flight model caps speed at ShipFlightModel.MAX_SPEED: hand over no more than it accepts.
+        double[] v = clamp(TransferKinematics.galacticToSpaceMc(TransferKinematics.inertial(vGround, spin)),
+                ShipFlightModel.MAX_SPEED * ShipFlightModel.TICK);
+        Vec3 velocity = new Vec3(v[0], v[1], v[2]);
+        double[] angles = TransferKinematics.lookAngles(TransferKinematics.directionToSpace(
+                TransferKinematics.lookVector(root.getYRot(), root.getXRot()), frame));
+        double[] attitude = null;
+        if (root instanceof Starship ship) {
+            var q = ship.attitude();
+            attitude = TransferKinematics.attitudeToSpace(new double[] {q.x(), q.y(), q.z(), q.w()}, frame);
         }
+
+        prepare(riders, TransferPreparePayload.SPACE, addr, lat, lon,
+                TransferAltitude.exitAltitude(seaLevel, mpb), 0, false);
         Vec3 spot = new Vec3(0.5, 0, 0.5);
         if (root != p && root instanceof LivingEntity mount) clearGravity(mount);
-        Entity arrived = root.teleport(new TeleportTransition(space, spot, Vec3.ZERO, root.getYRot(), root.getXRot(),
-                TeleportTransition.PLAY_PORTAL_SOUND));
+        Entity arrived = root.teleport(new TeleportTransition(space, spot, velocity, (float) angles[0], (float) angles[1],
+                TeleportTransition.DO_NOTHING));
+        if (arrived instanceof Starship ship) {
+            if (attitude != null) ship.setAttitude(new Quaternionf((float) attitude[0], (float) attitude[1], (float) attitude[2], (float) attitude[3]));
+            ship.setDeltaMovement(velocity);
+        }
         int until = server.getTickCount() + REENTRY_COOLDOWN_TICKS;
+        double hSwitch = TransferAltitude.switchAltitude(seaLevel, mpb);
         for (ServerPlayer rider : riders) {
-            if (target != null) {
-                if (arrived == rider) {
-                    NavServer.moveTo(rider, target);
-                } else {
-                    // Every rider's frame is anchored on the vehicle, so the ship sits exactly on the radial.
-                    double[] g = Frames.mcToGalactic(spot.x, spot.y, spot.z);
-                    rider.setAttached(Galactica.NAV, rider.getAttachedOrCreate(Galactica.NAV)
-                            .withOrigin(target.plusMetres(-g[0], -g[1], -g[2])).withSpeed(0));
-                }
+            if (arrived == rider) {
+                NavServer.moveTo(rider, target);
+            } else {
+                // Every rider's frame is anchored on the vehicle, so the ship sits exactly on the radial.
+                double[] g = Frames.mcToGalactic(spot.x, spot.y, spot.z);
+                rider.setAttached(Galactica.NAV, rider.getAttachedOrCreate(Galactica.NAV)
+                        .withOrigin(target.plusMetres(-g[0], -g[1], -g[2])).withSpeed(0));
             }
             rider.removeAttached(SURFACE);
             ARRIVALS.remove(rider.getUUID());
             clearGravity(rider);
             COOLDOWN.put(rider.getUUID(), until);
-            if (rt != null) rider.sendOverlayMessage(Component.translatable("galactica.planet.leaving", rt.body().name()));
+            REARM.put(rider.getUUID(), new Rearm(b.id(), hSwitch));
+            rider.sendOverlayMessage(Component.translatable("galactica.planet.leaving", b.name()));
         }
     }
+
+    /** A recycled slot: back to the space frame as it was, with no radial to return to. */
+    private static void bareExit(ServerPlayer p) {
+        ServerLevel space = p.level().getServer().getLevel(Galactica.SPACE);
+        if (space == null) return;
+        Entity root = p.getRootVehicle();
+        List<ServerPlayer> riders = ridersOf(p);
+        if (root != p && root instanceof LivingEntity mount) clearGravity(mount);
+        prepare(riders, TransferPreparePayload.SPACE, p.getAttached(SURFACE) != null ? p.getAttached(SURFACE).address()
+                : new PlanetAddress("", 0, 0, 0, 0, 0, -1), 0, 0, 0, 0, false);
+        root.teleport(new TeleportTransition(space, new Vec3(0.5, 0, 0.5), Vec3.ZERO, root.getYRot(), root.getXRot(),
+                TeleportTransition.DO_NOTHING));
+        int until = p.level().getServer().getTickCount() + REENTRY_COOLDOWN_TICKS;
+        for (ServerPlayer rider : riders) {
+            rider.removeAttached(SURFACE);
+            ARRIVALS.remove(rider.getUUID());
+            clearGravity(rider);
+            COOLDOWN.put(rider.getUUID(), until);
+        }
+    }
+
+    // ---------------------------------------------------------------- plasma
+
+    /** Plasma from the craft's real altitude and speed on a surface (or in the Overworld above Earth). */
+    private static void surfacePlasma(ServerPlayer p, Entity root, Body body, SurfaceGrid g, double seaLevel) {
+        if (!(body.surfacePressureBar() > 0)) return;
+        Vec3 dm = root.getDeltaMovement();
+        double mpb = g.metresPerBlock();
+        double speedBlocks = dm.length();
+        if (speedBlocks < 1e-4) return;
+        double speed = speedBlocks * mpb * TransferKinematics.TICKS_PER_SECOND;
+        double alt = TransferAltitude.realAltitude(root.getY(), seaLevel, mpb);
+        streamPlasma(ridersOf(p), root, body, alt, speed, new double[] {dm.x / speedBlocks, dm.y / speedBlocks, dm.z / speedBlocks}, eva(root));
+    }
+
+    /** Sends the plasma state to the riders and embers to everyone else nearby. */
+    private static void streamPlasma(List<ServerPlayer> riders, Entity root, Body body, double altitude, double speed,
+                                     double[] flow, boolean eva) {
+        EntryAerothermo.Plasma pl = EntryAerothermo.plasma(body, altitude, speed,
+                eva ? EntryAerothermo.EVA_NOSE_RADIUS : EntryAerothermo.SHIP_NOSE_RADIUS);
+        if (pl.intensity() <= 0) return;
+        PlasmaStatePayload msg = new PlasmaStatePayload((float) pl.intensity(), (float) pl.temperature(), (float) pl.mach(),
+                (float) flow[0], (float) flow[1], (float) flow[2], (float) speed);
+        for (ServerPlayer rider : riders) ServerPlayNetworking.send(rider, msg);
+        if (!(root.level() instanceof ServerLevel level)) return;
+        int count = (int) Math.ceil(10 * pl.intensity());
+        double w = root.getBbWidth() * 0.6 + 0.4;
+        for (ServerPlayer viewer : level.players()) {
+            if (riders.contains(viewer) || viewer.distanceToSqr(root) > 256 * 256) continue;
+            level.sendParticles(viewer, TransferNet.PLASMA_EMBER, true, true, root.getX(), root.getY() + root.getBbHeight() * 0.5,
+                    root.getZ(), count, w, root.getBbHeight() * 0.5 + 0.2, w, 0.08);
+        }
+    }
+
+    private static void prepare(List<ServerPlayer> riders, int slot, PlanetAddress addr, double lat, double lon, double hSwitch,
+                                int etaTicks, boolean entry) {
+        TransferPreparePayload msg = new TransferPreparePayload(slot, addr, (float) lat, (float) lon, (float) hSwitch,
+                Math.max(0, etaTicks), entry);
+        for (ServerPlayer rider : riders) ServerPlayNetworking.send(rider, msg);
+    }
+
+    // ---------------------------------------------------------------- gravity
 
     /** Gravity, safe fall distance and fall damage of the body, as total multipliers on vanilla's. */
     private static void applyGravity(ServerPlayer p, Body body) {
@@ -441,9 +780,25 @@ public final class PlanetEntry {
         if (a != null && a.hasModifier(id)) a.removeModifier(id);
     }
 
+    // ---------------------------------------------------------------- small vectors
+
+    private static double dot(double[] a, double[] b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    }
+
+    private static double[] normalize(double[] a) {
+        double r = Math.sqrt(dot(a, a));
+        return r > 0 ? new double[] {a[0] / r, a[1] / r, a[2] / r} : new double[] {0, -1, 0};
+    }
+
+    private static double[] clamp(double[] v, double max) {
+        double r = Math.sqrt(dot(v, v));
+        return r > max ? new double[] {v[0] * max / r, v[1] * max / r, v[2] * max / r} : v;
+    }
+
     // ---------------------------------------------------------------- queries
 
-    /** The body a player stands on, or null off-planet. */
+    /** The body a player stands on in a surface slot, or null (the Overworld keeps vanilla rules). */
     public static Body bodyOf(ServerPlayer p) {
         PlanetSlots.Runtime rt = PlanetSlots.runtime(PlanetSlots.slotOf(p.level().dimension()));
         return rt != null ? rt.body() : null;
