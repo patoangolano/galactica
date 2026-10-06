@@ -84,4 +84,20 @@ class TransferAltitudeTest {
         }
         assertTrue(map.blockZ(0.5) < map.blockZ(0), "north is −Z");
     }
+
+    @Test
+    void takeOffThatTurnsBackCanLandAgain() {
+        double mpb = 10.0;
+        double h = TransferAltitude.switchAltitude(TransferAltitude.OVERWORLD_SEA_LEVEL, mpb);
+        double exit = TransferAltitude.exitAltitude(TransferAltitude.OVERWORLD_SEA_LEVEL, mpb);
+        // Still climbing just after the take-off: blocked, so it cannot fall back through the trigger at once.
+        assertTrue(TransferAltitude.reentryBlocked(exit, h, 50));
+        // Turned back down below the 1.3x band: never blocked (the old Schmitt band made this craft sink forever).
+        assertFalse(TransferAltitude.reentryBlocked(exit, h, -20));
+        assertFalse(TransferAltitude.reentryBlocked(1.05 * h, h, -1));
+        // Hovering (no radial rate) is not climbing either.
+        assertFalse(TransferAltitude.reentryBlocked(exit, h, 0));
+        // High enough: armed whatever the direction.
+        assertFalse(TransferAltitude.reentryBlocked(1.31 * h, h, 100));
+    }
 }

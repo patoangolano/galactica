@@ -1,22 +1,28 @@
 package dev.galactica.client.planet;
 
+import dev.galactica.Galactica;
 import dev.galactica.planet.EntryHeating;
+import dev.galactica.planet.PlanetSlots;
 import dev.galactica.planet.transfer.PlasmaStatePayload;
 import dev.galactica.planet.transfer.TransferPreparePayload;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * Client state of the seamless transfer.
  *
  * <ul>
- *   <li><b>Arming.</b> {@link TransferPreparePayload} arms a one-shot flag for {@link #ARM_SECONDS}. The next
- *       respawn consumes it ({@code LoadingScreenMixin} → {@link #consumeArmed()}), which skips the vanilla
- *       {@code LevelLoadingScreen} for that switch only and timestamps the switch. The level-load tracker keeps
+ *   <li><b>Arming.</b> {@link TransferPreparePayload} arms a one-shot flag for {@link #ARM_SECONDS}, bound to the
+ *       destination dimension. The next respawn consumes it ({@code LoadingScreenMixin} →
+ *       {@link #consumeArmed(ResourceKey)}); only a respawn <i>into that dimension</i> skips the vanilla
+ *       {@code LevelLoadingScreen}, and timestamps the switch. A disarm packet, the local player's death or any
+ *       other level change clear the flag, so a death respawn always shows its screen. The level-load tracker keeps
  *       running (it is ticked by {@code ClientPacketListener.tick}, not by the screen), so
  *       {@code notifyPlayerLoaded()} and {@code setClientLoaded(true)} still fire.</li>
  *   <li><b>Plasma.</b> {@link PlasmaStatePayload} gives the instantaneous Sutton–Graves strength; the visible
@@ -44,6 +50,7 @@ public final class TransferClient {
 
     private static long armedUntil;
     private static boolean armedEntry;
+    private static ResourceKey<Level> armedFor;
     private static long prepareAt;
     private static int prepareEta = Integer.MAX_VALUE;
     private static long switchedAt;
@@ -55,18 +62,38 @@ public final class TransferClient {
     private static long lastFrame;
 
     public static void initClient() {
-        ClientPlayNetworking.registerGlobalReceiver(TransferPreparePayload.TYPE, (payload, ctx) -> ctx.client().execute(() -> onPrepare(payload)));
-        ClientPlayNetworking.registerGlobalReceiver(PlasmaStatePayload.TYPE, (payload, ctx) -> ctx.client().execute(() -> onPlasma(payload)));
+        // Fabric runs play payload handlers on the client thread already. Handling inline (no execute()) keeps the
+        // packet order: a re-queued task would run after the respawn packet that follows it on the wire.
+        ClientPlayNetworking.registerGlobalReceiver(TransferPreparePayload.TYPE, (payload, ctx) -> onPrepare(payload));
+        ClientPlayNetworking.registerGlobalReceiver(PlasmaStatePayload.TYPE, (payload, ctx) -> onPlasma(payload));
         ClientTickEvents.END_CLIENT_TICK.register(TransferClient::tick);
         TransferFx.init();
     }
 
     private static void onPrepare(TransferPreparePayload p) {
+        if (p.isDisarm()) {
+            disarm();
+            return;
+        }
         long now = System.nanoTime();
         armedUntil = now + (long) (ARM_SECONDS * 1e9);
         armedEntry = p.entry();
+        armedFor = destination(p.slot());
         prepareAt = now;
         prepareEta = p.etaTicks();
+    }
+
+    /** The dimension a prepare packet's slot code names. */
+    static ResourceKey<Level> destination(int slot) {
+        if (slot == TransferPreparePayload.SPACE) return Galactica.SPACE;
+        if (slot == TransferPreparePayload.OVERWORLD) return Level.OVERWORLD;
+        return PlanetSlots.key(slot);
+    }
+
+    private static void disarm() {
+        armedUntil = 0;
+        armedFor = null;
+        prepareEta = Integer.MAX_VALUE;
     }
 
     private static void onPlasma(PlasmaStatePayload p) {
@@ -80,14 +107,14 @@ public final class TransferClient {
     }
 
     /**
-     * Called by {@code LoadingScreenMixin} inside {@code ClientPacketListener.startWaitingForNewLevel}: true (once)
-     * when a transfer armed the client, in which case the loading screen is not shown. Marks the switch instant.
+     * Called by {@code LoadingScreenMixin} inside {@code ClientPacketListener.startWaitingForNewLevel} with the
+     * dimension being entered: true (once) when a transfer armed the client for exactly that dimension, in which case
+     * the loading screen is not shown. Marks the switch instant. Any call clears the arm.
      */
-    public static boolean consumeArmed() {
+    public static boolean consumeArmed(ResourceKey<Level> entering) {
         long now = System.nanoTime();
-        boolean armed = armedUntil != 0 && now < armedUntil;
-        armedUntil = 0;
-        prepareEta = Integer.MAX_VALUE;
+        boolean armed = armedUntil != 0 && now < armedUntil && armedFor != null && armedFor.equals(entering);
+        disarm();
         if (armed) switchedAt = now;
         return armed;
     }
@@ -180,11 +207,13 @@ public final class TransferClient {
         if (mc.level != lastLevel) {
             // A level change that did not pass through the loading-screen call (a loading screen was already
             // up) still ends the armed window, so a later unrelated respawn shows its screen as usual.
-            if (lastLevel != null && mc.level != null && armedUntil != 0) consumeArmed();
+            if (lastLevel != null && mc.level != null && armedUntil != 0) disarm();
             lastLevel = mc.level;
         }
-        if (mc.level == null || mc.player == null || mc.isPaused()) return;
-        if (armedUntil != 0 && System.nanoTime() >= armedUntil) armedUntil = 0;
+        if (mc.level == null || mc.player == null) return;
+        // Dying ends any approach: the respawn that follows is not a transfer.
+        if (armedUntil != 0 && (mc.player.isDeadOrDying() || System.nanoTime() >= armedUntil)) disarm();
+        if (mc.isPaused()) return;
         if (glow < 0.05) return;
         Entity root = mc.player.getRootVehicle();
         RandomSource rnd = mc.level.getRandom();

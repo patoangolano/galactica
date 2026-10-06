@@ -23,7 +23,9 @@ import dev.galactica.system.SystemGenerator;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentSyncPredicate;
 import net.fabricmc.fabric.api.attachment.v1.AttachmentType;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -69,7 +71,12 @@ import java.util.UUID;
  * ({@link TransferKinematics}).
  *
  * <p><b>Exit.</b> Rising above {@link #EXIT_Y} returns to space on the same radial at the same real altitude,
- * with velocity and attitude carried back; re-entry is armed again only above 1.3 × the switch altitude.
+ * with velocity and attitude carried back; re-entry into that body is held off only while the craft is still
+ * climbing below 1.3 × the switch altitude ({@link TransferAltitude#reentryBlocked}).
+ *
+ * <p><b>Lifecycle.</b> Approach state, pre-load tickets and cooldowns are dropped on leaving space by any route
+ * (death, command, portal), on becoming a passenger or spectator, on respawn and on disconnect; the client is
+ * disarmed at the same time ({@link TransferPreparePayload#disarm()}).
  *
  * <p><b>Earth.</b> Earth of Sol lands in minecraft:overworld ({@link EarthOverworld}); a ship climbing above
  * {@link #EXIT_Y} in the Overworld launches to orbit above Earth at the matching point.
@@ -92,8 +99,13 @@ public final class PlanetEntry {
     private static final int REENTRY_COOLDOWN_TICKS = 100;
     /** A climb within this many blocks of {@link #EXIT_Y} arms the client for the take-off switch. */
     private static final double EXIT_ARM_BAND = 120;
-    /** Fastest hand-off speed, blocks/tick: the add-entity packet's velocity range and chunk streaming. */
-    public static final double MAX_TRANSFER_BLOCKS_PER_TICK = 3.9;
+    /**
+     * Fastest entry hand-off speed, blocks/tick: the same bound the take-off path hands over
+     * ({@link ShipFlightModel#MAX_SPEED} × {@link ShipFlightModel#TICK} = 15 blocks/tick, under one chunk per tick
+     * so chunk streaming keeps up). There is no packet limit: on 26.3 {@code ClientboundAddEntityPacket} and the
+     * teleport packet encode velocity with {@code Vec3.LP_STREAM_CODEC}, which has no ±3.9 clamp.
+     */
+    public static final double MAX_TRANSFER_BLOCKS_PER_TICK = ShipFlightModel.MAX_SPEED * ShipFlightModel.TICK;
     /** Longest look-ahead for the approach ticket, seconds. */
     private static final double MAX_ETA_SECONDS = 60;
 
@@ -145,6 +157,13 @@ public final class PlanetEntry {
         final Dest dest;
         long lastPrepare = Long.MIN_VALUE;
 
+        /** False once the slot this approach claimed no longer belongs to its body (recycled meanwhile). */
+        boolean stillValid() {
+            if (dest.earth() != null) return true;
+            PlanetSlots.Runtime rt = PlanetSlots.runtime(dest.slot());
+            return rt != null && address.equals(rt.address());
+        }
+
         Approach(long bodyId, PlanetAddress address, PlanetAddress.Resolved resolved, Dest dest) {
             this.bodyId = bodyId;
             this.address = address;
@@ -168,6 +187,13 @@ public final class PlanetEntry {
         ApproachTickets.init();
         TransferNet.init();
         ServerLifecycleEvents.SERVER_STARTING.register(PlanetSlots::onServerStarting);
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> forget(handler.player.getUUID()));
+        ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) -> {
+            // Death or End-exit respawn: whatever approach was running is over. The client already ignores an arm
+            // whose destination is not the new level (TransferClient); the disarm makes it explicit.
+            forget(newPlayer.getUUID());
+            ServerPlayNetworking.send(newPlayer, TransferPreparePayload.disarm());
+        });
         ServerLifecycleEvents.SERVER_STOPPED.register(s -> {
             PlanetSlots.onServerStopped(s);
             COOLDOWN.clear();
@@ -176,7 +202,22 @@ public final class PlanetEntry {
             APPROACHES.clear();
             REARM.clear();
             ApproachTickets.clear();
+            earth = null;
+            earthAddress = null;
+            earthMissing = false;
+            overworldMap = null;
+            overworldSpawn = null;
         });
+    }
+
+    /** Drops every per-player transfer record (no packets: the player may be gone). */
+    private static void forget(UUID id) {
+        APPROACHES.remove(id);
+        ApproachTickets.release(id);
+        REARM.remove(id);
+        COOLDOWN.remove(id);
+        ARRIVALS.remove(id);
+        NO_SLOT_WARNED.remove(id);
     }
 
     /** Altitude above the surface where the approach (heating, chunk pre-load) begins. */
@@ -189,16 +230,21 @@ public final class PlanetEntry {
 
     private static PlanetAddress.Resolved earth;
     private static PlanetAddress earthAddress;
+    /** Memo of a failed lookup, so a system without an "Earth" is generated once, not every tick. */
+    private static boolean earthMissing;
+    private static EarthOverworld overworldMap;
+    private static BlockPos overworldSpawn;
 
-    /** Earth of Sol, resolved once. */
+    /** Earth of Sol, resolved once (and a miss remembered). */
     static PlanetAddress.Resolved earth() {
-        if (earth == null) {
+        if (earth == null && !earthMissing) {
             for (Body b : SystemGenerator.generate(StarCatalog.SOL)) {
                 if ("Earth".equals(b.name())) {
                     earth = new PlanetAddress.Resolved(StarCatalog.SOL, b, null);
                     earthAddress = PlanetAddress.of(Galactica.GALAXY, StarCatalog.SOL, b);
                 }
             }
+            earthMissing = earth == null;
         }
         return earth;
     }
@@ -207,18 +253,25 @@ public final class PlanetEntry {
         return a != null && EarthOverworld.isEarth(a.catalog(), a.planet(), a.moon()) && earth() != null;
     }
 
+    /** Earth's map onto the Overworld, cached until the world spawn moves. Requires {@link #earth()} != null. */
     private static EarthOverworld overworldMap(MinecraftServer server) {
         BlockPos spawn = server.overworld().getRespawnData().pos();
-        return new EarthOverworld(SurfaceGrid.of(earth().body().radiusMetres()), spawn.getX() + 0.5, spawn.getZ() + 0.5);
+        if (overworldMap == null || !spawn.equals(overworldSpawn)) {
+            overworldMap = new EarthOverworld(SurfaceGrid.of(earth().body().radiusMetres()), spawn.getX() + 0.5, spawn.getZ() + 0.5);
+            overworldSpawn = spawn.immutable();
+        }
+        return overworldMap;
     }
 
     // ---------------------------------------------------------------- approach and entry
 
     /** Called every tick for players in galactica:space; approaches and lands them when inside an entry shell. */
     public static boolean tryEnter(ServerPlayer p) {
-        if (p.level().dimension() != Galactica.SPACE || p.isSpectator()) return false;
         Entity root = p.getRootVehicle();
-        if (!isLeader(p, root)) return false;
+        if (p.level().dimension() != Galactica.SPACE || p.isSpectator() || !isLeader(p, root)) {
+            abortApproach(p);
+            return false;
+        }
         MinecraftServer server = p.level().getServer();
         Integer until = COOLDOWN.get(p.getUUID());
         if (until != null) {
@@ -245,13 +298,29 @@ public final class PlanetEntry {
             return false;
         }
         Body body = hit.body();
+        // Local up and the craft's velocity (galactic m/s, Krakensbane frame on the space side). Spin is horizontal,
+        // so the radial rate needs no ground correction.
+        double[] radial = here.metresFrom(hit.pos());
+        double rMag = Math.sqrt(radial[0] * radial[0] + radial[1] * radial[1] + radial[2] * radial[2]);
+        double[] up = {radial[0] / rMag, radial[1] / rMag, radial[2] / rMag};
+        double[] vGal = TransferKinematics.spaceMcToGalactic(new double[] {root.getDeltaMovement().x, root.getDeltaMovement().y, root.getDeltaMovement().z});
+        if (nav.speed() > 0) {
+            Vec3 look = p.getLookAngle();
+            double[] g = Frames.mcToGalactic(look.x, look.y, look.z);
+            for (int i = 0; i < 3; i++) vGal[i] += g[i] * nav.speed();
+        }
         Rearm rearm = REARM.get(p.getUUID());
         if (rearm != null) {
-            if (rearm.bodyId() == body.id() && !TransferAltitude.reentryArmed(best, rearm.switchAltitude())) return false;
+            if (rearm.bodyId() == body.id() && TransferAltitude.reentryBlocked(best, rearm.switchAltitude(), dot(vGal, up))) {
+                abortApproach(p);
+                return false;
+            }
             REARM.remove(p.getUUID());
         }
 
         Approach a = APPROACHES.get(p.getUUID());
+        if (a != null && !a.stillValid()) abortApproach(p); // its slot was recycled for another body meanwhile
+        a = APPROACHES.get(p.getUUID());
         if (a == null || a.bodyId != body.id()) {
             abortApproach(p);
             Star star = nb.systemStar(here);
@@ -268,38 +337,33 @@ public final class PlanetEntry {
             APPROACHES.put(p.getUUID(), a);
         }
 
-        // Local frame and ground-relative velocity (TransferKinematics: Krakensbane frame on the space side).
-        double[] radial = here.metresFrom(hit.pos());
-        double rMag = Math.sqrt(radial[0] * radial[0] + radial[1] * radial[1] + radial[2] * radial[2]);
-        double[] up = {radial[0] / rMag, radial[1] / rMag, radial[2] / rMag};
+        // Local frame and ground-relative velocity (TransferKinematics).
         double[] pole = BodyFrame.pole(a.resolved.star(), body);
         LocalFrame frame = LocalFrame.at(pole, up);
-        double[] vGal = TransferKinematics.spaceMcToGalactic(new double[] {root.getDeltaMovement().x, root.getDeltaMovement().y, root.getDeltaMovement().z});
-        if (nav.speed() > 0) {
-            Vec3 look = p.getLookAngle();
-            double[] g = Frames.mcToGalactic(look.x, look.y, look.z);
-            for (int i = 0; i < 3; i++) vGal[i] += g[i] * nav.speed();
-        }
         double[] spin = TransferKinematics.spinVelocity(pole, TransferKinematics.spinRate(body.rotationHours()), radial);
         double[] vGround = TransferKinematics.groundRelative(vGal, spin);
-        double speed = Math.sqrt(vGround[0] * vGround[0] + vGround[1] * vGround[1] + vGround[2] * vGround[2]);
+        // The space dimension has no air: the drag met since the atmosphere top is applied analytically
+        // (Allen–Eggers, the same model the switch uses), so heating peaks near rho* instead of rising at orbital
+        // speed all the way down, and the speed is continuous across the switch.
+        double[] vDragged = dragged(vGround, frame, body, eva(root), best);
+        double speed = Math.sqrt(dot(vDragged, vDragged));
 
         double[] ll = BodyFrame.latLon(a.resolved.star(), body, t, radial);
         double hSwitch = a.dest.switchAltitude();
         List<ServerPlayer> riders = ridersOf(p);
-        streamPlasma(riders, root, body, best, speed, normalize(TransferKinematics.galacticToSpaceMc(vGround)), eva(root));
+        streamPlasma(riders, root, body, best, speed, normalize(TransferKinematics.galacticToSpaceMc(vDragged)), eva(root));
 
         if (best <= hSwitch) {
             return enter(p, a.address, a.resolved, a.dest, ll[0], ll[1], best, vGround, frame);
         }
-        // Projected switch point: sub-point plus ground track × time to the switch.
-        double vEast = dot(vGround, frame.east()), vNorth = dot(vGround, frame.north()), vUp = dot(vGround, frame.up());
+        // Projected switch point: sub-point plus ground track × time to the switch, on the dragged velocity.
+        double vEast = dot(vDragged, frame.east()), vNorth = dot(vDragged, frame.north()), vUp = dot(vDragged, frame.up());
         double eta = TransferAltitude.secondsToSwitch(best, hSwitch, -vUp, MAX_ETA_SECONDS);
         double radius = body.radiusMetres();
         double lat = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, ll[0] + vNorth * eta / radius));
         double lon = ll[1] + vEast * eta / (radius * Math.max(0.05, Math.cos(ll[0])));
-        ApproachTickets.hold(p.getUUID(), a.dest.level(), a.dest.x(lon), a.dest.z(lat));
         long now = server.getTickCount();
+        ApproachTickets.hold(p.getUUID(), a.dest.level(), a.dest.x(lon), a.dest.z(lat), now);
         int etaTicks = (int) Math.ceil(eta * 20);
         if (now - a.lastPrepare >= 5 || etaTicks < 40) {
             a.lastPrepare = now;
@@ -411,15 +475,7 @@ public final class PlanetEntry {
 
         Entity root = p.getRootVehicle();
         boolean eva = root == p;
-        // Drag: Allen–Eggers from the atmosphere top, never below terminal speed (EntryAerothermo.speedAt).
-        double speed = Math.sqrt(dot(vGround, vGround));
-        double[] vSlowed = vGround.clone();
-        if (speed > 0) {
-            double sinGamma = Math.max(0, -dot(vGround, frame.up())) / speed;
-            double after = EntryAerothermo.speedAt(speed, sinGamma, EntryAerothermo.surfaceDensity(body), body.scaleHeight(),
-                    eva ? EntryAerothermo.EVA_BALLISTIC : EntryAerothermo.SHIP_BALLISTIC, body.surfaceGravity(), altitude);
-            for (int i = 0; i < 3; i++) vSlowed[i] *= after / speed;
-        }
+        double[] vSlowed = dragged(vGround, frame, body, eva, altitude);
         double[] v = clamp(TransferKinematics.toSurface(vSlowed, frame, mpb), MAX_TRANSFER_BLOCKS_PER_TICK);
         Vec3 velocity = new Vec3(v[0], v[1], v[2]);
         double[] look = TransferKinematics.directionToSurface(TransferKinematics.lookVector(root.getYRot(), root.getXRot()), frame);
@@ -444,6 +500,21 @@ public final class PlanetEntry {
         }
         for (ServerPlayer rider : riders) arrive(rider, dest, addr, body, eva && rider == p);
         return true;
+    }
+
+    /**
+     * Ground-relative velocity {@code vGround} (m/s) slowed by the drag met between the atmosphere top and
+     * {@code altitude}: Allen–Eggers along the current flight-path angle, never below terminal speed
+     * ({@link EntryAerothermo#speedAt}). Unchanged for an airless body.
+     */
+    private static double[] dragged(double[] vGround, LocalFrame frame, Body body, boolean eva, double altitude) {
+        double speed = Math.sqrt(dot(vGround, vGround));
+        if (!(speed > 0)) return vGround.clone();
+        double sinGamma = Math.max(0, -dot(vGround, frame.up())) / speed;
+        double after = EntryAerothermo.speedAt(speed, sinGamma, EntryAerothermo.surfaceDensity(body), body.scaleHeight(),
+                eva ? EntryAerothermo.EVA_BALLISTIC : EntryAerothermo.SHIP_BALLISTIC, body.surfaceGravity(), altitude);
+        double k = after / speed;
+        return new double[] {vGround[0] * k, vGround[1] * k, vGround[2] * k};
     }
 
     /** {@code p} plus every player sharing its vehicle stack. */
@@ -495,8 +566,14 @@ public final class PlanetEntry {
                 String.format(Locale.ROOT, "%.2f", body.surfaceGravityG()), String.format(Locale.ROOT, "%.3g", body.surfacePressureBar())));
     }
 
+    /** Ends an approach that did not switch: drops the pre-load and disarms the riders' clients. */
     private static void abortApproach(ServerPlayer p) {
-        if (APPROACHES.remove(p.getUUID()) != null) ApproachTickets.release(p.getUUID());
+        boolean had = APPROACHES.remove(p.getUUID()) != null;
+        ApproachTickets.release(p.getUUID());
+        if (had && !p.hasDisconnected()) {
+            TransferPreparePayload off = TransferPreparePayload.disarm();
+            for (ServerPlayer rider : ridersOf(p)) ServerPlayNetworking.send(rider, off);
+        }
     }
 
     // ---------------------------------------------------------------- on the surface
@@ -508,11 +585,14 @@ public final class PlanetEntry {
      * the gravity modifiers.
      */
     public static void tickSurface(ServerPlayer p) {
+        // Left space without switching (death, command, portal): the approach is over.
+        if (p.level().dimension() != Galactica.SPACE && APPROACHES.containsKey(p.getUUID())) abortApproach(p);
         int slot = PlanetSlots.slotOf(p.level().dimension());
         if (slot < 0) {
             clearGravity(p);
             if (p.level().dimension() == Level.OVERWORLD) {
-                tickOverworld(p);
+                // Only Galactica traffic costs anything: arrivals from space and Starships that may climb out.
+                if (ARRIVALS.containsKey(p.getUUID()) || p.getRootVehicle() instanceof Starship) tickOverworld(p);
             } else {
                 ARRIVALS.remove(p.getUUID());
             }
@@ -728,7 +808,9 @@ public final class PlanetEntry {
         PlasmaStatePayload msg = new PlasmaStatePayload((float) pl.intensity(), (float) pl.temperature(), (float) pl.mach(),
                 (float) flow[0], (float) flow[1], (float) flow[2], (float) speed);
         for (ServerPlayer rider : riders) ServerPlayNetworking.send(rider, msg);
-        if (!(root.level() instanceof ServerLevel level)) return;
+        // In galactica:space MC coordinates are relative to each player's own NavState origin, so block distance
+        // says nothing about real distance: no observer particles there.
+        if (!(root.level() instanceof ServerLevel level) || level.dimension() == Galactica.SPACE) return;
         int count = (int) Math.ceil(10 * pl.intensity());
         double w = root.getBbWidth() * 0.6 + 0.4;
         for (ServerPlayer viewer : level.players()) {

@@ -18,13 +18,25 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
  * @param lat       latitude of the (projected) switch point, radians
  * @param lon       longitude of the (projected) switch point, radians
  * @param hSwitch   altitude of the switch, metres
- * @param etaTicks  estimated ticks until the switch (0 = this tick)
+ * @param etaTicks  estimated ticks until the switch (0 = this tick); {@link #DISARM} cancels any armed transfer
  * @param entry     true for space → surface, false for surface → space
  */
 public record TransferPreparePayload(int slot, PlanetAddress address, float lat, float lon, float hSwitch,
                                      int etaTicks, boolean entry) implements CustomPacketPayload {
 
     public static final int OVERWORLD = -1, SPACE = -2;
+    /** {@code etaTicks} of a cancel: the approach ended without a switch (pull-up, death, respawn, logout). */
+    public static final int DISARM = -1;
+
+    /** A packet that clears the client's arm. */
+    public static TransferPreparePayload disarm() {
+        return new TransferPreparePayload(SPACE, new PlanetAddress("", 0, 0, 0, 0, 0, -1), 0, 0, 0, DISARM, false);
+    }
+
+    /** True for a {@link #disarm()} packet. */
+    public boolean isDisarm() {
+        return etaTicks < 0;
+    }
 
     public static final Type<TransferPreparePayload> TYPE = new Type<>(Galactica.id("transfer_prepare"));
     public static final StreamCodec<RegistryFriendlyByteBuf, TransferPreparePayload> CODEC = StreamCodec.composite(

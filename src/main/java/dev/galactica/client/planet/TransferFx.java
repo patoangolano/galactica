@@ -134,6 +134,8 @@ public final class TransferFx {
 
     private static boolean screenFailed;
     private static TextureTarget snapshot;
+    /** 1×1 stand-in bound to InSampler when no frame was ever copied (the shader multiplies it by fade = 0). */
+    private static TextureTarget blank;
     private static long snapshotAt;
 
     static void init() {
@@ -272,8 +274,16 @@ public final class TransferFx {
         if (vignette < 0.003 && fade < 0.003) return;
         CompiledRenderPipeline pipe = screenPipeline();
         if (pipe == null) return;
-        if (snapshot == null) ensureSnapshot(main);
-        if (fade > 0 && (snapshot.width != main.width || snapshot.height != main.height)) fade = 0;
+        if (snapshot == null || fade > 0 && (snapshot.width != main.width || snapshot.height != main.height)) fade = 0;
+        TextureTarget source = snapshot;
+        if (source == null) {
+            if (blank == null) {
+                blank = new TextureTarget("galactica transfer blank", 1, 1, main.getColorTexture().getFormat(), null);
+                // Defined contents (no pass is open yet): transparent black.
+                enc.clearColorTexture(blank.getColorTexture(), new org.joml.Vector4f(0F, 0F, 0F, 0F));
+            }
+            source = blank;
+        }
 
         float haze = (float) (1 - Math.clamp(glow / 0.08, 0.0, 1.0));
         float seconds = (float) ((System.nanoTime() / 1e9) % 3600.0);
@@ -287,7 +297,7 @@ public final class TransferFx {
             pass.setPipeline(pipe);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", transforms);
-            pass.setUniform("InSampler", snapshot.getColorTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
+            pass.setUniform("InSampler", source.getColorTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
             pass.draw(3, 1, 0, 0);
         }
     }
