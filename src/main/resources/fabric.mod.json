@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${version}",
+  "name": "${mod_name}",
+  "description": "${description}",
+  "authors": ["${mod_author}"],
+  "license": "${license}",
+  "icon": "assets/galactica/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.galactica.Galactica"],
+    "client": ["dev.galactica.client.GalacticaClient"]
+  },
+  "mixins": [
+    {"config": "galactica.client.mixins.json", "environment": "client"}
+  ],
+  "depends": {
+    "fabricloader": ">=${fabric_loader_version}",
+    "fabric-api": "*",
+    "minecraft": "~${minecraft_version}",
+    "java": ">=${java_version}"
+  },
+  "suggests": {
+    "iris": "*",
+    "sodium": "*"
+  }
+}

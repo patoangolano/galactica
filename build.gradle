@@ -1,0 +1,73 @@
+plugins {
+    id 'java'
+    id 'net.fabricmc.fabric-loom' version '1.18.1'
+}
+
+base {
+    archivesName = mod_id
+}
+
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = 'Modrinth'
+                url = 'https://api.modrinth.com/maven'
+            }
+        }
+        filter {
+            includeGroup 'maven.modrinth'
+        }
+    }
+}
+
+dependencies {
+    minecraft("com.mojang:minecraft:${minecraft_version}")
+    implementation("net.fabricmc:fabric-loader:${fabric_loader_version}")
+    implementation("net.fabricmc.fabric-api:fabric-api:${fabric_version}")
+    // Shader compatibility hooks only; Iris is optional at runtime.
+    compileOnly("maven.modrinth:iris:${iris_version}")
+
+    testImplementation(platform('org.junit:junit-bom:5.13.4'))
+    testImplementation('org.junit.jupiter:junit-jupiter')
+    testRuntimeOnly('org.junit.platform:junit-platform-launcher')
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(java_version as int)
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = java_version as int
+}
+
+test {
+    useJUnitPlatform()
+    testLogging { events 'failed'; exceptionFormat 'full' }
+}
+
+loom {
+    runs {
+        client {
+            client()
+            configName = 'Galactica Client'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G'
+        }
+        server {
+            server()
+            configName = 'Galactica Server'
+            runDir 'runs/server'
+        }
+    }
+}
+
+processResources {
+    def props = [version: version, mod_id: mod_id, mod_name: mod_name, mod_author: mod_author, license: license,
+                 description: description, minecraft_version: minecraft_version,
+                 fabric_loader_version: fabric_loader_version, java_version: java_version]
+    inputs.properties props
+    filesMatching(['fabric.mod.json', '*.mixins.json']) { expand props }
+}
