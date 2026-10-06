@@ -15,6 +15,8 @@ import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.galactica.Galactica;
 import dev.galactica.client.sky.SkyManager;
 import dev.galactica.client.sky.SkyTextures;
+import dev.galactica.client.vfx.star.StarDiscRenderer;
+import dev.galactica.client.vfx.star.StarVisual;
 import dev.galactica.nav.Frames;
 import dev.galactica.nav.GalacticPos;
 import dev.galactica.nav.NavState;
@@ -161,6 +163,10 @@ public final class SurfaceSkyOverlay {
         if (mc.level == null || mc.level.dimension() != Galactica.SPACE) SurfaceClipmap.releaseAll();
     }
 
+    /** The local star drawn by the GPU plasma shader instead of a flat disc sprite. */
+    private static StarVisual sunVisual;
+    private static Star sunVisualStar;
+
     /** Call after vanilla's sky pass has closed, with the frame's extracted sky state. */
     public static void render(SkyRenderState state) {
         Minecraft mc = Minecraft.getInstance();
@@ -211,10 +217,20 @@ public final class SurfaceSkyOverlay {
         double dStar = starPos.distanceMetres(eye);
         double magStar = star.absoluteMagnitude() + 5 * Math.log10(dStar / (10 * Units.PARSEC));
         float[] rgb = new float[3];
+        boolean starGpu = false;
+        double starAng = 0;
         if (star.kind() != StarKind.BLACK_HOLE) {
             Blackbody.linearRgb(star.temperature(), rgb);
             double ang = Math.asin(Math.min(1, star.radiusMetres() / dStar));
-            list.add(quad(sun, Math.min(1.2, Math.max(2 * ang, 4 * DOT_SIZE)), argb(rgb[0], rgb[1], rgb[2], rain)));
+            starAng = ang;
+            if (StarDiscRenderer.wants(ang)) {
+                if (sunVisual == null || !star.equals(sunVisualStar)) {
+                    sunVisual = StarVisual.from(star);
+                    sunVisualStar = star;
+                }
+                starGpu = StarDiscRenderer.prepare(sunVisual, ang, rain);
+            }
+            if (!starGpu) list.add(quad(sun, Math.min(1.2, Math.max(2 * ang, 4 * DOT_SIZE)), argb(rgb[0], rgb[1], rgb[2], rain)));
         }
         for (Body planet : cachedSystem) {
             addBody(list, star, starPos, eye, here, planet, null, t, m, magStar, washout, rain);
@@ -245,6 +261,7 @@ public final class SurfaceSkyOverlay {
             RenderSystem.bindDefaultUniforms(pass);
             if (dome != null) draw(pass, idx, modelView, dome, domeIndices, 0, whiteView, clamp, new Vector4f(1, 1, 1, 1));
             if (galaxyAlpha > 0.01f) draw(pass, idx, galaxyView4, sphere, sphereIndices, 0, galaxyView, wrapU, new Vector4f(1, 1, 1, galaxyAlpha));
+            if (starGpu) StarDiscRenderer.draw(pass, modelView, (float) sun[0], (float) sun[1], (float) sun[2], starAng, sunVisual);
             if (quads != null) draw(pass, idx, modelView, quads, quadIndices, 0, discView, clamp, new Vector4f(1, 1, 1, 1));
             for (int i = 0; i < PAINTED.size(); i++) {
                 Painted p = PAINTED.get(i);

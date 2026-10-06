@@ -154,6 +154,7 @@ public final class LodColumnPlan {
             case SMOOTH_BASALT -> "minecraft:smooth_basalt";
             case WATER -> "minecraft:water";
             case LAVA -> "minecraft:lava";
+            case COARSE_DIRT -> "minecraft:coarse_dirt";
         };
     }
 }

@@ -19,7 +19,7 @@ public record NavState(GalacticPos origin, double speed, double maxSpeed, double
 
     /** A new player's space frame starts in high Earth orbit at J2000. */
     public static NavState initial() {
-        return new NavState(Frames.nearEarth(0.0), 0.0, Frames.DEFAULT_MAX_SPEED, 0.0);
+        return new NavState(Frames.nearEarth(0.0), 0.0, dev.galactica.config.GalacticaConfigs.get().warpMaxPcPerS() * dev.galactica.science.Units.PARSEC, 0.0);
     }
 
     public NavState withOrigin(GalacticPos o) {

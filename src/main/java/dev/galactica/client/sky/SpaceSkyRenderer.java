@@ -12,6 +12,8 @@ import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.renderpearl.api.textures.GpuSampler;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import dev.galactica.client.vfx.star.StarDiscRenderer;
+import dev.galactica.client.vfx.star.StarVisual;
 import dev.galactica.nav.Frames;
 import dev.galactica.nav.GalacticPos;
 import dev.galactica.nav.Neighbourhood;
@@ -64,6 +66,12 @@ public final class SpaceSkyRenderer {
     private static GpuBuffer near;
     private static int nearIndices;
     private static float galaxyDim = 1f;
+    /** The system star drawn by the GPU plasma shader this frame instead of a flat disc sprite. */
+    private static StarVisual nearVisual;
+    private static Star nearVisualStar;
+    private static boolean starGpu;
+    private static float[] starDir = new float[3];
+    private static double starAng;
     private static GpuBuffer planets;
     private static final List<Resolved> RESOLVED = new ArrayList<>();
     /** On-screen pixels per radian at the default 70° FOV on a 1080-line window. */
@@ -90,10 +98,13 @@ public final class SpaceSkyRenderer {
         if (st != null) rebuildStars(st.stars());
         if (sphere == null) buildSphere();
         PlanetSprites.beginFrame();
+        NearPlanetRenderer.beginFrame();
         rebuildNear(mgr);
         rebuildPlanets();
+        NearPlanetRenderer.endFrame();
         PlanetSprites.evict();
         dev.galactica.client.exotic.ExoticOverlay.prepare(mgr.viewer(), mgr.nav() != null ? mgr.nav().timeSeconds() : 0);
+        dev.galactica.client.exotic.NebulaCloseUp.prepare(mgr.viewer());
 
         // Resolve every texture first: creating a DynamicTexture uploads it, and uploads are
         // commands that are illegal while a render pass is open.
@@ -110,11 +121,14 @@ public final class SpaceSkyRenderer {
             RenderSystem.bindDefaultUniforms(pass);
             draw(pass, quads, modelView, sphere, sphereIndices, galaxyView, wrapU,
                     new Vector4f(galaxyDim, galaxyDim, galaxyDim, 1f), "Milky Way");
+            dev.galactica.client.exotic.NebulaCloseUp.draw(pass, quads, modelView, galaxyDim);
             if (stars != null) {
                 draw(pass, quads, modelView, stars, starIndices, psfView, clamp,
                         new Vector4f(1, 1, 1, Math.min(1f, 0.25f + 0.75f * galaxyDim)), "Stars");
             }
+            NearPlanetRenderer.drawSky(pass, quads, modelView);
             dev.galactica.client.exotic.ExoticOverlay.draw(pass, quads, modelView);
+            if (starGpu) StarDiscRenderer.draw(pass, modelView, starDir[0], starDir[1], starDir[2], starAng, nearVisual);
             if (near != null && nearIndices > 0) {
                 draw(pass, quads, modelView, near, nearIndices, discView, clamp,
                         new Vector4f(1, 1, 1, 1), "Near bodies");
@@ -133,6 +147,7 @@ public final class SpaceSkyRenderer {
                 pass.drawIndexed(6, 1, 0, i * 4, 0);
                 pass.popDebugGroup();
             }
+            NearPlanetRenderer.draw(pass, quads, modelView);
         }
     }
 
@@ -205,6 +220,7 @@ public final class SpaceSkyRenderer {
             nearIndices = 0;
         }
         galaxyDim = 1f;
+        starGpu = false;
         RESOLVED.clear();
         GalacticPos eye = mgr.viewer();
         if (eye == null) return;
@@ -225,8 +241,21 @@ public final class SpaceSkyRenderer {
         if (star.kind() != StarKind.BLACK_HOLE) {
             Blackbody.linearRgb(star.temperature(), rgb);
             double ang = Math.asin(Math.min(1, star.radiusMetres() / dStar));
-            double size = Math.max(ang * 2.0, psfSize(magStar));
-            addBody(quads, eye, sp, Math.min(size, 1.2), argb(rgb[0], rgb[1], rgb[2], 1f));
+            if (StarDiscRenderer.wants(ang)) {
+                if (nearVisual == null || !star.equals(nearVisualStar)) {
+                    nearVisual = StarVisual.from(star);
+                    nearVisualStar = star;
+                }
+                double[] g = sp.metresFrom(eye);
+                double[] mc = Frames.galacticToMc(g[0], g[1], g[2]);
+                starDir = new float[] {(float) mc[0], (float) mc[1], (float) mc[2]};
+                starAng = ang;
+                starGpu = StarDiscRenderer.prepare(nearVisual, ang);
+            }
+            if (!starGpu) {
+                double size = Math.max(ang * 2.0, psfSize(magStar));
+                addBody(quads, eye, sp, Math.min(size, 1.2), argb(rgb[0], rgb[1], rgb[2], 1f));
+            }
             // A sun brighter than the full Moon washes the Milky Way out, as for a camera exposed for it.
             galaxyDim = (float) Math.max(0.12, Math.min(1.0, (magStar + 13.0) / 12.0));
         }
@@ -237,6 +266,7 @@ public final class SpaceSkyRenderer {
             double d = l.pos().distanceMetres(eye);
             if (d < b.radiusMetres()) continue;
             double ang = Math.asin(b.radiusMetres() / d);
+            if (NearPlanetRenderer.offer(b, ang, star, l.pos(), sp, eye, t)) continue;
             // Reflected light: F_p/F_star = A·R²·D² / (2π·a²·d²)·phase, with D the star distance, a the orbit radius.
             double a = l.pos().distanceMetres(sp);
             double ratio = b.albedo() * b.radiusMetres() * b.radiusMetres() * dStar * dStar / (2 * Math.PI * a * a * d * d) * 0.5;

@@ -113,7 +113,8 @@ public final class TransferClient {
      */
     public static boolean consumeArmed(ResourceKey<Level> entering) {
         long now = System.nanoTime();
-        boolean armed = armedUntil != 0 && now < armedUntil && armedFor != null && armedFor.equals(entering);
+        boolean armed = armedUntil != 0 && now < armedUntil && armedFor != null && armedFor.equals(entering)
+                && dev.galactica.config.GalacticaConfigs.get().seamlessTransitions();
         disarm();
         if (armed) switchedAt = now;
         return armed;

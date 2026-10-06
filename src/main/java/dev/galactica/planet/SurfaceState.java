@@ -13,7 +13,7 @@ import net.minecraft.network.codec.StreamCodec;
  * @param slot       surface dimension index, galactica:surface_N
  * @param address    the body that slot holds
  * @param descending true from an unsuited-flight (EVA) entry until first touchdown: flight is
- *                   allowed for the descent from Y 600 and taken away on landing in survival
+ *                   allowed for the descent from Y 1500 (ENTRY_Y) and taken away on landing in survival
  */
 public record SurfaceState(int slot, PlanetAddress address, boolean descending) {
 

@@ -30,6 +30,6 @@
     "bobby": "*",
     "modmenu": "*",
     "yet_another_config_lib_v3": "*",
-    "geckolib": ">=5.5.7"
+    "geckolib": ">=5.5.7 <5.6"
   }
 }

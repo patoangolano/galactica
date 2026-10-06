@@ -73,7 +73,7 @@ public final class StarDiscRenderer {
 
     /** Whether a star at this angular radius should use the shader rather than a PSF dot. */
     public static boolean wants(double angularRadiusRad) {
-        return angularRadiusRad > MIN_ANGULAR_RADIUS && available();
+        return angularRadiusRad > MIN_ANGULAR_RADIUS && dev.galactica.config.GalacticaConfigs.get().starPlasma() && available();
     }
 
     public static boolean prepare(StarVisual visual, double angularRadiusRad) {

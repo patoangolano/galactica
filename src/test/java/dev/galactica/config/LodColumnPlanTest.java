@@ -76,7 +76,7 @@ class LodColumnPlanTest {
 
     @Test
     void coarseColumnsUseMeanGradientForSlope() {
-        TerrainSampler terran = new TerrainSampler(BodyType.TERRAN, 1L, 1.0, SurfaceGrid.of(1.0e5), false, false);
+        TerrainSampler terran = new TerrainSampler(new dev.galactica.planet.PlanetMacro(BodyType.TERRAN, 1L, true, 0.3), 1.0, SurfaceGrid.of(1.0e5), false, false);
         LodColumnPlan plan = new LodColumnPlan();
         int h = TerrainSampler.SEA_LEVEL + 20;
         // A 10-block rise across a 16-block LOD column is gentle (≈0.6 per block): grass, not bare stone.
@@ -93,7 +93,7 @@ class LodColumnPlanTest {
         assertEquals(3, LodColumnPlan.perBlockSlope(40, 16), "2.5 rounds half up");
         assertEquals(3, LodColumnPlan.perBlockSlope(44, 16));
         assertEquals(7, LodColumnPlan.perBlockSlope(7, 1), "full detail keeps the raw step");
-        TerrainSampler terran = new TerrainSampler(BodyType.TERRAN, 1L, 1.0, SurfaceGrid.of(1.0e5), false, false);
+        TerrainSampler terran = new TerrainSampler(new dev.galactica.planet.PlanetMacro(BodyType.TERRAN, 1L, true, 0.3), 1.0, SurfaceGrid.of(1.0e5), false, false);
         LodColumnPlan plan = new LodColumnPlan();
         int h = TerrainSampler.SEA_LEVEL + 20;
         // Mean gradient 2.06 is below the bare-rock threshold of 3: the coarse column stays grass,
