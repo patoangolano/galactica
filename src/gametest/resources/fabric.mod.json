@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "galactica-test",
+  "version": "1.0.0",
+  "name": "Galactica GameTests",
+  "description": "Dev-only Fabric server and client GameTests for Galactica. Never shipped.",
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": ["dev.galactica.gametest.GalacticaServerGameTest"],
+    "fabric-client-gametest": ["dev.galactica.gametest.GalacticaClientGameTest"]
+  },
+  "depends": {
+    "galactica": "*",
+    "fabric-gametest-api-v1": "*",
+    "fabric-client-gametest-api-v1": "*"
+  }
+}

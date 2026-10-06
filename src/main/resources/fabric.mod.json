@@ -9,8 +9,9 @@
   "icon": "assets/galactica/icon.png",
   "environment": "*",
   "entrypoints": {
-    "main": ["dev.galactica.Galactica"],
-    "client": ["dev.galactica.client.GalacticaClient"]
+    "main": ["dev.galactica.Galactica", "dev.galactica.compat.CompatBootstrap"],
+    "client": ["dev.galactica.client.GalacticaClient"],
+    "modmenu": ["dev.galactica.compat.modmenu.GalacticaModMenu"]
   },
   "mixins": [
     {"config": "galactica.client.mixins.json", "environment": "client"},
@@ -24,6 +25,11 @@
   },
   "suggests": {
     "iris": "*",
-    "sodium": "*"
+    "sodium": "*",
+    "distanthorizons": ">=3.3.4",
+    "bobby": "*",
+    "modmenu": "*",
+    "yet_another_config_lib_v3": "*",
+    "geckolib": ">=5.5.7"
   }
 }
