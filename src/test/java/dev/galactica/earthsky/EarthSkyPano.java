@@ -50,7 +50,8 @@ public final class EarthSkyPano {
         }
         String out = a[0];
         double sky = Math.toRadians(Double.parseDouble(a[1]));
-        double[] moon = a[2].equals("none") ? null : NightSkyModel.moonDirection(Math.toRadians(Double.parseDouble(a[2])));
+        double moonA = a[2].equals("none") ? Double.NaN : Math.toRadians(Double.parseDouble(a[2]));
+        double[] moon = Double.isNaN(moonA) ? null : NightSkyModel.moonDirection(moonA);
         double phase = NightSkyModel.phaseAngle(Integer.parseInt(a[3]));
         String view = a.length > 4 ? a[4] : "fisheye";
         int w = 2048, h = 1024;
@@ -157,11 +158,20 @@ public final class EarthSkyPano {
                 }
             }
         }
-        // Atmosphere veil over everything.
+        // Vanilla's moon sprite (its visible disc, flat grey-white), drawn before the veil as in game.
+        if (moon != null) {
+            for (int p = 0; p < iw * ih; p++) {
+                if (dirs[p] != null && NightSkyModel.bodyClearance(dirs[p], moonA, NightSkyModel.MOON_DISC_TAN) < 1) {
+                    img[p * 3] = 0.85; img[p * 3 + 1] = 0.86; img[p * 3 + 2] = 0.80;
+                }
+            }
+        }
+        // Atmosphere veil over everything but the sprites; the Sun opposite the Moon (vanilla's default).
         float[] t = new float[4];
+        double sunA = Double.isNaN(moonA) ? Math.PI : moonA + Math.PI;
         for (int p = 0; p < iw * ih; p++) {
             if (dirs[p] == null) continue;
-            NightSkyModel.veil(dirs[p], moon, phase, t);
+            NightSkyModel.veil(dirs[p], moonA, phase, sunA, t);
             for (int k = 0; k < 3; k++) img[p * 3 + k] = t[k] * t[3] + img[p * 3 + k] * (1 - t[3]);
         }
         BufferedImage bi = new BufferedImage(iw, ih, BufferedImage.TYPE_INT_RGB);

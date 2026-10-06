@@ -47,9 +47,10 @@ import java.util.concurrent.ForkJoinWorkerThread;
  *       (and Iris' sun-path tilt) and before the sun and moon are drawn, so the band sits behind
  *       them and never dims them.</li>
  *   <li>{@link #renderStars} runs at HEAD of {@code SkyRenderer.renderStars} and replaces vanilla's
- *       stars, then draws the atmosphere veil ({@link NightSkyModel}) over the whole night sky:
+ *       stars, then draws the atmosphere veil ({@link NightSkyModel}) over the night sky:
  *       horizon extinction, airglow and the moonlit sky that washes the band out near a bright
- *       Moon. All layers draw with {@link RenderPipelines#END_SKY} (Iris: {@code gbuffers_skytextured})
+ *       Moon. Vanilla has already drawn the sun and moon by then, so the veil is cut out over
+ *       their sprites and fades out in twilight. All layers draw with {@link RenderPipelines#END_SKY} (Iris: {@code gbuffers_skytextured})
  *       and carry their colour and opacity in textures, never in vertex colour.</li>
  * </ol>
  * Brightness follows vanilla's {@code STAR_BRIGHTNESS} attribute normalised to its night value
@@ -80,7 +81,9 @@ public final class EarthSky {
     /** Vanilla's {@code STAR_BRIGHTNESS} through the night (Timelines: 0.5 from tick 13228 to 22772). */
     public static final float NIGHT_STAR_BRIGHTNESS = 0.5f;
     /** Size of the veil texture (world-fixed equirect) and how far the Moon may move before it is recomputed. */
-    private static final int VEIL_W = 128, VEIL_H = 64;
+    private static final int VEIL_W = 256, VEIL_H = 128;
+    /** Veil jobs that may fail in a row before the veil is switched off for the session. */
+    private static final int VEIL_MAX_FAILURES = 3;
     private static final double VEIL_REFRESH_DEG = 0.4;
 
     private static CompletableFuture<EarthSkyBake.Baked> pending;
@@ -90,8 +93,10 @@ public final class EarthSky {
     private static int sphereIndices, starIndices, veilIndices;
     private static DynamicTexture veilTexture;
     private static CompletableFuture<int[]> veilJob;
-    private static double veilMoonDeg = Double.NaN;
+    private static double veilMoonDeg = Double.NaN, veilSunDeg = Double.NaN;
     private static int veilPhase = -1;
+    private static int veilFailures;
+    private static boolean veilShown;
 
     public static void initClient() {
         realNightSky = !"false".equalsIgnoreCase(System.getProperty("galactica.realNightSky", "true"));
@@ -158,29 +163,43 @@ public final class EarthSky {
      */
     private static void updateVeil(Minecraft mc) {
         if (veilJob != null && veilJob.isDone()) {
+            // The job maps its own failure to null, so getNow never rethrows here.
             int[] px = veilJob.getNow(null);
             veilJob = null;
             if (px != null) {
+                veilFailures = 0;
                 NativeImage img = veilTexture.getPixels();
                 if (img != null) {
                     for (int i = 0; i < px.length; i++) img.setPixel(i % VEIL_W, i / VEIL_W, px[i]);
                     veilTexture.upload();
+                    veilShown = true;
                 }
+            } else {
+                veilMoonDeg = Double.NaN; // retry on the next frame
+                if (++veilFailures >= VEIL_MAX_FAILURES) Galactica.LOG.error("Night sky veil failed {} times; drawing the sky without it", veilFailures);
             }
         }
-        if (veilJob != null) return;
+        if (veilJob != null || veilFailures >= VEIL_MAX_FAILURES) return;
         Camera cam = mc.gameRenderer.mainCamera();
         float pt = mc.getDeltaTracker().getGameTimeDeltaPartialTick(false);
         Float moonDeg = cam.attributeProbe().getValue(EnvironmentAttributes.MOON_ANGLE, pt);
+        Float sunDeg = cam.attributeProbe().getValue(EnvironmentAttributes.SUN_ANGLE, pt);
         MoonPhase phase = cam.attributeProbe().getValue(EnvironmentAttributes.MOON_PHASE, pt);
         double deg = moonDeg != null ? moonDeg : 0;
+        double sDeg = sunDeg != null ? sunDeg : deg + 180;
         int ph = phase != null ? phase.index() : 4;
-        if (ph == veilPhase && !Double.isNaN(veilMoonDeg) && Math.abs(deg - veilMoonDeg) < VEIL_REFRESH_DEG) return;
+        if (ph == veilPhase && !Double.isNaN(veilMoonDeg) && Math.abs(deg - veilMoonDeg) < VEIL_REFRESH_DEG
+                && Math.abs(sDeg - veilSunDeg) < VEIL_REFRESH_DEG) return;
         veilMoonDeg = deg;
+        veilSunDeg = sDeg;
         veilPhase = ph;
-        double[] moonDir = NightSkyModel.moonDirection(Math.toRadians(deg));
+        double moonRad = Math.toRadians(deg), sunRad = Math.toRadians(sDeg);
         double phaseAngle = NightSkyModel.phaseAngle(ph);
-        veilJob = CompletableFuture.supplyAsync(() -> NightSkyModel.veilTexture(VEIL_W, VEIL_H, moonDir, phaseAngle));
+        veilJob = CompletableFuture.supplyAsync(() -> NightSkyModel.veilTexture(VEIL_W, VEIL_H, moonRad, phaseAngle, sunRad))
+                .exceptionally(ex -> {
+                    Galactica.LOG.error("Night sky veil computation failed", ex);
+                    return null;
+                });
     }
 
     /** STAR_BRIGHTNESS normalised to full night: 1 at night, fading to 0 by day. */
@@ -214,7 +233,7 @@ public final class EarthSky {
             Vector4f colour = new Vector4f(1f, 1f, 1f, night(starBrightness));
             draw(pass, modelView, stars, starIndices, starTexture.getTextureView(), SkyTextures.linearClamp(), colour, "Real stars");
         }
-        if (veil != null && veilPhase >= 0) {
+        if (veil != null && veilShown && veilFailures < VEIL_MAX_FAILURES) {
             // World-fixed: the camera's rotation only, none of the sky's turning.
             Matrix4f view = new Matrix4f(RenderSystem.getModelViewStack());
             draw(pass, view, veil, veilIndices, veilTexture.getTextureView(), SkyTextures.linearWrapU(),

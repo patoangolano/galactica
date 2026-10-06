@@ -26,6 +26,16 @@ import dev.galactica.sky.GalaxySkyBaker;
  * light dimmed by T on the way down the visible fraction is V = T / F^0.4 (the eye adapts
  * partly to a brighter sky, so contrast falls more slowly than 1/F; Blackwell 1946). The veil drawn over the night sky has opacity
  * 1 − V and adds the sky's own glow (greenish airglow low down, blue-white moonlight near the Moon).
+ *
+ * <p><b>Sun and Moon stay clear.</b> The veil is drawn after vanilla's sun and moon, so it is cut
+ * out over their sprites ({@link #bodyClearance}): vanilla's visible disc fills the middle 16 of the
+ * sun sprite's 32 px (quad half-width 30 at height 100, so ±8.5°) and 14 of the moon's 32 px (half-width
+ * 20, so ±5.0°); the cut-out is that square in the body's own frame, feathered over the outer quarter of
+ * it (inside the disc, so no unveiled halo rings the sprite; the limb is veiled a little, like glare).
+ * It also fades out with the Sun above −{@value #TWILIGHT_END_DEG}° ({@link #twilightWeight}): in
+ * civil and nautical twilight scattered sunlight, which vanilla's sky colour and sunset fan
+ * already paint, outshines airglow and moonlight, and the dark-sky model no longer applies
+ * (the sky darkens to its night value as the Sun sinks from 0° to about −12°; Patat 2003, A&amp;A 400, 1183).
  */
 public final class NightSkyModel {
     private NightSkyModel() {}
@@ -41,6 +51,12 @@ public final class NightSkyModel {
     static final double CONTRAST_EXPONENT = 0.4;
     private static final float[] AIRGLOW = {0.62f, 0.72f, 0.60f};
     private static final float[] MOONLIGHT = {0.60f, 0.72f, 1.00f};
+    /** Tangent of the half-width of the visible disc in vanilla's sun and moon sprites (see class doc). */
+    public static final double SUN_DISC_TAN = 30.0 * 16 / 32 / 100, MOON_DISC_TAN = 20.0 * 14 / 32 / 100;
+    /** Feather of the cut-out: the veil returns from this fraction of the disc half-width out to its edge. */
+    static final double CLEAR_FEATHER_START = 0.75;
+    /** Solar altitude (deg below the horizon) by which the veil reaches full strength. */
+    public static final double TWILIGHT_END_DEG = 12.0;
 
     /** Relative airmass at apparent altitude {@code altDeg} (Kasten &amp; Young 1989); clamped below −2°. */
     public static double airmass(double altDeg) {
@@ -91,6 +107,56 @@ public final class NightSkyModel {
      * @param moonDir unit world direction of the Moon (y up), or null for no Moon
      */
     public static void veil(double[] dir, double[] moonDir, double phaseDeg, float[] out) {
+        veilCore(dir, moonDir, phaseDeg, out);
+    }
+
+    /**
+     * {@link #veil(double[], double[], double, float[])} with the sun and moon sprites cut out and
+     * the twilight fade. Bodies are given by vanilla's angles (radians; NaN = absent), because the
+     * cut-out needs the sprite's own frame, not just its direction.
+     */
+    public static void veil(double[] dir, double moonAngleRad, double phaseDeg, double sunAngleRad, float[] out) {
+        double[] moonDir = Double.isNaN(moonAngleRad) ? null : moonDirection(moonAngleRad);
+        veilCore(dir, moonDir, phaseDeg, out);
+        if (out[3] == 0) return;
+        double keep = 1;
+        if (!Double.isNaN(sunAngleRad)) {
+            keep *= twilightWeight(Math.toDegrees(Math.asin(Math.max(-1, Math.min(1, Math.cos(sunAngleRad))))));
+            keep *= bodyClearance(dir, sunAngleRad, SUN_DISC_TAN);
+        }
+        if (moonDir != null) keep *= bodyClearance(dir, moonAngleRad, MOON_DISC_TAN);
+        // Scaling alpha alone keeps the added glow (colour·alpha) in proportion.
+        out[3] = (float) (out[3] * keep);
+        if (out[3] < 1e-4f) out[0] = out[1] = out[2] = out[3] = 0;
+    }
+
+    /**
+     * 0 inside vanilla's sprite of a body at {@code angleRad}, 1 outside, feathered from
+     * {@value #CLEAR_FEATHER_START} of its half-width to its edge. The sprite is a square of half-width
+     * {@code discTan} (tangent-plane units) on the plane tangent at the body's direction
+     * b = (−sin a, cos a, 0), with sides along R<sub>y</sub>(−90°)·R<sub>x</sub>(a) of x̂ and ẑ:
+     * e<sub>x</sub> = (0, 0, 1) and e<sub>z</sub> = (−cos a, −sin a, 0).
+     */
+    public static double bodyClearance(double[] dir, double angleRad, double discTan) {
+        double s = Math.sin(angleRad), c = Math.cos(angleRad);
+        double along = -s * dir[0] + c * dir[1];
+        if (along <= 0) return 1;
+        double px = dir[2] / along, pz = (-c * dir[0] - s * dir[1]) / along;
+        double m = Math.max(Math.abs(px), Math.abs(pz)) / discTan;
+        return smoothstep(CLEAR_FEATHER_START, 1, m);
+    }
+
+    /** Veil strength with the Sun at {@code sunAltDeg}: 0 with the Sun up, 1 below −{@value #TWILIGHT_END_DEG}°. */
+    public static double twilightWeight(double sunAltDeg) {
+        return smoothstep(0, TWILIGHT_END_DEG, -sunAltDeg);
+    }
+
+    private static double smoothstep(double e0, double e1, double x) {
+        double t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+        return t * t * (3 - 2 * t);
+    }
+
+    private static void veilCore(double[] dir, double[] moonDir, double phaseDeg, float[] out) {
         double alt = Math.toDegrees(Math.asin(Math.max(-1, Math.min(1, dir[1]))));
         double dark = darkSky(alt), moon = 0;
         if (moonDir != null) {
@@ -121,13 +187,24 @@ public final class NightSkyModel {
      * since the sky shell blends in display space.
      */
     public static int[] veilTexture(int w, int h, double[] moonDir, double phaseDeg) {
+        return veilTexture(w, h, moonDir, phaseDeg, Double.NaN, Double.NaN);
+    }
+
+    /** As {@link #veilTexture(int, int, double[], double)}, with the sprite cut-outs and twilight fade when the angles are given. */
+    public static int[] veilTexture(int w, int h, double moonAngleRad, double phaseDeg, double sunAngleRad) {
+        return veilTexture(w, h, null, phaseDeg, moonAngleRad, sunAngleRad);
+    }
+
+    private static int[] veilTexture(int w, int h, double[] moonDir, double phaseDeg, double moonAngleRad, double sunAngleRad) {
+        boolean angles = !Double.isNaN(moonAngleRad) || !Double.isNaN(sunAngleRad);
         int[] argb = new int[w * h];
         double[] d = new double[3];
         float[] t = new float[4];
         for (int j = 0; j < h; j++) {
             for (int i = 0; i < w; i++) {
                 GalaxySkyBaker.equirectDirection((i + 0.5) / w, (j + 0.5) / h, d);
-                veil(d, moonDir, phaseDeg, t);
+                if (angles) veil(d, moonAngleRad, phaseDeg, sunAngleRad, t);
+                else veilCore(d, moonDir, phaseDeg, t);
                 int a = Math.round(255 * t[3]);
                 int r = Math.round(255 * t[0]), g = Math.round(255 * t[1]), b = Math.round(255 * t[2]);
                 argb[j * w + i] = (a << 24) | (r << 16) | (g << 8) | b;

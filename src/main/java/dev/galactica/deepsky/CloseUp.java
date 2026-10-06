@@ -54,7 +54,17 @@ public final class CloseUp {
      * M42: M42 itself and the Horsehead's IC 434 a few degrees away). See {@link #target}.
      */
     public static List<Target> targets(double ox, double oy, double oz, int max) {
+        return scan(ox, oy, oz, max, null);
+    }
+
+    /**
+     * {@link #targets}, also writing to {@code nearestOut[0]} the distance (pc) from the viewer to
+     * the centre of the nearest eligible object, whether or not it is a target:
+     * the scale on which the target set and the targets' directions can change.
+     */
+    static List<Target> scan(double ox, double oy, double oz, int max, double[] nearestOut) {
         List<Target> out = new ArrayList<>();
+        double nearest = Double.POSITIVE_INFINITY;
         for (DeepSkyObject o : DeepSkyCatalog.all()) {
             if (o.type == DeepSkyType.GALAXY || o.type == DeepSkyType.DARK_NEBULA || o.fields().isEmpty()) continue;
             // Bounding sphere of all the object's volumes, centred on the first.
@@ -67,13 +77,62 @@ public final class CloseUp {
             if (r > MAX_RADIUS_PC) continue;
             double vx = cx - ox, vy = cy - oy, vz = cz - oz;
             double d = Math.sqrt(vx * vx + vy * vy + vz * vz);
+            nearest = Math.min(nearest, d);
             if (d < 1.15 * r) continue;
             double theta = Math.asin(r / d);
             if (theta < MIN_ANGULAR_RADIUS || theta > MAX_ANGULAR_RADIUS) continue;
             out.add(new Target(o, new double[] {vx / d, vy / d, vz / d}, d, Math.min(MAX_HALF_ANGLE, MARGIN * theta)));
         }
         out.sort((x, y) -> Double.compare(y.halfAngle(), x.halfAngle()));
+        if (nearestOut != null) nearestOut[0] = nearest;
         return out.size() > max ? new ArrayList<>(out.subList(0, max)) : out;
+    }
+
+    /**
+     * Per-frame front end of {@link #targets}: the catalogue is rescanned only once the viewer has
+     * moved more than {@link #REFRESH} of the distance d to the nearest eligible nebula's centre.
+     * A move δ ≪ d turns the direction to any object by at most δ/d rad and, for a target
+     * (d ≥ 1.15 r), changes its angular radius θ = asin(r/d) by |dθ| = r δ / (d √(d² − r²)) ≤ 1.8 δ/d,
+     * so below this threshold neither
+     * the target set nor any repaint decision (which waits for a drift of 5 % of a half-angle of at
+     * least 1.56°, i.e. 1.4·10⁻³ rad) can change meaningfully. Not thread-safe (render thread).
+     */
+    public static final class Selector {
+        /** Fraction of the nearest centre distance the viewer may move before a rescan. */
+        public static final double REFRESH = 5e-4;
+        private double lx = Double.NaN, ly, lz, nearest;
+        private int lastMax = -1;
+        private List<Target> last = List.of();
+        private int scans;
+
+        public List<Target> targets(double ox, double oy, double oz, int max) {
+            double dx = ox - lx, dy = oy - ly, dz = oz - lz;
+            boolean moved = Double.isNaN(lx) || max != lastMax
+                    || dx * dx + dy * dy + dz * dz > (REFRESH * nearest) * (REFRESH * nearest);
+            if (moved) {
+                double[] n = new double[1];
+                last = List.copyOf(scan(ox, oy, oz, max, n));
+                nearest = n[0];
+                lx = ox;
+                ly = oy;
+                lz = oz;
+                lastMax = max;
+                scans++;
+            }
+            return last;
+        }
+
+        /** Forget the cached scan (e.g. after a jump). */
+        public void reset() {
+            lx = Double.NaN;
+            lastMax = -1;
+            last = List.of();
+        }
+
+        /** Number of catalogue scans so far (tests). */
+        public int scans() {
+            return scans;
+        }
     }
 
     /**

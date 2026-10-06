@@ -56,4 +56,71 @@ class NightSkyModelTest {
         assertTrue((tex[0] >>> 24) < 3, "zenith row clear");
         assertTrue((tex[7 * 32] >>> 24) > 200, "horizon row opaque");
     }
+
+    @Test
+    void veilLeavesVanillaSunAndMoonSpritesClear() {
+        float[] t = new float[4];
+        // Full Moon 30 degrees above the western horizon (vanilla moon angle 60 degrees), Sun far below.
+        double moonA = Math.toRadians(60), sunA = moonA + Math.PI;
+        double[] moon = NightSkyModel.moonDirection(moonA);
+        NightSkyModel.veil(moon, moonA, 0, sunA, t);
+        assertEquals(0, t[3], 1e-6, "centre of the Moon");
+        // Just inside the sprite's visible disc (±5.0 deg): still clear.
+        double[] edge = tilt(moon, new double[] {0, 0, 1}, Math.toDegrees(Math.atan(0.7 * NightSkyModel.MOON_DISC_TAN)));
+        NightSkyModel.veil(edge, moonA, 0, sunA, t);
+        assertEquals(0, t[3], 1e-6, "inner disc");
+        // 12 deg away: the moonlit sky veils the band as before the cut-out.
+        double[] off = tilt(moon, new double[] {0, 0, 1}, 12);
+        float[] ref = new float[4];
+        NightSkyModel.veil(off, moon, 0, ref);
+        NightSkyModel.veil(off, moonA, 0, sunA, t);
+        assertTrue(ref[3] > 0.5, "moonlit glare " + ref[3]);
+        assertEquals(ref[3], t[3], 1e-6);
+        // The square follows the sprite's frame: 4.8 deg out along its diagonal (past 0.7 of the 5.0 deg edge distance) is still clear.
+        assertEquals(0, NightSkyModel.bodyClearance(tilt(tilt(moon, new double[] {0, 0, 1}, 3.4), new double[] {-Math.cos(moonA), -Math.sin(moonA), 0}, 3.4),
+                moonA, NightSkyModel.MOON_DISC_TAN), 0.05);
+        assertEquals(1, NightSkyModel.bodyClearance(new double[] {-moon[0], -moon[1], -moon[2]}, moonA, NightSkyModel.MOON_DISC_TAN));
+    }
+
+    @Test
+    void veilFadesOutInTwilightAndSparesTheSettingSun() {
+        assertEquals(0, NightSkyModel.twilightWeight(5));
+        assertEquals(0, NightSkyModel.twilightWeight(0));
+        assertEquals(0.5, NightSkyModel.twilightWeight(-6), 1e-9);
+        assertEquals(1, NightSkyModel.twilightWeight(-NightSkyModel.TWILIGHT_END_DEG));
+        float[] t = new float[4];
+        double[] horizon = {-1, 0.02, 0};
+        // Sun 3 degrees below the western horizon: the horizon there is not darkened over the sunset.
+        double sunA = Math.toRadians(93);
+        NightSkyModel.veil(horizon, sunA + Math.PI, 180, sunA, t);
+        assertTrue(t[3] < 0.1, "dusk horizon " + t[3]);
+        // Deep night: the horizon is thick again.
+        sunA = Math.toRadians(150);
+        NightSkyModel.veil(horizon, sunA + Math.PI, 180, sunA, t);
+        assertTrue(t[3] > 0.9, "night horizon " + t[3]);
+        // A sun sprite at the horizon at sunset is cut out even if the veil were at full strength.
+        double[] sun = NightSkyModel.moonDirection(Math.toRadians(90));
+        assertEquals(0, NightSkyModel.bodyClearance(sun, Math.toRadians(90), NightSkyModel.SUN_DISC_TAN));
+        // Angle-based texture: the Moon's texel is clear.
+        int w = 256, h = 128;
+        int[] tex = NightSkyModel.veilTexture(w, h, Math.toRadians(60), 0, Math.toRadians(240));
+        double[] d = new double[3];
+        double[] moon = NightSkyModel.moonDirection(Math.toRadians(60));
+        int best = 0;
+        double bestDot = -2;
+        for (int p = 0; p < w * h; p++) {
+            dev.galactica.sky.GalaxySkyBaker.equirectDirection((p % w + 0.5) / w, (p / w + 0.5) / h, d);
+            double dot = d[0] * moon[0] + d[1] * moon[1] + d[2] * moon[2];
+            if (dot > bestDot) { bestDot = dot; best = p; }
+        }
+        assertEquals(0, tex[best] >>> 24, "Moon texel");
+    }
+
+    /** {@code v} turned by {@code deg} towards the unit vector {@code towards} (perpendicular to v). */
+    private static double[] tilt(double[] v, double[] towards, double deg) {
+        double r = Math.toRadians(deg), c = Math.cos(r), s = Math.sin(r);
+        double[] o = {v[0] * c + towards[0] * s, v[1] * c + towards[1] * s, v[2] * c + towards[2] * s};
+        double n = Math.sqrt(o[0] * o[0] + o[1] * o[1] + o[2] * o[2]);
+        return new double[] {o[0] / n, o[1] / n, o[2] / n};
+    }
 }

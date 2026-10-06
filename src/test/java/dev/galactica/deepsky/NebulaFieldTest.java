@@ -161,6 +161,27 @@ class NebulaFieldTest {
     }
 
     @Test
+    void closeUpSelectorRescansOnlyAfterARealMove() {
+        double[] eye = DeepSkyCatalog.lb(209.01, -19.38, 359);
+        CloseUp.Selector sel = new CloseUp.Selector();
+        List<CloseUp.Target> first = sel.targets(eye[0], eye[1], eye[2], 2);
+        assertEquals(1, sel.scans());
+        assertEquals(CloseUp.targets(eye[0], eye[1], eye[2], 2).size(), first.size());
+        // A few metres of flight (5e-14 pc ≈ 1.5 m) reuses the scan; the same list comes back.
+        for (int i = 0; i < 100; i++) assertSame(first, sel.targets(eye[0] + i * 5e-14, eye[1], eye[2], 2));
+        assertEquals(1, sel.scans());
+        // A 1 pc hop (2 % of the 53 pc to M42) rescans and matches a direct scan.
+        List<CloseUp.Target> moved = sel.targets(eye[0] + 1, eye[1], eye[2], 2);
+        assertEquals(2, sel.scans());
+        List<CloseUp.Target> direct = CloseUp.targets(eye[0] + 1, eye[1], eye[2], 2);
+        assertEquals(direct.size(), moved.size());
+        for (int i = 0; i < direct.size(); i++) assertEquals(direct.get(i).object().id, moved.get(i).object().id);
+        sel.reset();
+        sel.targets(eye[0] + 1, eye[1], eye[2], 2);
+        assertEquals(3, sel.scans());
+    }
+
+    @Test
     void highlightCompressionKeepsTheBandAndOrder() {
         int w = 64, h = 32;
         float[] img = new float[w * h * 3];

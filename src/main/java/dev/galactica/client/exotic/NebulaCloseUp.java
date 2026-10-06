@@ -12,10 +12,12 @@ import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import dev.galactica.Galactica;
 import dev.galactica.client.sky.SkyTextures;
+import dev.galactica.client.sky.SpaceSkyRenderer;
 import dev.galactica.deepsky.CloseUp;
 import dev.galactica.nav.Frames;
 import dev.galactica.nav.GalacticPos;
 import dev.galactica.sky.GalaxySkyBaker;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import org.joml.Matrix4f;
@@ -46,6 +48,10 @@ import java.util.concurrent.Executors;
  * before the pass opens, uploads finished paints and queues a new one when the viewer has moved
  * enough for a patch to drift by a twentieth of its half-angle or change size by 5 %; an image is
  * kept until its replacement is uploaded, and dropped when its nebula is no longer a target.
+ * The target list is rescanned only after the viewer has moved by {@link CloseUp.Selector#REFRESH}
+ * of the nearest nebula's distance, and the vertex buffer is rebuilt only when a patch changes.
+ * Every texture is freed once the player leaves the space dimension (tick hook registered by
+ * {@link #initClient}, called from {@link ExoticOverlay#initClient}).
  */
 public final class NebulaCloseUp {
     private NebulaCloseUp() {}
@@ -79,25 +85,32 @@ public final class NebulaCloseUp {
     private static final GalaxySkyBaker BAKER = new GalaxySkyBaker(Frames.GALAXY_SEED);
     private static final Map<String, Entry> ENTRIES = new LinkedHashMap<>();
     private static final List<Entry> DRAWN = new ArrayList<>();
+    private static final List<Entry> NEXT = new ArrayList<>();
+    private static final CloseUp.Selector SELECTOR = new CloseUp.Selector();
     private static int generation;
     private static GpuBuffer quads;
+    /** Set when a patch is uploaded or dropped: the quads must be rebuilt. */
+    private static boolean quadsDirty;
+
+    /** Registers the tick hook that frees every close-up once the player leaves the space dimension (or the world). */
+    static void initClient() {
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+            if ((!ENTRIES.isEmpty() || quads != null) && !SpaceSkyRenderer.active()) clear();
+        });
+    }
 
     /**
      * Before the sky pass opens (from {@code SpaceSkyRenderer.render()}, next to
      * {@code ExoticOverlay.prepare}): picks the targets, uploads finished paints, queues new ones.
      */
     public static void prepare(GalacticPos eye) {
-        if (quads != null) {
-            quads.close();
-            quads = null;
-        }
-        DRAWN.clear();
         if (eye == null) {
             clear();
             return;
         }
+        NEXT.clear();
         double ox = eye.xPc(), oy = eye.yPc(), oz = eye.zPc();
-        List<CloseUp.Target> targets = CloseUp.targets(ox, oy, oz, MAX_TARGETS);
+        List<CloseUp.Target> targets = SELECTOR.targets(ox, oy, oz, MAX_TARGETS);
         List<String> ids = new ArrayList<>();
         for (CloseUp.Target t : targets) ids.add(t.object().id);
         // Forget nebulae that are no longer targets.
@@ -109,6 +122,7 @@ public final class NebulaCloseUp {
             if (e.job != null) e.job.cancel(false);
             if (e.texture != null) e.texture.close();
             it.remove();
+            quadsDirty = true;
         }
         boolean queued = false;
         for (Entry e : ENTRIES.values()) if (e.job != null) queued = true;
@@ -141,9 +155,18 @@ public final class NebulaCloseUp {
                     return null;
                 });
             }
-            if (e.texture != null) DRAWN.add(e);
+            if (e.texture != null) NEXT.add(e);
         }
-        if (!DRAWN.isEmpty()) buildQuads();
+        if (quadsDirty || !NEXT.equals(DRAWN)) {
+            DRAWN.clear();
+            DRAWN.addAll(NEXT);
+            if (quads != null) {
+                quads.close();
+                quads = null;
+            }
+            if (!DRAWN.isEmpty()) buildQuads();
+            quadsDirty = false;
+        }
     }
 
     /** Inside the pass, right after the Milky Way layer and before the stars; {@code dim} is the Milky Way's dimming. */
@@ -173,6 +196,9 @@ public final class NebulaCloseUp {
         }
         ENTRIES.clear();
         DRAWN.clear();
+        NEXT.clear();
+        SELECTOR.reset();
+        quadsDirty = false;
         if (quads != null) {
             quads.close();
             quads = null;
@@ -202,6 +228,7 @@ public final class NebulaCloseUp {
         e.texture.upload();
         e.forward = p.forwardMc();
         e.half = p.halfAngle();
+        quadsDirty = true;
     }
 
     private static void buildQuads() {
