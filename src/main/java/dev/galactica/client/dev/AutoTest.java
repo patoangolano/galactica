@@ -54,7 +54,12 @@ public final class AutoTest {
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
-        cmd(0, "galactica kit"); // unsuited, life support (correctly) kills the test pilot in seconds
+        // M6: the real night sky over the Overworld (Milky Way from Sol, real bright stars).
+        cmd(0, "time set midnight");
+        look(60, 0, -60);   shot(5, "00a_earth_night_up");
+        look(20, 90, -25);  shot(5, "00b_earth_night_east");
+        look(20, 270, -25); shot(5, "00c_earth_night_west");
+        cmd(5, "galactica kit"); // unsuited, life support (correctly) kills the test pilot in seconds
         cmd(10, "galactica launch");
         look(160, 90, 0);   shot(5, "01_earth_orbit_towards_gc");
         look(20, -90, 0);   shot(5, "02_earth_orbit_anticentre");
@@ -69,6 +74,22 @@ public final class AutoTest {
         lookAtBody(60, "Saturn");  shot(5, "07_saturn_close");
         cmd(20, "galactica goto Betelgeuse");
         lookAtNearest(200); shot(5, "08_betelgeuse");
+        // M5: spectrum of the target in the crosshair, then the codex.
+        lookAtNearestExact(5);
+        STEPS.add(new Step(5, () -> {
+            Galactica.LOG.info("[autotest] spectrometer scan");
+            dev.galactica.discovery.SpectrometerItem.scanHook.run();
+        }));
+        shot(60, "08b_spectrum_betelgeuse");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(new dev.galactica.client.discovery.CodexScreen())));
+        shot(20, "08c_codex");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(null)));
+        // M6: deep sky up close.
+        visitGalactic(20, 209.01, -19.38, 360, "08d_orion_nebula", 412);
+        visitGalactic(20, 166.57, -23.52, 118, "08e_pleiades", 136);
+        cmd(20, "galactica goto Sagittarius A*");
+        STEPS.add(new Step(200, () -> aimAt(SkyManager.get().viewer(), GalacticPos.ofParsecs(0, 0, 0), 0f)));
+        shot(5, "08f_sgr_a_star");
         cmd(20, "galactica coords 4000 -2500 15");
         look(200, 90, 0);   shot(5, "09_inner_disk_towards_gc");
         cmd(20, "galactica coords 300 200 400");
@@ -299,6 +320,26 @@ public final class AutoTest {
             }
             Galactica.LOG.warn("[autotest] body {} not found", name);
         }));
+    }
+
+    /** Like lookAtNearest but dead on target (the spectrometer needs the crosshair on it). */
+    private static void lookAtNearestExact(int wait) {
+        STEPS.add(new Step(wait, () -> {
+            SkyManager mgr = SkyManager.get();
+            GalacticPos eye = mgr.viewer();
+            if (eye == null) return;
+            Star s = mgr.neighbourhood().nearestStar(eye);
+            if (s != null) aimAt(eye, Neighbourhood.starPos(s), 0f);
+        }));
+    }
+
+    /** Flies to {@code standPc} from Sol along galactic (l, b) and looks at the object at {@code objectPc}. */
+    private static void visitGalactic(int wait, double l, double b, double standPc, String shotName, double objectPc) {
+        double[] stand = dev.galactica.galaxy.StarCatalog.galacticToGalactocentric(l, b, standPc);
+        double[] obj = dev.galactica.galaxy.StarCatalog.galacticToGalactocentric(l, b, objectPc);
+        cmd(wait, String.format(java.util.Locale.ROOT, "galactica coords %.3f %.3f %.3f", stand[0], stand[1], stand[2]));
+        STEPS.add(new Step(220, () -> aimAt(SkyManager.get().viewer(), GalacticPos.ofParsecs(obj[0], obj[1], obj[2]), 0f)));
+        shot(5, shotName);
     }
 
     /** Aims at a galactic position; {@code offsetDeg} keeps small targets out from under the crosshair. */

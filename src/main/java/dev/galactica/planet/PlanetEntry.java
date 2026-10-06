@@ -265,7 +265,10 @@ public final class PlanetEntry {
             p.onUpdateAbilities();
         }
         p.setAttached(SURFACE, new SurfaceState(slot, addr, eva && !keepsFlight));
-        ARRIVALS.put(p.getUUID(), new Arrival(p.level().getServer().getTickCount(), p.getRootVehicle().getY()));
+        // The descent starts at the entry altitude. Reading the position here is unsafe: a cross-dimension
+        // teleport may not have moved the player yet, and a stale low Y from the last planet would end the
+        // descent flight at once and drop the player from ENTRY_Y.
+        ARRIVALS.put(p.getUUID(), new Arrival(p.level().getServer().getTickCount(), Math.max(ENTRY_Y, p.getRootVehicle().getY())));
         applyGravity(p, body);
         // Locale.ROOT: the server's locale must not decide the decimal mark every client reads.
         p.sendOverlayMessage(Component.translatable("galactica.planet.entering", body.name(),
