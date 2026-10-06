@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "E": "minecraft:ender_eye",
+    "A": "minecraft:amethyst_shard",
+    "N": "minecraft:nether_star"
+  },
+  "pattern": [
+    " E ",
+    "ANA",
+    " E "
+  ],
+  "result": {
+    "id": "galactica:exotic_matter",
+    "count": 16
+  }
+}
