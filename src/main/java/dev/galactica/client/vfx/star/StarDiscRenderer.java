@@ -97,7 +97,7 @@ public final class StarDiscRenderer {
             slot = new Slot();
             SLOTS.put(visual, slot);
         }
-        StarUniforms.pack(visual, angularRadiusRad, Math.max(0f, Math.min(1f, intensity)), VfxClock.seconds(), SCRATCH);
+        StarUniforms.pack(visual, angularRadiusRad, Math.max(0f, Math.min(1f, intensity)), VfxClock.elapsedSeconds(), SCRATCH);
         slot.ready = slot.ubo.upload(SCRATCH);
         slot.angularRadius = angularRadiusRad;
         slot.usedNs = System.nanoTime();
@@ -119,7 +119,9 @@ public final class StarDiscRenderer {
         Vector3f dir = new Vector3f(dirX, dirY, dirZ);
         if (dir.lengthSquared() < 1e-12f) return false;
         dir.normalize();
-        // Same tangent basis as the sky renderers' sprites; right = dir × up, up' = right × dir.
+        // right = dir x up and north = right x dir, so north is world up projected onto the sky (stellar
+        // north drawn "up"). This is the opposite sign of SpaceSkyRenderer.quadBasis' t2 (dir x t1);
+        // harmless because culling is off, and it keeps north up on screen.
         Vector3f up = Math.abs(dir.y) > 0.99f ? new Vector3f(1, 0, 0) : new Vector3f(0, 1, 0);
         Vector3f right = new Vector3f(dir).cross(up).normalize();
         Vector3f north = new Vector3f(right).cross(dir).normalize();

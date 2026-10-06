@@ -13,15 +13,21 @@ import java.nio.ByteBuffer;
  * One persistent uniform buffer rewritten with {@code writeToBuffer} (the vanilla
  * GlobalSettingsUniform pattern, "route A" in docs/recon/api_vfx_pipelines.md). The write is a
  * command, so it must happen before a render pass opens; {@link #upload} refuses otherwise.
- * Identical contents are not re-sent.
+ *
+ * <p>Identical contents are not re-sent. Blocks that carry an animation clock (such as
+ * {@code StarParams}) change every frame, so for them the check never skips; it costs one array
+ * comparison and never allocates, because the last block is kept in a preallocated copy.
  */
 public final class VfxUniformBuffer implements AutoCloseable {
     private final GpuBuffer buffer;
     private final int sizeBytes;
-    private Vec4Block last;
+    private final Vec4Block last;
+    private boolean hasLast;
 
     public VfxUniformBuffer(String label, int sizeBytes) {
+        if (sizeBytes <= 0 || sizeBytes % 16 != 0) throw new IllegalArgumentException("size must be a positive multiple of 16, got " + sizeBytes);
         this.sizeBytes = sizeBytes;
+        this.last = new Vec4Block(sizeBytes / 16);
         this.buffer = RenderSystem.getDevice().createBuffer(() -> label, GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_COPY_DST, sizeBytes);
     }
 
@@ -36,7 +42,7 @@ public final class VfxUniformBuffer implements AutoCloseable {
      */
     public GpuBufferSlice upload(Vec4Block block) {
         if (block.sizeBytes() != sizeBytes) throw new IllegalArgumentException("block is " + block.sizeBytes() + " B, buffer " + sizeBytes + " B");
-        if (block.equals(last)) return buffer.slice();
+        if (hasLast && block.equals(last)) return buffer.slice();
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         if (inRenderPass(encoder)) return null;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -45,7 +51,8 @@ public final class VfxUniformBuffer implements AutoCloseable {
             data.rewind();
             encoder.writeToBuffer(buffer.slice(), data);
         }
-        last = block.copy();
+        last.copyFrom(block);
+        hasLast = true;
         return buffer.slice();
     }
 

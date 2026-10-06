@@ -10,6 +10,7 @@
 //                         permutation polynomial of McEwan et al. 2012, J. Graphics Tools 16, 85)
 //  gx_fbm3                4-octave fractal Brownian motion of simplex noise, about [-1, 1]
 //  gx_worley3             animated cellular noise (Worley 1996): x = F1, y = F2, z = cell id in [0, 1)
+//  gx_worley3_fast        8-tap (2x2x2) cellular noise, smaller jitter; approximate F1/F2 (Gustavson 2011)
 //  gx_warp3               domain warping (Quilez 2002): p displaced by a vector fbm field
 
 float gx_hash13(vec3 p) {
@@ -118,6 +119,35 @@ vec3 gx_worley3(vec3 p, float phase) {
                     f2 = f1;
                     f1 = dd;
                     id = gx_hash13(cell + o + 17.0);
+                } else if (dd < f2) {
+                    f2 = dd;
+                }
+            }
+        }
+    }
+    return vec3(sqrt(f1), sqrt(f2), id);
+}
+
+// Cheap cellular noise: only the 2x2x2 cells around p are searched, with feature points kept in the
+// middle half of their cell (jitter 0.25) so the nearest point is almost always among them.
+// Rare F2 errors are invisible in low-contrast uses such as the supergranular network.
+vec3 gx_worley3_fast(vec3 p, float phase) {
+    vec3 base = floor(p - 0.5);
+    vec3 f = p - base;
+    float f1 = 8.0;
+    float f2 = 8.0;
+    float id = 0.0;
+    for (int z = 0; z <= 1; z++) {
+        for (int y = 0; y <= 1; y++) {
+            for (int x = 0; x <= 1; x++) {
+                vec3 o = vec3(float(x), float(y), float(z));
+                vec3 h = gx_hash33(base + o);
+                vec3 d = o + 0.5 + 0.25 * sin(phase + 6.2831853 * h) - f;
+                float dd = dot(d, d);
+                if (dd < f1) {
+                    f2 = f1;
+                    f1 = dd;
+                    id = gx_hash13(base + o + 17.0);
                 } else if (dd < f2) {
                     f2 = dd;
                 }

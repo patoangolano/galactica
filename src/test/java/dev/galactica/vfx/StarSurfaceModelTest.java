@@ -93,6 +93,19 @@ class StarSurfaceModelTest {
     }
 
     @Test
+    void solarLimbReddensLikeNeckelAndLabs() {
+        // Neckel & Labs 1994: extreme-limb/centre about 0.45 at 650 nm and 0.25 at 450 nm.
+        double[] sun = StarSurfaceModel.limbCoefficients(5750);
+        double red = StarSurfaceModel.limbIntensity(0, sun[0], sun[1], 0);
+        double green = StarSurfaceModel.limbIntensity(0, sun[0], sun[1], 1);
+        double blue = StarSurfaceModel.limbIntensity(0, sun[0], sun[1], 2);
+        assertEquals(0.45, red, 0.04, "red limb/centre");
+        assertEquals(0.25, blue, 0.04, "blue limb/centre");
+        assertTrue(red > green && green > blue, "limb reddens");
+        for (int c = 0; c < 3; c++) assertEquals(1.0, StarSurfaceModel.limbIntensity(1, sun[0], sun[1], c), 1e-12);
+    }
+
+    @Test
     void granulationContrast() {
         double sun = StarSurfaceModel.granulationContrast(SUN[0], logG(SUN));
         assertTrue(sun > 0.14 && sun < 0.19, "Sun ~16 % rms, got " + sun);

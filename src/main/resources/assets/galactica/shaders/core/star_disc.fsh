@@ -19,7 +19,7 @@ layout(location = 0) out vec4 fragColor;
 const float PI = 3.14159265;
 const float TAU = 6.28318531;
 // Limb darkening is stronger at shorter wavelengths (Neckel & Labs 1994). Matches StarSurfaceModel.LIMB_CHROMA.
-const vec3 LIMB_CHROMA = vec3(0.80, 1.00, 1.30);
+const vec3 LIMB_CHROMA = vec3(0.80, 1.00, 1.07);
 // Share of granulation contrast kept after tone mapping. Matches StarSurfaceModel.DETAIL_KEEP.
 const float DETAIL_KEEP = 0.85;
 // H-alpha 656.3 nm in linear sRGB, the colour of chromosphere and prominences.
@@ -41,14 +41,16 @@ vec3 displayDisc(vec3 base, float detail) {
 }
 
 // Differential rotation (Snodgrass & Ulrich 1990): Omega = A (1 - 0.162 sin^2 lat - 0.121 sin^4 lat).
-float rotationAngle(float sinLat, float t) {
+// The CPU passes the equatorial angle A t mod 2 pi (StarPhase.x) and the bounded, continuous shear
+// angle 0.162 A t (StarPhase.y, see StarUniforms.shearPhase), so nothing jumps when the clock wraps.
+float rotationAngle(float sinLat) {
     float s2 = sinLat * sinLat;
-    return StarGeom.w * t * (1.0 - 0.162 * s2 - 0.121 * s2 * s2);
+    return StarPhase.x - StarPhase.y * (s2 + 0.7469 * s2 * s2);
 }
 
 // View-frame normal (z toward the viewer, y = stellar north) to the co-rotating surface frame.
-vec3 toSurface(vec3 n, float t) {
-    float a = rotationAngle(n.y, t);
+vec3 toSurface(vec3 n) {
+    float a = rotationAngle(n.y);
     float c = cos(a);
     float s = sin(a);
     return vec3(c * n.x - s * n.z, n.y, s * n.x + c * n.z);
@@ -101,7 +103,7 @@ void main() {
         vec3 tint = vec3(1.0);
 
         if (!smoothSurface) {
-            vec3 q = toSurface(n, t);
+            vec3 q = toSurface(n);
             vec3 qs = q + vec3(seed * 1.7, seed * 0.3, seed * 2.9);
 
             // Granulation: Worley cells of the size set by the pressure scale height. Cells look
@@ -109,7 +111,7 @@ void main() {
             float cells = StarGran.x;
             float lod = 1.0 - smoothstep(0.18, 0.45, cells * pr / max(mu, 0.15));
             if (lod > 0.0 && StarGran.z > 0.0) {
-                float phase = TAU * t / StarGran.y;
+                float phase = StarPhase.z;                           // TAU t / lifetime, wrapped on the CPU
                 vec3 gp = qs * cells + 0.12 * vec3(gx_simplex3(qs * cells * 0.5 + vec3(0.0, 0.0, t * 0.01)));
                 vec3 w = gx_worley3(gp, phase);
                 float lane = smoothstep(0.0, 0.22, w.y - w.x);       // dark intergranular lanes
@@ -120,9 +122,10 @@ void main() {
             }
 
             // Supergranulation: the magnetic network outlines ~30-granule cells and brightens toward the limb.
+            // A 3-7 % term, so the 8-tap cellular search is enough (gx_worley3_fast).
             float superLod = 1.0 - smoothstep(0.25, 0.6, StarGran.w * pr / max(mu, 0.15));
             if (superLod > 0.0) {
-                vec3 sw = gx_worley3(qs * StarGran.w + 31.0, TAU * t / (StarGran.y * 24.0));
+                vec3 sw = gx_worley3_fast(qs * StarGran.w + 31.0, StarPhase.w);
                 float network = 1.0 - smoothstep(0.0, 0.10, sw.y - sw.x);
                 bright *= 1.0 + superLod * (0.03 + 0.04 * min(StarActive.y, 2.0)) * network * (0.4 + 0.6 * x);
             }
@@ -133,7 +136,7 @@ void main() {
                 vec4 sp = StarSpots[i];
                 if (sp.z <= 0.0) continue;
                 float sl = sin(sp.x);
-                vec3 c = onSphere(sp.x, sp.y + rotationAngle(sl, t));
+                vec3 c = onSphere(sp.x, sp.y + rotationAngle(sl));
                 float d = acos(clamp(dot(n, c), -1.0, 1.0));
                 facula += exp(-pow(d / (sp.z * 3.0), 2.0));
                 if (d > sp.z * 1.3) continue;
@@ -156,9 +159,12 @@ void main() {
 
             // Faculae: bright plage around active regions and in the activity belts, almost invisible
             // at disc centre and up to ~20 % brighter close to the limb.
-            float belt = exp(-pow((abs(q.y) - 0.35) / 0.15, 2.0)) * smoothstep(0.55, 0.85, 0.5 + 0.5 * gx_fbm3(q * 6.0 + seed));
-            float plage = min(1.0, facula + 0.3 * min(StarActive.y, 2.0) * belt) * (0.5 + 0.5 * gx_fbm3(q * cells * 0.25 + 5.0));
-            bright *= 1.0 + 0.3 * StarActive.x * plage * pow(x, 1.2);
+            // Skipped where they cannot show (no activity, or within mu > 0.97 where pow(x, 1.2) < 1 %).
+            if (StarActive.x > 0.0 && x > 0.03) {
+                float belt = exp(-pow((abs(q.y) - 0.35) / 0.15, 2.0)) * smoothstep(0.55, 0.85, 0.5 + 0.5 * gx_fbm3(q * 6.0 + seed));
+                float plage = min(1.0, facula + 0.3 * min(StarActive.y, 2.0) * belt) * (0.5 + 0.5 * gx_fbm3(q * cells * 0.25 + 5.0));
+                bright *= 1.0 + 0.3 * StarActive.x * plage * pow(x, 1.2) * smoothstep(0.03, 0.08, x);
+            }
 
             // Flare kernel.
             if (flare.w > 0.0) {
@@ -187,8 +193,9 @@ void main() {
             emit += H_ALPHA * 0.12 * (chromo + spic) * fine;
         }
         // Prominences: active-region loops and quiescent hedgerows standing on the limb, slowly churning.
+        // Tallest prominence: height 0.14 radii, shape extends to v ~ 1.5, so nothing above hp = 0.25.
         float promLod = 1.0 - smoothstep(0.01, 0.04, pr);
-        if (promLod > 0.0) {
+        if (promLod > 0.0 && hp < 0.25) {
             float prom = 0.0;
             for (int k = 0; k < 4; k++) {
                 if (float(k) >= StarChromo.w) break;

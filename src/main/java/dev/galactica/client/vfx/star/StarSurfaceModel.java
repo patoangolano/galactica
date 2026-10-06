@@ -122,9 +122,17 @@ public final class StarSurfaceModel {
     /**
      * Wavelength factors applied to (a, b) per display channel: darkening is stronger in the blue,
      * which reddens the limb (Neckel &amp; Labs 1994, Sol. Phys. 153, 91: limb/centre ≈ 0.45 at 650 nm,
-     * 0.25 at 450 nm for the Sun). Must match {@code LIMB_CHROMA} in star_disc.fsh.
+     * 0.25 at 450 nm for the Sun). With the solar V-band (a, b) = (0.44, 0.26), a + b = 0.70, so the
+     * factors 0.80 and 1.07 give limb/centre 1 - 0.80*0.70 = 0.44 (red) and 1 - 1.07*0.70 = 0.25 (blue).
+     * Must match {@code LIMB_CHROMA} in star_disc.fsh.
      */
-    public static final double[] LIMB_CHROMA = {0.80, 1.00, 1.30};
+    public static final double[] LIMB_CHROMA = {0.80, 1.00, 1.07};
+
+    /** Display-channel (0 = R, 1 = G, 2 = B) limb intensity, floored at 0.03 as in star_disc.fsh. */
+    public static double limbIntensity(double mu, double a, double b, int channel) {
+        double k = LIMB_CHROMA[channel];
+        return Math.max(0.03, limbIntensity(mu, a * k, b * k));
+    }
 
     // ------------------------------------------------------------------ display transform
 

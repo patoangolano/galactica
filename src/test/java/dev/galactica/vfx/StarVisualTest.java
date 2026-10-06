@@ -14,6 +14,7 @@ import java.nio.ByteOrder;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StarVisualTest {
@@ -79,11 +80,13 @@ class StarVisualTest {
 
     @Test
     void uniformLayoutMatchesTheGlslBlock() {
-        assertEquals(15, StarUniforms.VEC4_COUNT);
-        assertEquals(240, StarUniforms.SIZE_BYTES);
+        assertEquals(16, StarUniforms.VEC4_COUNT);
+        assertEquals(256, StarUniforms.SIZE_BYTES);
+        assertEquals(7, StarUniforms.PHASE);
+        assertEquals(8, StarUniforms.SPOTS);
         StarVisual v = StarVisual.from(SUN);
-        Vec4Block b = StarUniforms.pack(v, 0.05, 0.5f, 12.5f, new Vec4Block(StarUniforms.VEC4_COUNT));
-        assertEquals(240, b.sizeBytes());
+        Vec4Block b = StarUniforms.pack(v, 0.05, 0.5f, 12.5, new Vec4Block(StarUniforms.VEC4_COUNT));
+        assertEquals(256, b.sizeBytes());
         assertEquals(0.5f, b.get(StarUniforms.COLOR, 3));
         assertEquals((float) v.limbA(), b.get(StarUniforms.LIMB, 0));
         assertEquals((float) v.cellsPerRadius(), b.get(StarUniforms.GRAN, 0));
@@ -93,9 +96,11 @@ class StarVisualTest {
         // Unused spot slots are zero (radius 0 = skipped by the shader).
         for (int i = v.spots().size(); i < StarUniforms.MAX_SPOTS; i++) assertEquals(0f, b.get(StarUniforms.SPOTS + i, 2));
         // Byte layout: slot s component c at 16 s + 4 c, native order.
-        ByteBuffer buf = ByteBuffer.allocateDirect(240).order(ByteOrder.nativeOrder());
+        assertEquals((float) StarUniforms.equatorialPhase(v.rotationRate(), 12.5), b.get(StarUniforms.PHASE, 0));
+        assertEquals((float) StarUniforms.cyclePhase(v.lifetimeS(), 12.5), b.get(StarUniforms.PHASE, 2));
+        ByteBuffer buf = ByteBuffer.allocateDirect(256).order(ByteOrder.nativeOrder());
         b.write(buf);
-        assertEquals(240, buf.position());
+        assertEquals(256, buf.position());
         assertEquals(12.5f, buf.getFloat(16 * StarUniforms.GEOM + 8));
         assertEquals((float) v.contrast(), buf.getFloat(16 * StarUniforms.GRAN + 8));
     }
@@ -118,6 +123,45 @@ class StarVisualTest {
         assertEquals(3599f, VfxClock.wrap(-1_000_000_000L), 1e-3);
         float now = VfxClock.seconds();
         assertTrue(now >= 0 && now < VfxClock.PERIOD_S);
+        assertEquals(1.5f, VfxClock.wrapSeconds(3601.5), 1e-4);
+        assertEquals(3599f, VfxClock.wrapSeconds(-1.0), 1e-3);
+        assertTrue(VfxClock.elapsedSeconds() >= 0);
+    }
+
+    @Test
+    void rotationAndCyclePhasesAreContinuousAcrossTheClockWrap() {
+        StarVisual v = StarVisual.from(SUN);
+        double rate = v.rotationRate();
+        double dt = 1.0 / 60.0;
+        // Step frame by frame through the 1-hour float-clock wrap and well past several shear turnarounds.
+        double[] starts = {VfxClock.PERIOD_S - 2.0, 7 * VfxClock.PERIOD_S - 2.0, 1e6};
+        for (double t0 : starts) {
+            for (double t = t0; t < t0 + 4.0; t += dt) {
+                double de = angleDiff(StarUniforms.equatorialPhase(rate, t + dt), StarUniforms.equatorialPhase(rate, t));
+                assertEquals(rate * dt, de, 1e-6, "equatorial phase steps by rate*dt at t=" + t);
+                double ds = Math.abs(StarUniforms.shearPhase(rate, t + dt) - StarUniforms.shearPhase(rate, t));
+                assertTrue(ds <= StarUniforms.DIFF_B * rate * dt + 1e-9, "shear phase is continuous at t=" + t);
+                double dg = angleDiff(StarUniforms.cyclePhase(v.lifetimeS(), t + dt), StarUniforms.cyclePhase(v.lifetimeS(), t));
+                assertEquals(2 * Math.PI * dt / v.lifetimeS(), dg, 1e-6, "granule phase steps evenly at t=" + t);
+            }
+        }
+        // Shear stays bounded and reaches its maximum.
+        double max = 0;
+        double turn = StarUniforms.SHEAR_MAX / (StarUniforms.DIFF_B * rate);
+        for (double t = 0; t < 3 * turn; t += turn / 500) {
+            double s = StarUniforms.shearPhase(rate, t);
+            assertTrue(s >= 0 && s <= StarUniforms.SHEAR_MAX + 1e-12);
+            max = Math.max(max, s);
+        }
+        assertEquals(StarUniforms.SHEAR_MAX, max, 0.01);
+        assertEquals(0.0, StarUniforms.cyclePhase(0.0, 5.0), 0.0, "zero period (smooth remnants) is safe");
+    }
+
+    private static double angleDiff(double a, double b) {
+        double d = a - b;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        return d;
     }
 
     @Test
@@ -129,5 +173,8 @@ class StarVisualTest {
         b.put(0, 0f, 0f, 0f, 1f);
         assertNotEquals(a, b);
         assertEquals(32, a.sizeBytes());
+        Vec4Block c = new Vec4Block(2).copyFrom(b);
+        assertEquals(b, c);
+        assertThrows(IllegalArgumentException.class, () -> new Vec4Block(3).copyFrom(b));
     }
 }

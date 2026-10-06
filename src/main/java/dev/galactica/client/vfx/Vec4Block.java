@@ -57,6 +57,13 @@ public final class Vec4Block {
         out.position(start + data.length * 4);
     }
 
+    /** Overwrites this block with {@code src} (same size), without allocating. */
+    public Vec4Block copyFrom(Vec4Block src) {
+        if (src.data.length != data.length) throw new IllegalArgumentException("size mismatch: " + src.vec4Count() + " vs " + vec4Count());
+        System.arraycopy(src.data, 0, data, 0, data.length);
+        return this;
+    }
+
     public Vec4Block copy() {
         Vec4Block c = new Vec4Block(vec4Count());
         System.arraycopy(data, 0, c.data, 0, data.length);
