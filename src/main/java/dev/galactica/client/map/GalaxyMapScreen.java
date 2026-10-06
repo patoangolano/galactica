@@ -54,6 +54,8 @@ public class GalaxyMapScreen extends Screen {
 
     private List<MapStars.MapStar> stars = List.of();
     private CompletableFuture<List<MapStars.MapStar>> pendingStars;
+    /** {@link #starsKey} the pending list was requested for; a result for any other key is stale. */
+    private String pendingKey = "";
     private String starsKey = "";
 
     private final List<Hit> hits = new ArrayList<>();
@@ -88,7 +90,12 @@ public class GalaxyMapScreen extends Screen {
 
     private void updatePlayer() {
         if (minecraft == null || minecraft.player == null) return;
-        GalacticPos p = JumpTargets.galacticPosition(minecraft.player);
+        // Until the NAV attachment has synced there is no honest position: draw no player.
+        GalacticPos p = JumpTargets.knownGalacticPosition(minecraft.player);
+        if (p == null) {
+            havePos = false;
+            return;
+        }
         px = p.xPc();
         py = p.yPc();
         pz = p.zPc();
@@ -97,7 +104,8 @@ public class GalaxyMapScreen extends Screen {
 
     private void refreshStars() {
         if (pendingStars != null && pendingStars.isDone()) {
-            stars = pendingStars.getNow(List.of());
+            // A zoom change since the request makes the list wrong for this view (other level, slab, cap).
+            if (pendingKey.equals(starsKey)) stars = pendingStars.getNow(List.of());
             pendingStars = null;
         }
         double w = MapView.ZOOM_WIDTHS_PC[level];
@@ -110,6 +118,7 @@ public class GalaxyMapScreen extends Screen {
         String key = level + ":" + Math.floor(px / cell) + ":" + Math.floor(py / cell) + ":" + Math.floor(pz / zCell);
         if (key.equals(starsKey) || pendingStars != null) return;
         starsKey = key;
+        pendingKey = key;
         double cx = px, cy = py, cz = pz;
         pendingStars = CompletableFuture.supplyAsync(() -> MapStars.list(Galactica.GALAXY, cx, cy, cz, w), WORKER)
                 .exceptionally(e -> {
@@ -369,6 +378,8 @@ public class GalaxyMapScreen extends Screen {
             lastLevel = next;
             stars = List.of();
             starsKey = "";
+            // Abandon the in-flight list (its key no longer matches) so the new level is queued at once.
+            pendingStars = null;
         }
         return true;
     }
@@ -382,6 +393,11 @@ public class GalaxyMapScreen extends Screen {
         return super.keyPressed(e);
     }
 
+    /**
+     * Exotic matter in the player's inventory, labelled "carried" on the panel. The drive spends the
+     * ship's stock (spec §2); once {@code Starship} merges, the integrator reads the ridden ship's
+     * exotic matter here instead.
+     */
     private int exoticCarried() {
         if (minecraft == null || minecraft.player == null || !BuiltInRegistries.ITEM.containsKey(EXOTIC_MATTER)) return 0;
         return minecraft.player.getInventory().countItem(BuiltInRegistries.ITEM.getValue(EXOTIC_MATTER));

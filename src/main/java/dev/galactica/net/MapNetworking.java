@@ -15,8 +15,10 @@ public final class MapNetworking {
 
     public static void init() {
         PayloadTypeRegistry.serverboundPlay().register(SetJumpTargetPayload.TYPE, SetJumpTargetPayload.CODEC);
-        // Fabric re-queues the handler onto the server thread, so touching the player here is safe.
-        ServerPlayNetworking.registerGlobalReceiver(SetJumpTargetPayload.TYPE, (payload, ctx) -> handle(ctx.player(), payload));
+        // Server-side receive thread is unconfirmed for this Fabric (api_mixin_iris_verified.md §7);
+        // hop to the server thread explicitly, which is at worst a one-task delay.
+        ServerPlayNetworking.registerGlobalReceiver(SetJumpTargetPayload.TYPE,
+                (payload, ctx) -> ctx.server().execute(() -> handle(ctx.player(), payload)));
     }
 
     static void handle(ServerPlayer p, SetJumpTargetPayload payload) {

@@ -2,7 +2,6 @@
   "en_us": {
     "item.galactica.star_chart": "Star Chart",
     "key.galactica.open_map": "Open Galaxy Map",
-    "key.category.galactica.map": "Galactica: Navigation",
     "screen.galactica.galaxy_map": "Galaxy Map",
     "map.galactica.baking": "Charting the galaxy…",
     "map.galactica.bake_failed": "Galaxy chart unavailable (see log)",
@@ -13,7 +12,7 @@
     "map.galactica.view": "View %s across",
     "map.galactica.position": "R %s kpc  z %s pc",
     "map.galactica.legend": "Spiral arms",
-    "map.galactica.exotic": "Exotic matter %s  (range %s ly)",
+    "map.galactica.exotic": "Exotic matter carried %s  (range %s ly)",
     "map.galactica.target": "Target: %s",
     "map.galactica.target.distance": "%s ly  (%s pc)",
     "map.galactica.target.cost": "Jump cost: %s exotic matter",
@@ -25,12 +24,12 @@
     "map.galactica.tooltip.type": "Spectral type %s",
     "map.galactica.tooltip.distance": "%s ly away",
     "map.galactica.tooltip.cost": "Jump cost: %s exotic matter",
-    "map.galactica.tooltip.too_far": "Beyond 1 kpc: cannot be targeted"
+    "map.galactica.tooltip.too_far": "Beyond 1 kpc: cannot be targeted",
+    "key.category.galactica.main": "Galactica"
   },
   "pt_br": {
     "item.galactica.star_chart": "Carta Estelar",
     "key.galactica.open_map": "Abrir Mapa da Galáxia",
-    "key.category.galactica.map": "Galactica: Navegação",
     "screen.galactica.galaxy_map": "Mapa da Galáxia",
     "map.galactica.baking": "Cartografando a galáxia…",
     "map.galactica.bake_failed": "Carta da galáxia indisponível (veja o log)",
@@ -41,7 +40,7 @@
     "map.galactica.view": "Vista de %s",
     "map.galactica.position": "R %s kpc  z %s pc",
     "map.galactica.legend": "Braços espirais",
-    "map.galactica.exotic": "Matéria exótica %s  (alcance %s al)",
+    "map.galactica.exotic": "Matéria exótica carregada %s  (alcance %s al)",
     "map.galactica.target": "Destino: %s",
     "map.galactica.target.distance": "%s al  (%s pc)",
     "map.galactica.target.cost": "Custo do salto: %s de matéria exótica",
@@ -53,6 +52,7 @@
     "map.galactica.tooltip.type": "Tipo espectral %s",
     "map.galactica.tooltip.distance": "a %s anos-luz",
     "map.galactica.tooltip.cost": "Custo do salto: %s de matéria exótica",
-    "map.galactica.tooltip.too_far": "Além de 1 kpc: não pode ser destino"
+    "map.galactica.tooltip.too_far": "Além de 1 kpc: não pode ser destino",
+    "key.category.galactica.main": "Galactica"
   }
 }

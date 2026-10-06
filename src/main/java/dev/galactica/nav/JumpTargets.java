@@ -13,6 +13,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The player's hyperjump target (persistent, kept on death, synced to the owning client so the map
@@ -39,14 +40,26 @@ public final class JumpTargets {
     /**
      * Galactic position of a player on either side. In space it is the floating origin plus the
      * block offset; elsewhere (overworld, planet surfaces) the frame's origin, which is where the
-     * player re-enters space, is the best position the nav state knows.
+     * player re-enters space, is the best position the nav state knows. Server side only: it
+     * creates the NAV attachment when missing; the client uses {@link #knownGalacticPosition}.
      */
     public static GalacticPos galacticPosition(Player p) {
         NavState nav = p.getAttachedOrCreate(Galactica.NAV);
         return p.level().dimension() == Galactica.SPACE ? Frames.playerPos(nav, p.getX(), p.getY(), p.getZ()) : nav.origin();
     }
 
-    public static JumpTarget get(Player p) {
+    /**
+     * Client-safe variant of {@link #galacticPosition}: {@code null} until the NAV attachment has
+     * synced, instead of creating a local {@link NavState#initial()} that would place the player at
+     * a made-up position (and that the sync would then have to overwrite).
+     */
+    public static @Nullable GalacticPos knownGalacticPosition(Player p) {
+        NavState nav = p.getAttached(Galactica.NAV);
+        if (nav == null) return null;
+        return p.level().dimension() == Galactica.SPACE ? Frames.playerPos(nav, p.getX(), p.getY(), p.getZ()) : nav.origin();
+    }
+
+    public static @Nullable JumpTarget get(Player p) {
         return p.getAttached(TYPE);
     }
 }
