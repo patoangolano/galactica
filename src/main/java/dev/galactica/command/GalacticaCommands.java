@@ -66,25 +66,32 @@ public final class GalacticaCommands {
                         .executes(c -> nearest(c, 10))
                         .then(Commands.argument("count", IntegerArgumentType.integer(1, 50))
                                 .executes(c -> nearest(c, IntegerArgumentType.getInteger(c, "count")))))
-                .then(Commands.literal("jump")
+                .then(Commands.literal("jump").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("n", IntegerArgumentType.integer(1, 200)).executes(GalacticaCommands::jump)))
-                .then(Commands.literal("goto")
+                .then(Commands.literal("goto").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("star", StringArgumentType.greedyString()).executes(GalacticaCommands::gotoStar)))
                 .then(Commands.literal("system").executes(GalacticaCommands::system))
                 .then(Commands.literal("land")
-                        .then(Commands.argument("body", StringArgumentType.greedyString()).executes(c ->
+                        .then(Commands.argument("body", StringArgumentType.greedyString())
+                                .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(c ->
                                 dev.galactica.planet.PlanetEntry.forceLand(c.getSource().getPlayerOrException(),
                                         StringArgumentType.getString(c, "body")) ? 1 : 0)))
-                .then(Commands.literal("ship").executes(GalacticaCommands::ship))
-                .then(Commands.literal("kit").executes(GalacticaCommands::kit))
-                .then(Commands.literal("ground").executes(GalacticaCommands::ground))
-                .then(Commands.literal("fuel")
+                .then(Commands.literal("ship").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(GalacticaCommands::ship))
+                .then(Commands.literal("kit").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(GalacticaCommands::kit))
+                .then(Commands.literal("ground").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(GalacticaCommands::ground))
+                .then(Commands.literal("fuel").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("hydrogen", DoubleArgumentType.doubleArg(0, dev.galactica.ship.Starship.MAX_HYDROGEN))
                                 .then(Commands.argument("exotic", IntegerArgumentType.integer(0, dev.galactica.ship.Starship.MAX_EXOTIC))
                                         .executes(GalacticaCommands::fuel))))
-                .then(Commands.literal("orbit")
+                .then(Commands.literal("name").then(Commands.argument("name", StringArgumentType.greedyString())
+                        .executes(c -> dev.galactica.discovery.Discovery.rename(c.getSource().getPlayerOrException(),
+                                StringArgumentType.getString(c, "name")))))
+                .then(Commands.literal("redeem").then(Commands.argument("units", IntegerArgumentType.integer(1, 640))
+                        .executes(c -> dev.galactica.discovery.Discovery.redeem(c.getSource().getPlayerOrException(),
+                                IntegerArgumentType.getInteger(c, "units")))))
+                .then(Commands.literal("orbit").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("body", StringArgumentType.greedyString()).executes(GalacticaCommands::orbit)))
-                .then(Commands.literal("coords")
+                .then(Commands.literal("coords").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("x", DoubleArgumentType.doubleArg(-60_000, 60_000))
                                 .then(Commands.argument("y", DoubleArgumentType.doubleArg(-60_000, 60_000))
                                         .then(Commands.argument("z", DoubleArgumentType.doubleArg(-60_000, 60_000)).executes(c -> {
@@ -93,7 +100,7 @@ public final class GalacticaCommands {
                                                     DoubleArgumentType.getDouble(c, "y"), DoubleArgumentType.getDouble(c, "z")));
                                             return where(c);
                                         })))))
-                .then(Commands.literal("maxwarp")
+                .then(Commands.literal("maxwarp").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("pc_per_s", DoubleArgumentType.doubleArg(1e-9, 1000)).executes(c -> {
                             ServerPlayer p = c.getSource().getPlayerOrException();
                             double v = DoubleArgumentType.getDouble(c, "pc_per_s") * Units.PARSEC;

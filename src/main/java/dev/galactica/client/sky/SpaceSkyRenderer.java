@@ -93,6 +93,7 @@ public final class SpaceSkyRenderer {
         rebuildNear(mgr);
         rebuildPlanets();
         PlanetSprites.evict();
+        dev.galactica.client.exotic.ExoticOverlay.prepare(mgr.viewer(), mgr.nav() != null ? mgr.nav().timeSeconds() : 0);
 
         // Resolve every texture first: creating a DynamicTexture uploads it, and uploads are
         // commands that are illegal while a render pass is open.
@@ -113,6 +114,7 @@ public final class SpaceSkyRenderer {
                 draw(pass, quads, modelView, stars, starIndices, psfView, clamp,
                         new Vector4f(1, 1, 1, Math.min(1f, 0.25f + 0.75f * galaxyDim)), "Stars");
             }
+            dev.galactica.client.exotic.ExoticOverlay.draw(pass, quads, modelView);
             if (near != null && nearIndices > 0) {
                 draw(pass, quads, modelView, near, nearIndices, discView, clamp,
                         new Vector4f(1, 1, 1, 1), "Near bodies");

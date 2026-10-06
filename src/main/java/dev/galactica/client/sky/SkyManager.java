@@ -136,7 +136,8 @@ public final class SkyManager {
     private static double skyRebakeDistance(GalacticPos p) {
         double r = Math.sqrt(p.xPc() * p.xPc() + p.yPc() * p.yPc() + p.zPc() * p.zPc());
         double scale = Math.min(r, Math.max(Math.abs(p.zPc()), 150));
-        return Math.max(3.0, 0.02 * scale) * Units.PARSEC;
+        double basePc = Math.max(3.0, 0.02 * scale);
+        return dev.galactica.deepsky.DeepSky.of(Frames.GALAXY_SEED).rebakeDistancePc(p.xPc(), p.yPc(), p.zPc(), basePc) * Units.PARSEC;
     }
 
     /** Forces both layers to rebuild, e.g. after a hyperjump. */

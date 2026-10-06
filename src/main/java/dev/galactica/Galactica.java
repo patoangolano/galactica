@@ -46,6 +46,7 @@ public final class Galactica implements ModInitializer {
         // Content first: the ship and planet areas look items up by id, and the tab lists everyone's items.
         dev.galactica.content.GalacticaComponents.init();
         dev.galactica.content.GalacticaItems.init();
+        dev.galactica.discovery.Discovery.init();
         dev.galactica.ship.ShipEntities.init();
         dev.galactica.nav.JumpTargets.init();
         dev.galactica.content.GalacticaTab.init();
