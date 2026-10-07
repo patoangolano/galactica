@@ -2,6 +2,7 @@ package dev.galactica.client.planet;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import dev.galactica.planet.PlanetChunkGenerator;
+import dev.galactica.planet.SpaceRelief;
 import dev.galactica.planet.SurfaceGrid;
 import dev.galactica.planet.TerrainSampler;
 import dev.galactica.science.Blackbody;
@@ -38,7 +39,8 @@ public final class SurfaceClipmap {
 
     public static final int N = 256, LEVELS = 6;
     public static final double BASE_SPACING = 8;
-    public static final int GLOBE_W = 512, GLOBE_H = 256;
+    /** Whole-body globe: 1024 × 512, ~10 km per texel on the Moon, ~40 km on Earth. */
+    public static final int GLOBE_W = 1024, GLOBE_H = 512;
     /** Texels of alpha fade at a level's border, so a finer level melts into the coarser one below. */
     static final int FADE = 12;
     private static final int UPLOADS_PER_FRAME = 2;
@@ -52,8 +54,35 @@ public final class SurfaceClipmap {
 
     private static SurfaceClipmap current;
 
-    /** One finished bake: texel colours (ARGB) and heights, centred on (cx, cz). */
-    record Baked(double cx, double cz, int[] argb, float[] heights) {}
+    /** One finished bake: texel colours (ARGB) and heights, centred on (cx, cz); {@code lit} may be null. */
+    record Baked(double cx, double cz, int[] argb, float[] heights, int[] lit) {}
+
+    /**
+     * What a sun-lit image of an airless body is made from, per texel: linear albedo with an
+     * emission flag (4 floats: r, g, b, 1 for self-luminous lava), the {@link SpaceRelief} slope
+     * plus the block terrain's own slope (3 floats, body-fixed), the unit sphere normal (3 floats,
+     * body-fixed) and the texel's alpha. Immutable once published.
+     */
+    record SpaceInputs(double cx, double cz, float[] albedo, float[] slope, float[] normal, float[] alpha) {}
+
+    /** A relit image of {@link SpaceInputs} centred on (cx, cz). */
+    record Lit(double cx, double cz, int[] argb) {}
+
+    /**
+     * The light of a space view in the body-fixed frame ({@link dev.galactica.planet.PlanetMacro}'s):
+     * unit vector to the star and the eye's position in body radii.
+     */
+    public record SpaceLight(double sx, double sy, double sz, double ex, double ey, double ez) {
+        /** True when this light makes a visibly different image from {@code o}: 0.2° of sun or view, 2 % of range. */
+        boolean differs(SpaceLight o) {
+            if (o == null) return true;
+            double ds = sx * o.sx + sy * o.sy + sz * o.sz;
+            double ea = Math.sqrt(ex * ex + ey * ey + ez * ez), eb = Math.sqrt(o.ex * o.ex + o.ey * o.ey + o.ez * o.ez);
+            double de = (ex * o.ex + ey * o.ey + ez * o.ez) / (ea * eb);
+            double cos = Math.cos(Math.toRadians(0.2));
+            return ds < cos || de < cos || Math.abs(ea - eb) > 0.02 * Math.min(ea, eb);
+        }
+    }
 
     /** A clipmap level as drawn this frame (what was last uploaded). */
     public static final class Level {
@@ -65,6 +94,11 @@ public final class SurfaceClipmap {
         volatile Baked done;
         volatile boolean pending;
         double wantCx = Double.NaN, wantCz = Double.NaN;
+        /** Sun-lit image for space views of airless bodies (see {@link #litTexture()}). */
+        DynamicTexture lit;
+        double litCx = Double.NaN, litCz = Double.NaN;
+        volatile SpaceInputs space;
+        volatile Lit litDone;
 
         Level(int index) {
             this.index = index;
@@ -77,6 +111,14 @@ public final class SurfaceClipmap {
 
         public DynamicTexture texture() {
             return texture;
+        }
+
+        /**
+         * The sun-lit image of this level (airless bodies from space), lit per texel with crater relief
+         * for the current star and eye; null until one matching the uploaded level is ready.
+         */
+        public DynamicTexture litTexture() {
+            return lit != null && litCx == cx && litCz == cz ? lit : null;
         }
 
         public double centreX() {
@@ -125,6 +167,16 @@ public final class SurfaceClipmap {
     private boolean globeUploaded;
     private volatile boolean released;
     private int generation;
+    /** Airless solid bodies get sun-lit relief images for the view from space. */
+    private final boolean spaceLit;
+    private final SpaceRelief relief;
+    private volatile SpaceInputs globeSpace;
+    private volatile Lit globeLitDone;
+    private DynamicTexture globeLit;
+    /** The light last asked for, and the one the running or last relight used. */
+    private volatile SpaceLight light;
+    private SpaceLight relitFor;
+    private volatile boolean relighting;
 
     /** Bumped by every upload: renderers rebuild their meshes when it changes. */
     public int generation() {
@@ -136,6 +188,50 @@ public final class SurfaceClipmap {
         this.grid = SurfaceGrid.of(body.radiusMetres());
         this.terrain = TerrainSampler.of(body, grid);
         for (int k = 0; k < LEVELS; k++) levels[k] = new Level(k);
+        this.spaceLit = spaceLit(body);
+        this.relief = SpaceRelief.of(body);
+    }
+
+    /**
+     * True for bodies whose view from space is lit per texel ({@link #globeLit}, {@link Level#litTexture}):
+     * solid, with too little air (≤ 0.05 bar, the near renderer's airless photometry) to hide relief.
+     */
+    public static boolean spaceLit(Body b) {
+        return b.type().solidSurface && !(b.surfacePressureBar() > 0.05);
+    }
+
+    public boolean spaceLit() {
+        return spaceLit;
+    }
+
+    /** The sun-lit globe (airless bodies), or null until the first lit image is uploaded. */
+    public DynamicTexture globeLit() {
+        return globeUploaded ? globeLit : null;
+    }
+
+    /**
+     * Asks for sun-lit images under this light (body-fixed). Cheap when nothing moved visibly; a
+     * relight of the globe and the levels runs on the baker thread and lands through {@link #upload()}.
+     */
+    public void requestLight(SpaceLight l) {
+        if (!spaceLit) return;
+        light = l;
+        if (relighting || !l.differs(relitFor)) return;
+        relighting = true;
+        relitFor = l;
+        BAKER.execute(() -> {
+            try {
+                if (released) return;
+                SpaceInputs g = globeSpace;
+                if (g != null) globeLitDone = new Lit(0, 0, relight(g, l));
+                for (Level lv : levels) {
+                    SpaceInputs in = lv.space;
+                    if (in != null) lv.litDone = new Lit(in.cx(), in.cz(), relight(in, l));
+                }
+            } finally {
+                relighting = false;
+            }
+        });
     }
 
     /** The clipmap of this body, creating it (and releasing another body's) as needed. Render thread. */
@@ -243,6 +339,14 @@ public final class SurfaceClipmap {
             budget--;
             generation++;
         }
+        Lit gl = globeLitDone;
+        if (globeUploaded && gl != null) {
+            globeLitDone = null;
+            boolean fresh = globeLit == null;
+            globeLit = texture(globeLit, "galactica:clipmap/globe_lit", GLOBE_W, GLOBE_H, gl.argb());
+            // The mesh picks the lit globe up on a rebuild; a relight into the same texture needs none.
+            if (fresh) generation++;
+        }
         // Coarse levels first: they cover the most screen.
         for (int k = LEVELS - 1; k >= 0 && budget > 0; k--) {
             Level l = levels[k];
@@ -253,8 +357,28 @@ public final class SurfaceClipmap {
             l.heights = b.heights();
             l.cx = b.cx();
             l.cz = b.cz();
+            if (b.lit() != null) {
+                l.lit = texture(l.lit, "galactica:clipmap/lit" + k, N, N, b.lit());
+                l.litCx = b.cx();
+                l.litCz = b.cz();
+            }
             budget--;
             generation++;
+        }
+        // Relit levels: only an image of the level as uploaded is used.
+        for (Level l : levels) {
+            Lit lt = l.litDone;
+            if (lt == null || l.texture == null) continue;
+            if (lt.cx() != l.cx || lt.cz() != l.cz) {
+                if (l.done == null) l.litDone = null; // stale: the level moved on, its next bake brings its own
+                continue;
+            }
+            l.litDone = null;
+            boolean fresh = l.litTexture() == null;
+            l.lit = texture(l.lit, "galactica:clipmap/lit" + l.index, N, N, lt.argb());
+            l.litCx = lt.cx();
+            l.litCz = lt.cz();
+            if (fresh) generation++;
         }
     }
 
@@ -273,12 +397,16 @@ public final class SurfaceClipmap {
         released = true;
         for (Level l : levels) {
             if (l.texture != null) l.texture.close();
-            l.texture = null;
+            if (l.lit != null) l.lit.close();
+            l.texture = l.lit = null;
             l.heights = null;
+            l.space = null;
         }
         if (globe != null) globe.close();
         if (clouds != null) clouds.close();
-        globe = clouds = null;
+        if (globeLit != null) globeLit.close();
+        globe = clouds = globeLit = null;
+        globeSpace = null;
         globeUploaded = false;
     }
 
@@ -323,15 +451,42 @@ public final class SurfaceClipmap {
                     argb[j * N + i] = texel(c, hc, shade, alpha);
                 }
             });
-            if (!released) l.done = new Baked(cx, cz, argb, h);
+            int[] lit = null;
+            if (spaceLit) {
+                SpaceInputs in = levelInputs(cx, cz, s, h);
+                l.space = in;
+                SpaceLight now = light;
+                if (now != null) lit = relight(in, now);
+            }
+            if (!released) l.done = new Baked(cx, cz, argb, h, lit);
         } finally {
             l.pending = false;
         }
     }
 
+    /** Offline previews and tests: a clipmap that is never registered as {@link #current()}. */
+    static SurfaceClipmap detached(Body b) {
+        return new SurfaceClipmap(b);
+    }
+
+    /** Offline: bakes the globe on the calling thread and returns its sun-lit inputs (null unless {@link #spaceLit}). */
+    SpaceInputs bakeGlobeNow() {
+        bakeGlobe();
+        return globeSpace;
+    }
+
+    /** Offline: bakes level k centred on map (cx, cz) on the calling thread and returns its sun-lit inputs. */
+    SpaceInputs bakeLevelNow(int k, double cx, double cz) {
+        bakeLevel(levels[k], cx, cz);
+        return levels[k].space;
+    }
+
     private void bakeGlobe() {
         if (released) return;
         int[] g = new int[GLOBE_W * GLOBE_H], cl = new int[GLOBE_W * GLOBE_H];
+        int n = GLOBE_W * GLOBE_H;
+        float[] gAlb = spaceLit ? new float[n * 4] : null, gSlope = spaceLit ? new float[n * 3] : null,
+                gNrm = spaceLit ? new float[n * 3] : null;
         IntStream.range(0, GLOBE_H).parallel().forEach(j -> {
             TerrainSampler.Column c = new TerrainSampler.Column();
             double lat = Math.PI / 2 - (j + 0.5) / GLOBE_H * Math.PI;
@@ -341,14 +496,178 @@ public final class SurfaceClipmap {
                 int h = terrain.height(x, z);
                 terrain.column((int) Math.floor(x), (int) Math.floor(z), h, 0, c);
                 g[j * GLOBE_W + i] = texel(c, h, 1, 1);
+                if (spaceLit) globeInput(c, x, z, lat, lon, j * GLOBE_W + i, gAlb, gSlope, gNrm);
                 double cosLat = Math.cos(lat);
                 double cov = PlanetImager.cloudCover(body, cosLat * Math.cos(lon), cosLat * Math.sin(lon), Math.sin(lat));
                 cl[j * GLOBE_W + i] = ((int) Math.round(Math.min(1, cov) * 255) << 24) | 0xF4F6F8;
             }
         });
         if (released) return;
+        if (spaceLit) {
+            float[] ones = new float[n];
+            java.util.Arrays.fill(ones, 1f);
+            SpaceInputs in = new SpaceInputs(0, 0, gAlb, gSlope, gNrm, ones);
+            globeSpace = in;
+            SpaceLight now = light;
+            if (now != null) globeLitDone = new Lit(0, 0, relight(in, now));
+        }
         cloudArgb = cl;
         globeArgb = g;
+    }
+
+    // ---------------------------------------------------------------- sun-lit space images
+
+    /**
+     * Globe texel inputs: material albedo averaged over the texel × crater albedo, relief slope at the
+     * globe's texel scale.
+     */
+    private void globeInput(TerrainSampler.Column c, double x, double z, double lat, double lon, int t, float[] alb, float[] slope, float[] nrm) {
+        double cl = Math.cos(lat);
+        double nx = cl * Math.cos(lon), ny = cl * Math.sin(lon), nz = Math.sin(lat);
+        double[] sl = new double[3];
+        double mare = areaAlbedo(c, x, z, grid.width() / GLOBE_W, grid.width() / 2 / GLOBE_H, alb, t);
+        // Texels shrink towards the poles in longitude only: the latitude spacing sets the scale.
+        double fac = relief.sample(nx, ny, nz, Math.PI / GLOBE_H, true, 1 - 0.7 * mare, sl);
+        scaleAlbedo(alb, t, fac);
+        for (int k = 0; k < 3; k++) slope[t * 3 + k] = (float) sl[k];
+        nrm[t * 3] = (float) nx;
+        nrm[t * 3 + 1] = (float) ny;
+        nrm[t * 3 + 2] = (float) nz;
+    }
+
+    /**
+     * Level texel inputs: the same as the globe's at this level's texel scale, plus the block
+     * terrain's own slope (heights in blocks over blocks, as you walk it), along the directions the
+     * texture's rows and columns actually run on the sphere (which also handles the fold over a pole).
+     */
+    private SpaceInputs levelInputs(double cx, double cz, double s, float[] h) {
+        float[] alb = new float[N * N * 4], slope = new float[N * N * 3], nrm = new float[N * N * 3], alpha = new float[N * N];
+        IntStream.range(0, N).parallel().forEach(j -> {
+            for (int i = 0; i < N; i++) {
+                double[] p = mapPoint(cx + (i - N / 2 + 0.5) * s, cz + (j - N / 2 + 0.5) * s);
+                double lat = grid.latitude(p[1]), lon = grid.longitude(p[0]), cl = Math.cos(lat);
+                int t = j * N + i;
+                nrm[t * 3] = (float) (cl * Math.cos(lon));
+                nrm[t * 3 + 1] = (float) (cl * Math.sin(lon));
+                nrm[t * 3 + 2] = (float) Math.sin(lat);
+            }
+        });
+        double footprint = s / grid.radiusBlocks();
+        IntStream.range(0, N).parallel().forEach(j -> {
+            TerrainSampler.Column c = new TerrainSampler.Column();
+            double[] sl = new double[3];
+            for (int i = 0; i < N; i++) {
+                int t = j * N + i;
+                double[] p = mapPoint(cx + (i - N / 2 + 0.5) * s, cz + (j - N / 2 + 0.5) * s);
+                double nx = nrm[t * 3], ny = nrm[t * 3 + 1], nz = nrm[t * 3 + 2];
+                int il = Math.max(0, i - 1), ir = Math.min(N - 1, i + 1), ju = Math.max(0, j - 1), jd = Math.min(N - 1, j + 1);
+                double mare = areaAlbedo(c, p[0], p[1], s, s, alb, t);
+                double fac = relief.sample(nx, ny, nz, footprint, true, 1 - 0.7 * mare, sl);
+                scaleAlbedo(alb, t, fac);
+                // Block slope along the texture's +i and +j directions on the sphere.
+                addSlope(sl, nrm, j * N + il, j * N + ir, (h[j * N + ir] - h[j * N + il]) / ((ir - il) * s));
+                addSlope(sl, nrm, ju * N + i, jd * N + i, (h[jd * N + i] - h[ju * N + i]) / ((jd - ju) * s));
+                double dn = sl[0] * nx + sl[1] * ny + sl[2] * nz;
+                slope[t * 3] = (float) (sl[0] - dn * nx);
+                slope[t * 3 + 1] = (float) (sl[1] - dn * ny);
+                slope[t * 3 + 2] = (float) (sl[2] - dn * nz);
+                int edge = Math.min(Math.min(i, j), Math.min(N - 1 - i, N - 1 - j));
+                alpha[t] = (float) Math.min(1, edge / (double) FADE);
+            }
+        });
+        return new SpaceInputs(cx, cz, alb, slope, nrm, alpha);
+    }
+
+    /** Adds {@code grade} (rise over run) along the unit direction from texel a to texel b. */
+    private static void addSlope(double[] sl, float[] nrm, int a, int b, double grade) {
+        double dx = nrm[b * 3] - nrm[a * 3], dy = nrm[b * 3 + 1] - nrm[a * 3 + 1], dz = nrm[b * 3 + 2] - nrm[a * 3 + 2];
+        double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (!(len > 0) || !Double.isFinite(grade)) return;
+        sl[0] += grade * dx / len;
+        sl[1] += grade * dy / len;
+        sl[2] += grade * dz / len;
+    }
+
+    /**
+     * Linear albedo of the ground a texel covers, averaged over a 3 × 3 grid of columns across its
+     * {@code du} × {@code dv} blocks: the generator's block-scale materials (dirty-ice speckle, the
+     * edge of a mare) would otherwise alias into salt-and-pepper noise at kilometre texels. Lava
+     * makes the texel self-luminous (flag set, colour pre-divided by the exposure). Returns the
+     * share of mare basalt.
+     */
+    private double areaAlbedo(TerrainSampler.Column c, double x, double z, double du, double dv, float[] out, int t) {
+        double r = 0, g = 0, b = 0, mare = 0;
+        int lava = 0;
+        for (int sj = -1; sj <= 1; sj++) {
+            for (int si = -1; si <= 1; si++) {
+                double[] p = mapPoint(x + si * du / 3, z + sj * dv / 3);
+                int h = terrain.height(p[0], p[1]);
+                terrain.column((int) Math.floor(p[0]), (int) Math.floor(p[1]), h, 0, c);
+                TerrainSampler.Material m = c.visible();
+                if (m == TerrainSampler.Material.LAVA) {
+                    lava++;
+                    r += Albedo.LAVA[0] * 0.9 / PlanetImager.EXPOSURE;
+                    g += Albedo.LAVA[1] * 0.9 / PlanetImager.EXPOSURE;
+                    b += Albedo.LAVA[2] * 0.9 / PlanetImager.EXPOSURE;
+                    continue;
+                }
+                if (m == TerrainSampler.Material.BASALT || m == TerrainSampler.Material.SMOOTH_BASALT) mare++;
+                double[] a = m == TerrainSampler.Material.WATER ? WATER_ALBEDO : Albedo.TABLE[m.ordinal()];
+                if (a == null) a = DEFAULT_ALBEDO;
+                r += a[0];
+                g += a[1];
+                b += a[2];
+            }
+        }
+        out[t * 4] = (float) (r / 9);
+        out[t * 4 + 1] = (float) (g / 9);
+        out[t * 4 + 2] = (float) (b / 9);
+        out[t * 4 + 3] = lava >= 5 ? 1 : 0;
+        return mare / 9;
+    }
+
+    private static final double[] WATER_ALBEDO = {0.02, 0.06, 0.10}, DEFAULT_ALBEDO = {0.1, 0.1, 0.1};
+
+    /** Applies the crater albedo factor to a non-emissive texel. */
+    private static void scaleAlbedo(float[] alb, int t, double fac) {
+        if (alb[t * 4 + 3] > 0) return;
+        for (int k = 0; k < 3; k++) alb[t * 4 + k] *= (float) fac;
+    }
+
+    /** Dim light on the night side, as the near renderer's vertex lighting adds. */
+    static final double NIGHT_LIGHT = 0.004;
+
+    /**
+     * One sun-lit image: per texel the lit normal normalize(n − slope) and the regolith reflectance
+     * ({@link SpaceRelief#regolith}) for the star and the eye, times albedo and the imager's exposure;
+     * the star's colour and the auto-exposure are the mesh's vertex colour.
+     */
+    static int[] relight(SpaceInputs in, SpaceLight l) {
+        int n = in.normal().length / 3;
+        int[] out = new int[n];
+        float[] alb = in.albedo(), sl = in.slope(), nr = in.normal(), al = in.alpha();
+        IntStream.range(0, n).parallel().forEach(t -> {
+            int a8 = (int) Math.round(Math.max(0, Math.min(1, al[t])) * 255);
+            double r = alb[t * 4], g = alb[t * 4 + 1], b = alb[t * 4 + 2];
+            double k;
+            if (alb[t * 4 + 3] > 0) {
+                k = PlanetImager.EXPOSURE;
+            } else {
+                double nx = nr[t * 3], ny = nr[t * 3 + 1], nz = nr[t * 3 + 2];
+                double lx = nx - sl[t * 3], ly = ny - sl[t * 3 + 1], lz = nz - sl[t * 3 + 2];
+                double ln = Math.sqrt(lx * lx + ly * ly + lz * lz);
+                lx /= ln;
+                ly /= ln;
+                lz /= ln;
+                double mu0 = lx * l.sx() + ly * l.sy() + lz * l.sz();
+                double vx = l.ex() - nx, vy = l.ey() - ny, vz = l.ez() - nz;
+                double vn = Math.sqrt(vx * vx + vy * vy + vz * vz);
+                double mu = (lx * vx + ly * vy + lz * vz) / Math.max(1e-9, vn);
+                k = PlanetImager.EXPOSURE * (SpaceRelief.regolith(mu0, mu) + NIGHT_LIGHT);
+            }
+            out[t] = a8 << 24 | PlanetImager.encode8(r * k) << 16 | PlanetImager.encode8(g * k) << 8 | PlanetImager.encode8(b * k);
+        });
+        return out;
     }
 
     /** Map point folded back inside the poles (a level near a pole reaches over it). */
