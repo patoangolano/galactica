@@ -87,6 +87,14 @@ public final class AutoTest {
         lookAtBody(60, "Earth");   shot(5, "04_earth_close");
         cmd(20, "galactica orbit Moon");
         lookAtBody(60, "Moon");    shot(5, "05_moon_close");
+        probeSpaceLit(1, "Moon");
+        // The same 3 040 km altitude at quarter phase: the terminator through the disc, crater relief along it.
+        orbitAtPhase(20, "Moon", 90);
+        lookAtBody(60, "Moon");    shot(5, "05b_moon_3040km_quarter");
+        probeSpaceLit(1, "Moon");
+        cmd(20, "galactica orbit Mercury");
+        lookAtBody(60, "Mercury"); shot(5, "05c_mercury_close");
+        probeSpaceLit(1, "Mercury");
         cmd(20, "galactica orbit Jupiter");
         lookAtBody(60, "Jupiter"); shot(5, "06_jupiter_close");
         cmd(20, "galactica orbit Saturn");
@@ -117,6 +125,9 @@ public final class AutoTest {
         look(240, 0, 89.9f); shot(5, "11_face_on_from_30kpc_above");
         cmd(20, "galactica coords -45000 0 3000");
         look(240, -90, 2);  shot(5, "12_edge_on_from_45kpc");
+        STEPS.add(new Step(5, () -> aimAt(SkyManager.get().viewer(), GalacticPos.ofParsecs(0, 0, 0), 0f)));
+        shot(5, "12b_galaxy_from_45kpc_centred");
+        probeGalaxyExposure(1, "45 kpc in the halo");
         // Real warp: hold sprint through the game's own key mapping while flying towards the Galactic Centre.
         cmd(20, "galactica goto Sol");
         look(60, 90, 0);
@@ -1008,6 +1019,87 @@ public final class AutoTest {
             String claimed = dev.galactica.client.sky.NearPlanetRenderer.claimedName();
             boolean ok = body.equalsIgnoreCase(claimed);
             Galactica.LOG.info("[autotest] {} near-planet terrain for {}: drawn body {}", ok ? "PASS" : "FAIL", body, claimed);
+        }));
+    }
+
+    /**
+     * Moves to the altitude {@code /galactica orbit} uses (the body 20° in angular radius) on the side
+     * that puts the star {@code phaseDeg} away from the eye, as seen from the body.
+     */
+    private static void orbitAtPhase(int wait, String name, double phaseDeg) {
+        STEPS.add(new Step(wait, () -> {
+            SkyManager mgr = SkyManager.get();
+            GalacticPos eye = mgr.viewer();
+            if (eye == null || mgr.nav() == null) return;
+            Star star = mgr.neighbourhood().nearestStar(eye);
+            if (star == null) return;
+            for (Neighbourhood.Located l : mgr.neighbourhood().locateBodies(eye, mgr.nav().timeSeconds())) {
+                if (!l.body().name().equalsIgnoreCase(name)) continue;
+                double[] u = Neighbourhood.starPos(star).metresFrom(l.pos());
+                double un = Math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+                for (int k = 0; k < 3; k++) u[k] /= un;
+                // A unit vector perpendicular to the star direction, then the view direction at the phase angle.
+                double[] w = {-u[1], u[0], 0};
+                double wn = Math.sqrt(w[0] * w[0] + w[1] * w[1]);
+                double a = Math.toRadians(phaseDeg), d = l.body().radiusMetres() / Math.tan(Math.toRadians(20));
+                double[] v = new double[3];
+                for (int k = 0; k < 3; k++) v[k] = (u[k] * Math.cos(a) + w[k] / wn * Math.sin(a)) * d;
+                GalacticPos at = l.pos().plusMetres(v[0], v[1], v[2]);
+                String c = String.format(java.util.Locale.ROOT, "galactica coords %.13f %.13f %.13f", at.xPc(), at.yPc(), at.zPc());
+                Galactica.LOG.info("[autotest] /{}", c);
+                Minecraft.getInstance().player.connection.sendCommand(c);
+                return;
+            }
+            Galactica.LOG.warn("[autotest] body {} not found", name);
+        }));
+    }
+
+    /**
+     * The airless body is drawn by the near renderer from its sun-lit images, and the phase angle
+     * (star–body–eye) it is lit at.
+     */
+    private static void probeSpaceLit(int wait, String name) {
+        STEPS.add(new Step(wait, () -> {
+            String claimed = dev.galactica.client.sky.NearPlanetRenderer.claimedName();
+            boolean lit = dev.galactica.client.sky.NearPlanetRenderer.claimedLit();
+            SkyManager mgr = SkyManager.get();
+            GalacticPos eye = mgr.viewer();
+            double phase = Double.NaN;
+            Star star = eye == null ? null : mgr.neighbourhood().nearestStar(eye);
+            if (star != null && mgr.nav() != null) {
+                for (Neighbourhood.Located l : mgr.neighbourhood().locateBodies(eye, mgr.nav().timeSeconds())) {
+                    if (!l.body().name().equalsIgnoreCase(name)) continue;
+                    double[] s = Neighbourhood.starPos(star).metresFrom(l.pos()), e = eye.metresFrom(l.pos());
+                    double c = (s[0] * e[0] + s[1] * e[1] + s[2] * e[2])
+                            / Math.sqrt((s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) * (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]));
+                    phase = Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, c))));
+                }
+            }
+            boolean ok = name.equalsIgnoreCase(claimed) && lit;
+            Galactica.LOG.info("[autotest] {} sun-lit relief on {}: drawn body {}, lit images {}, phase angle {} deg", ok ? "PASS" : "FAIL",
+                    name, claimed, lit, String.format(java.util.Locale.ROOT, "%.1f", phase));
+        }));
+    }
+
+    /**
+     * The Milky Way seen from outside keeps its structure: of the sky texture's lit pixels (green
+     * channel > 20) fewer than 5 % are white (≥ 250). The old exposure, anchored to the empty sky's
+     * 99th percentile, burned the whole disc out.
+     */
+    private static void probeGalaxyExposure(int wait, String where) {
+        STEPS.add(new Step(wait, () -> {
+            var snap = dev.galactica.client.sky.SkyTextures.galaxySnapshot();
+            int lit = 0, white = 0;
+            if (snap != null) {
+                for (int p : snap.argb()) {
+                    int g = p >> 8 & 255;
+                    if (g > 20) lit++;
+                    if (g >= 250) white++;
+                }
+            }
+            boolean ok = lit > 500 && white < 0.05 * lit;
+            Galactica.LOG.info("[autotest] {} galaxy exposure from {}: {} lit pixels, {} white ({}%)", ok ? "PASS" : "FAIL", where, lit, white,
+                    String.format(java.util.Locale.ROOT, "%.1f", lit > 0 ? 100.0 * white / lit : 0));
         }));
     }
 
