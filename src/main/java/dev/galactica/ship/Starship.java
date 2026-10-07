@@ -506,6 +506,22 @@ public class Starship extends VehicleEntity {
         }
     }
 
+    /**
+     * Server side, in space, a ship is "always ticking" for the entity manager, exactly like a player
+     * ({@code PersistentEntitySectionManager.getEffectiveStatus}). Vanilla stops tracking an entity the moment it
+     * moves into a chunk that is not loaded to FULL yet ({@code Callback.updateStatus} -> {@code stopTracking} ->
+     * {@code ChunkMap.removeEntity} -> remove packet to every watcher): a ship flying 12-15 blocks per tick
+     * through a freshly recentred, still-loading area was removed from its own pilot's client, which dropped the
+     * pilot out and re-added both a tick later (the blinking hull and the camera jumping to the bare player and
+     * back). The flag is fixed for the lifetime of the entity (one instance never changes level), so the manager's
+     * bookkeeping stays consistent; ticking itself is still gated by the entity-ticking range in ServerLevel, and a
+     * parked ship is still saved and unloaded with its chunk.
+     */
+    @Override
+    public boolean isAlwaysTicking() {
+        return !level().isClientSide() && level().dimension() == Galactica.SPACE;
+    }
+
     public static boolean isPiloting(Player p) {
         return p.getVehicle() instanceof Starship s && s.getControllingPassenger() == p;
     }
@@ -534,13 +550,24 @@ public class Starship extends VehicleEntity {
     }
 
     /**
+     * The player whose frame the ship's floating origin follows: the pilot, or, when nobody (or no player) is at
+     * the controls, the first player aboard, so a drifting ship with only crew aboard still recentres.
+     */
+    public static boolean leadsCraft(Player p) {
+        if (!(p.getVehicle() instanceof Starship s)) return false;
+        if (s.getControllingPassenger() instanceof Player pilot) return pilot == p;
+        for (Entity e : s.getPassengers()) if (e instanceof Player first) return first == p;
+        return false;
+    }
+
+    /**
      * Keeps everyone aboard in the pilot's frame. NavServer calls this right after writing the pilot's NavState
      * (warp step, floating-origin recentre, see {@code FloatingOrigin}): every other player aboard gets the same origin displacement plus
      * the pilot's warp speed and clock, so the crew sees the same sky and arrives together. NavServer skips crew
      * in its own drive logic ({@link #isCrew}), so in space this is their only frame update.
      */
     public static void carryCrew(ServerPlayer pilot, GalacticPos oldOrigin, NavState pilotNow) {
-        if (!(pilot.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != pilot) return;
+        if (!(pilot.getVehicle() instanceof Starship ship) || !leadsCraft(pilot)) return;
         double[] d = pilotNow.origin().metresFrom(oldOrigin);
         for (Entity e : ship.getPassengers()) {
             if (e instanceof ServerPlayer crew && crew != pilot) {

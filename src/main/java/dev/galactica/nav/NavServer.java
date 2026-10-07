@@ -70,7 +70,11 @@ public final class NavServer {
         }
         p.resetFallDistance();
         // Passengers ride in the pilot's frame; Starship.carryCrew moves their origin with the pilot's.
-        if (dev.galactica.ship.Starship.isCrew(p)) return;
+        if (dev.galactica.ship.Starship.isCrew(p)) {
+            // Nobody at the controls: the first player aboard still leads the floating origin (no drive).
+            if (dev.galactica.ship.Starship.leadsCraft(p)) recentreOnly(p, nav, t);
+            return;
+        }
         FloatingOrigin.keepCraftLoaded(p);
 
         GalacticPos here = Frames.playerPos(nav, p.getX(), p.getY(), p.getZ());
@@ -111,6 +115,17 @@ public final class NavServer {
             p.setAttached(Galactica.NAV, next);
             dev.galactica.ship.Starship.carryCrew(p, nav.origin(), next);
         }
+    }
+
+    /** Floating origin for a craft nobody pilots: same ordered shift, no warp step. */
+    private static void recentreOnly(ServerPlayer p, NavState nav, double t) {
+        FloatingOrigin.keepCraftLoaded(p);
+        Vec3 shift = FloatingOrigin.shiftNeeded(p);
+        if (shift == null) return;
+        NavState next = new NavState(FloatingOrigin.fold(nav.origin(), shift), nav.speed(), nav.maxSpeed(), t);
+        FloatingOrigin.apply(p, shift, nav.origin(), next.origin());
+        p.setAttached(Galactica.NAV, next);
+        dev.galactica.ship.Starship.carryCrew(p, nav.origin(), next);
     }
 
     private static void applyZeroG(ServerPlayer p, boolean inSpace) {

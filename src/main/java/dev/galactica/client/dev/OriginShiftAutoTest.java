@@ -23,7 +23,11 @@ import java.util.Locale;
  *   <li>per rendered frame, the camera's <i>galactic</i> position (origin + camera, exactly what the sky is drawn
  *       from) moves no more than the velocity allows for the frame time, and never backwards along it — a
  *       recentre whose block shift and origin change did not land together, or a rubber-band, breaks this;</li>
- *   <li>per tick, a pilot stays mounted on the same ship.</li>
+ *   <li>per tick, a pilot stays mounted on the same ship <i>instance</i>, and that instance is still the one in the
+ *       client level and not removed — a ship the server removed and re-added (the reported blinking) changes
+ *       instance even when the pilot ends up remounted within the tick;</li>
+ *   <li>per frame, the ship (or the EVA player) moves exactly one step per tick: a second "strict" counter with
+ *       almost no slack is logged for diagnosis (a double tick or a half-applied shift shows up there first).</li>
  * </ul>
  * Per-tick positions are logged for the 3 ticks before and after every recentre.
  */
@@ -34,7 +38,8 @@ public final class OriginShiftAutoTest {
     private static String phase = "";
     private static Vec3 velocity = Vec3.ZERO;
     private static int ticks, recentres, shiftsAtStart, frames, frameFailures, backwardFailures, mountFailures, logAfter;
-    private static int shipId = -1;
+    private static int shipId = -1, shipLost, strictJumps;
+    private static Starship ship;
     private static double worstRatio;
     private static GalacticPos start, lastFrame;
     private static double lastFrameTime;
@@ -50,10 +55,11 @@ public final class OriginShiftAutoTest {
         LocalPlayer p = Minecraft.getInstance().player;
         phase = name;
         velocity = blocksPerTick;
-        ticks = recentres = frames = frameFailures = backwardFailures = mountFailures = logAfter = 0;
+        ticks = recentres = frames = frameFailures = backwardFailures = mountFailures = logAfter = shipLost = strictJumps = 0;
         worstRatio = 0;
         shiftsAtStart = OriginShiftClient.applied;
-        shipId = p.getVehicle() instanceof Starship s ? s.getId() : -1;
+        ship = p.getVehicle() instanceof Starship s ? s : null;
+        shipId = ship != null ? ship.getId() : -1;
         start = lastFrame = null;
         lastLocal = null;
         RECENT.clear();
@@ -70,11 +76,12 @@ public final class OriginShiftAutoTest {
         LocalPlayer p = Minecraft.getInstance().player;
         if (p != null) p.getRootVehicle().setDeltaMovement(Vec3.ZERO);
         int shifts = OriginShiftClient.applied - shiftsAtStart;
-        boolean ok = recentres >= 3 && shifts >= 3 && frameFailures == 0 && backwardFailures == 0 && mountFailures == 0 && frames > 100;
+        boolean ok = recentres >= 3 && shifts >= 3 && frameFailures == 0 && backwardFailures == 0 && mountFailures == 0
+                && shipLost == 0 && frames > 100;
         Galactica.LOG.info(String.format(Locale.ROOT,
                 "[autotest] %s origin-recentre %s: recentres=%d shiftsApplied=%d ticks=%d frames=%d worstFrameJump=%.2f of allowed, "
-                        + "frameJumps=%d backwards=%d dismounts=%d", ok ? "PASS" : "FAIL", phase, recentres, shifts, ticks, frames,
-                worstRatio, frameFailures, backwardFailures, mountFailures));
+                        + "frameJumps=%d backwards=%d dismounts=%d shipRemoved=%d strictJumps=%d", ok ? "PASS" : "FAIL", phase, recentres,
+                shifts, ticks, frames, worstRatio, frameFailures, backwardFailures, mountFailures, shipLost, strictJumps));
     }
 
     private static void tick(Minecraft mc) {
@@ -86,6 +93,12 @@ public final class OriginShiftAutoTest {
         if ("ship".equals(phase) && !(p.getVehicle() instanceof Starship s && s.getId() == shipId)) {
             if (mountFailures++ < 5)
                 Galactica.LOG.warn("[autotest] origin-recentre {}: tick {} pilot not aboard ship {} (vehicle {})", phase, ticks, shipId, p.getVehicle());
+        }
+        if (ship != null && (ship.isRemoved() || mc.level.getEntity(shipId) != ship || p.getVehicle() != ship)) {
+            if (shipLost++ < 5)
+                Galactica.LOG.warn("[autotest] origin-recentre {}: tick {} ship {} was removed or replaced on the client (removed={}, now {})",
+                        phase, ticks, shipId, ship.isRemoved(), mc.level.getEntity(shipId));
+            if (p.getVehicle() instanceof Starship again) ship = again; // count each loss once
         }
         Vec3 local = root.position();
         GalacticPos viewer = SkyManager.get().viewer();
@@ -123,6 +136,9 @@ public final class OriginShiftAutoTest {
             double speed = velocity.length();
             double allowed = speed * dtTicks * 1.25 + 3.0;
             worstRatio = Math.max(worstRatio, dist / allowed);
+            if (dist > speed * dtTicks * 1.05 + 0.5 && strictJumps++ < 5)
+                Galactica.LOG.info(String.format(Locale.ROOT, "[autotest] origin-recentre %s: strict: %.2f blocks in %.2f ticks at tick %d",
+                        phase, dist, dtTicks, ticks));
             if (dist > allowed) {
                 frameFailures++;
                 Galactica.LOG.warn(String.format(Locale.ROOT, "[autotest] origin-recentre %s: camera jumped %.2f blocks in %.2f ticks (allowed %.2f) at tick %d",

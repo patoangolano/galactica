@@ -48,18 +48,26 @@ public final class FloatingOrigin {
     public static final double LIMIT = 1024.0;
     /** A shift the client never acknowledged (mod missing, connection stalled) stops translating after this. */
     private static final int ACK_TIMEOUT_TICKS = 100;
-    /** Start holding the landing chunks this many blocks before the limit (several seconds at full ship speed). */
-    private static final double PRELOAD_MARGIN = 256.0;
+    /** Start holding the landing chunks when the craft's current motion takes it past the limit within this. */
+    private static final int PRELOAD_TICKS = 20;
+    /**
+     * Past the limit, the shift waits for the landing chunks at most this long. Waiting is only a nicety now (a
+     * ship in space stays tracked in an unloaded chunk, see {@code Starship.isAlwaysTicking}), and precision must not
+     * be traded for it: ~40 ticks is at most ~600 blocks past the limit at full ship speed.
+     */
+    private static final int MAX_DEFER_TICKS = 40;
 
     /** Keeps the chunks around block 0 loaded and entity-ticking while a craft approaches the limit (like a pearl). */
     public static final TicketType LANDING = Registry.register(BuiltInRegistries.TICKET_TYPE, Galactica.id("origin_landing"),
-            new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE));
+            new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION));
 
     /** Follows a moving craft: every chunk it crosses in the next {@link #LOOK_AHEAD_TICKS} ticks. */
     public static final TicketType CRAFT = Registry.register(BuiltInRegistries.TICKET_TYPE, Galactica.id("craft"),
-            new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE));
+            new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION));
     private static final int LOOK_AHEAD_TICKS = 10;
     private static final Map<UUID, Vec3> LAST_POS = new HashMap<>(), LAST_STEP = new HashMap<>();
+    /** Server tick at which a craft first needed a shift that is still waiting for its landing chunks. */
+    private static final Map<UUID, Integer> DEFER_SINCE = new HashMap<>();
 
     private record Pending(int seq, Vec3 delta, int sentAt) {}
 
@@ -76,11 +84,13 @@ public final class FloatingOrigin {
             PENDING.remove(handler.player.getUUID());
             LAST_POS.remove(handler.player.getUUID());
             LAST_STEP.remove(handler.player.getUUID());
+            DEFER_SINCE.remove(handler.player.getUUID());
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(s -> {
             PENDING.clear();
             LAST_POS.clear();
             LAST_STEP.clear();
+            DEFER_SINCE.clear();
         });
     }
 
@@ -127,6 +137,7 @@ public final class FloatingOrigin {
         if (p.level().dimension() != Galactica.SPACE) {
             LAST_POS.remove(p.getUUID());
             LAST_STEP.remove(p.getUUID());
+            DEFER_SINCE.remove(p.getUUID());
         }
         Pending pending = PENDING.get(p.getUUID());
         if (pending == null) return;
@@ -144,8 +155,13 @@ public final class FloatingOrigin {
      */
     public static @Nullable Vec3 shiftNeeded(ServerPlayer p) {
         Entity root = p.getRootVehicle();
-        double far = Math.max(Math.abs(root.getX()), Math.max(Math.abs(root.getY()), Math.abs(root.getZ())));
-        if (far <= LIMIT - PRELOAD_MARGIN) return null;
+        double far = maxNorm(root.position());
+        Vec3 step = LAST_STEP.getOrDefault(p.getUUID(), Vec3.ZERO);
+        // Only a craft actually heading past the limit soon preloads: a parked or slow craft holds nothing extra.
+        if (far <= LIMIT && maxNorm(root.position().add(step.scale(PRELOAD_TICKS))) <= LIMIT) {
+            DEFER_SINCE.remove(p.getUUID());
+            return null;
+        }
         // The craft always lands next to block 0: keep those chunks loaded and entity-ticking from a little before
         // the limit. A vehicle moved into a chunk that is not loaded yet stops being tracked at all (vanilla removes
         // it from every client, the pilot included), so the shift waits until the landing chunks are ready.
@@ -155,18 +171,28 @@ public final class FloatingOrigin {
         // landing is known in advance: radius 3 around block 0 (a landing at -0.4 sits in chunk -1) plus the chunks
         // the craft crosses in its first LOOK_AHEAD_TICKS ticks there, where the follow ticket takes over.
         Vec3 landing = root.position().add(d);
-        Vec3 step = LAST_STEP.getOrDefault(p.getUUID(), Vec3.ZERO);
         level.getChunkSource().addTicketAndLoadWithRadius(LANDING, ChunkPos.ZERO, 3);
         if (step.length() >= 0.5) holdPath(level, LANDING, landing, step);
         if (far <= LIMIT) return null;
         for (ServerPlayer rider : riders(root)) {
             if (PENDING.containsKey(rider.getUUID()) || ((OriginShiftable) rider.connection).galactica$awaitingTeleport()) return null;
         }
-        if (!pathTicking(level, landing, step)) return null;
-        for (Entity e : root.getIndirectPassengers()) {
-            if (!level.isPositionEntityTicking(BlockPos.containing(e.position().add(d)))) return null;
+        int now = level.getServer().getTickCount();
+        int since = DEFER_SINCE.computeIfAbsent(p.getUUID(), u -> now);
+        if (now - since < MAX_DEFER_TICKS) {
+            if (!pathTicking(level, landing, step)) return null;
+            for (Entity e : root.getIndirectPassengers()) {
+                if (!level.isPositionEntityTicking(BlockPos.containing(e.position().add(d)))) return null;
+            }
+        } else {
+            Galactica.LOG.debug("Origin shift for {} forced after {} ticks waiting for chunks", p.getName().getString(), now - since);
         }
+        DEFER_SINCE.remove(p.getUUID());
         return d;
+    }
+
+    private static double maxNorm(Vec3 v) {
+        return Math.max(Math.abs(v.x), Math.max(Math.abs(v.y), Math.abs(v.z)));
     }
 
     /** The galactic origin after folding in a block shift {@code d} (the origin moves opposite to the blocks). */
@@ -208,7 +234,7 @@ public final class FloatingOrigin {
             rider.level().getChunkSource().move(rider);
             int seq = nextSeq++;
             PENDING.put(rider.getUUID(), new Pending(seq, d, now));
-            ServerPlayNetworking.send(rider, new OriginShiftPayload(seq, d.x, d.y, d.z, origin));
+            ServerPlayNetworking.send(rider, new OriginShiftPayload(seq, root.getId(), d.x, d.y, d.z, origin));
         }
     }
 
