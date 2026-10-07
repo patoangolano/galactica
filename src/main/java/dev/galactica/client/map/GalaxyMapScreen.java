@@ -57,10 +57,12 @@ import java.util.Locale;
  */
 public class GalaxyMapScreen extends Screen {
     private static final int TEXT = 0xFFD8E4FF, DIM = 0xFF8C9AB8, ACCENT = 0xFF7FE0FF, TARGET = 0xFFFFD54F, WARN = 0xFFFF7A6E,
-            PANEL = 0xC0000814, OK = 0xFF7FFFB0;
-    private static final int PANEL_W = 214, MARGIN = 6;
+            PANEL = 0xE8000814, OK = 0xFF7FFFB0;
+    private static final int PANEL_W = 250, MARGIN = 6;
     /** Kept across openings, like a chart left open at the same page. */
     private static @Nullable MapCamera keptCamera;
+    /** The first opening frames the player's surroundings (done in init, once the screen knows the client). */
+    private static boolean snapPending;
 
     private final MapCamera camera;
     private final MapScene scene = new MapScene();
@@ -82,8 +84,7 @@ public class GalaxyMapScreen extends Screen {
         if (c == null) {
             c = new MapCamera(GalacticPos.ofParsecs(0, 0, 0), 40_000 * Units.PARSEC, Math.toRadians(200), Math.toRadians(35));
             keptCamera = c;
-            playerPosition();
-            if (player != null) c.snapTo(player, homeDistance());
+            snapPending = true;
         }
         camera = c;
         MapRenderer.install();
@@ -105,6 +106,11 @@ public class GalaxyMapScreen extends Screen {
     @Override
     protected void init() {
         MapRenderer.attach(this);
+        playerPosition();
+        if (snapPending && player != null) {
+            camera.snapTo(player, homeDistance());
+            snapPending = false;
+        }
         FaceOnTexture.request();
         search = new EditBox(font, MARGIN, MARGIN + 12, 170, 16, Component.translatable("map.galactica.search"));
         search.setHint(Component.translatable("map.galactica.search.hint"));
@@ -251,12 +257,17 @@ public class GalaxyMapScreen extends Screen {
             double x = d.x() * k, y = d.y() * k;
             if (x < 0 || y < 0 || x > width || y > height) continue;
             double imp = o.importance();
-            if (o.kind() == MapObject.Kind.STAR && !o.star().catalog() && imp < 8 && distPc > 4) continue;
+            if (o.kind() == MapObject.Kind.STAR && !o.star().catalog() && (imp < 8 && distPc > 4 || scene.system != null && !o.star().equals(scene.system))) continue;
             if (o.kind() == MapObject.Kind.DEEP_SKY && distPc < 20 && o.deepSky().distanceTo(camera.focus().xPc(), camera.focus().yPc(), camera.focus().zPc()) > 600) continue;
+            // Procedural globulars are many and alike: named only within a few kiloparsecs of the camera's focus.
+            if (o.kind() == MapObject.Kind.DEEP_SKY && !o.deepSky().catalogued
+                    && o.deepSky().distanceTo(camera.focus().xPc(), camera.focus().yPc(), camera.focus().zPc()) > Math.min(4_000, 0.3 * distPc)) continue;
             int lw = font.width(o.name());
-            labels.add(new MapPicking.Label<>(o, o.name(), x + d.radiusPx() * k + 3, y - 4, lw, 9, imp));
+            double lx = x + d.radiusPx() * k + 3, ly = y - 4;
+            if (overInterface(lx, ly, lw, 9)) continue;
+            labels.add(new MapPicking.Label<>(o, o.name(), lx, ly, lw, 9, imp));
         }
-        for (MapPicking.Label<MapObject> l : MapPicking.placeLabels(labels, 45)) {
+        for (MapPicking.Label<MapObject> l : MapPicking.placeLabels(labels, 32)) {
             int c = l.object().kind() == MapObject.Kind.STAR || l.object().kind() == MapObject.Kind.BLACK_HOLE
                     ? 0xFF000000 | brighten(l.object().argb()) : l.object().kind() == MapObject.Kind.DEEP_SKY ? 0xFFB8C4E0 : TEXT;
             g.text(font, l.text(), (int) l.x(), (int) l.y(), c, true);
@@ -283,6 +294,14 @@ public class GalaxyMapScreen extends Screen {
         drawScaleBar(g);
         drawPanel(g, target);
         drawHints(g);
+    }
+
+    /** True when a box would fall on the panel, the buttons, or the search box and hints. */
+    private boolean overInterface(double x, double y, int w, int h) {
+        boolean panel = x + w > width - PANEL_W - MARGIN - 2;
+        boolean topLeft = x < MARGIN + 240 && y < MARGIN + 34 + 5 * 10 + Math.min(results.size(), 8) * 11;
+        boolean bottomLeft = x < MARGIN + 330 && y + h > height - MARGIN - 20;
+        return panel || topLeft || bottomLeft;
     }
 
     private static int brighten(int argb) {
@@ -438,7 +457,7 @@ public class GalaxyMapScreen extends Screen {
         double warp = AutopilotMath.warpSeconds(Math.max(0, dist - radius), arrival, max);
         rows.add(new Row(Component.translatable("map.galactica.info.eta_warp", AutopilotMath.formatDuration(warp)), DIM));
         double ly = dist / Units.LIGHT_YEAR;
-        if (ly > 0.05) {
+        if (ly > 0.05 && ly <= 64 * DriveRules.TIER_RANGE_LY) {
             int jumps = (int) Math.ceil(ly / DriveRules.TIER_RANGE_LY);
             rows.add(new Row(Component.translatable("map.galactica.info.eta_jump", jumps, (int) Math.ceil(ly),
                     AutopilotMath.formatDuration(AutopilotMath.hyperjumpSeconds(jumps))), DIM));
@@ -581,6 +600,51 @@ public class GalaxyMapScreen extends Screen {
 
     public @Nullable MapObject selected() {
         return selected;
+    }
+
+    /** Autotest: puts the camera at once on {@code focus}, {@code distance} metres away, looking from yaw/pitch (degrees). */
+    public void autotestView(GalacticPos focus, double distance, double yawDeg, double pitchDeg) {
+        camera.snapTo(focus, distance);
+        camera.setAngles(Math.toRadians(yawDeg), Math.toRadians(pitchDeg));
+    }
+
+    /** Autotest: what the last frame drew. */
+    private int fpsFrames;
+    private long fpsNanos;
+
+    public String autotestSummary() {
+        long now = System.nanoTime();
+        double fps = fpsNanos == 0 ? 0 : (MapRenderer.framesDrawn - fpsFrames) / ((now - fpsNanos) / 1e9);
+        fpsFrames = MapRenderer.framesDrawn;
+        fpsNanos = now;
+        int stars = 0, bodies = 0, deep = 0;
+        for (MapScene.Drawn d : scene.drawn) {
+            switch (d.object().kind()) {
+                case STAR, BLACK_HOLE -> stars++;
+                case PLANET, MOON -> bodies++;
+                case DEEP_SKY -> deep++;
+                default -> { }
+            }
+        }
+        return String.format(Locale.ROOT, "%.0f fps since the last check, frames %d, field %d stars, on screen %d stars %d bodies %d deep-sky, %d orbit lines, disk %.2f, system %s, camera %s",
+                fps, MapRenderer.framesDrawn, field.current().stars().size(), stars, bodies, deep, scene.lines.size(), scene.discAlpha,
+                scene.system == null ? "none" : scene.system.name(), distanceText(camera.distance()));
+    }
+
+    /** Autotest: whether an object of that name was drawn on screen this frame. */
+    public boolean autotestDrawn(String name) {
+        for (MapScene.Drawn d : scene.drawn) {
+            if (d.object().name().equalsIgnoreCase(name) && d.x() >= 0 && d.y() >= 0 && d.x() <= camera.width() && d.y() <= camera.height()) return true;
+        }
+        return false;
+    }
+
+    public int autotestFieldStars() {
+        return field.current().stars().size();
+    }
+
+    public int autotestOrbitLines() {
+        return scene.lines.size();
     }
 
     // ---------------------------------------------------------------- input

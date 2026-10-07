@@ -102,6 +102,12 @@ public final class MapCamera {
         distanceTarget = clampDistance(newDistance);
     }
 
+    /** Sets the view direction at once: yaw about galactic north from +x, pitch above the plane (radians). */
+    public void setAngles(double yawRad, double pitchRad) {
+        yaw = yawRad;
+        pitch = Math.clamp(pitchRad, -MAX_PITCH, MAX_PITCH);
+    }
+
     /** Jumps there at once (the screen opening). */
     public void snapTo(GalacticPos target, double newDistance) {
         focus = focusTarget = target;

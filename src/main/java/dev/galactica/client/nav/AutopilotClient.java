@@ -54,6 +54,8 @@ public final class AutopilotClient {
     private static boolean suppressed, warping, burning, stageTouchdown;
     private static int engagedTicks;
     private static double mouseAccum;
+    /** Mouse counts within a second that take control back (0.15° each, as Entity.turn scales them). */
+    private static final double MOUSE_OVERRIDE = 150;
     private static int mouseWindow;
     /** Last guidance numbers, for the autotest log. */
     public static volatile String debug = "";
@@ -86,8 +88,9 @@ public final class AutopilotClient {
     }
 
     /** Manual input while flying: stop now, and tell the server (it replies with the state turned off). */
-    public static void manual() {
+    public static void manual(String why) {
         if (override == null) return;
+        Galactica.LOG.info("Autopilot: manual input ({}), handing control back", why);
         stopFlying();
         suppressed = true;
         if (ClientPlayNetworking.canSend(AutopilotPayload.TYPE)) ClientPlayNetworking.send(new AutopilotPayload(AutopilotPayload.DISENGAGE_MANUAL));
@@ -111,7 +114,7 @@ public final class AutopilotClient {
         if (override == null) return null;
         boolean any = raw.forward() || raw.backward() || raw.left() || raw.right() || raw.jump() || raw.shift() || raw.sprint();
         if (any && engagedTicks > 10) {
-            manual();
+            manual("key " + raw);
             return null;
         }
         return override;
@@ -121,8 +124,9 @@ public final class AutopilotClient {
     public static boolean onMouse(double dx, double dy) {
         if (override == null) return false;
         mouseAccum += Math.abs(dx) + Math.abs(dy);
-        if (mouseAccum > 60 && engagedTicks > 10) {
-            manual();
+        // A deliberate movement (over ~20° of turn within a second), not a nudge of the desk.
+        if (mouseAccum > MOUSE_OVERRIDE && engagedTicks > 10) {
+            manual(String.format(java.util.Locale.ROOT, "mouse %.0f", mouseAccum));
             return false;
         }
         return true;
@@ -160,7 +164,7 @@ public final class AutopilotClient {
         }
         if (ship != null && engagedTicks > 10 && (ShipClient.ROLL_LEFT.isDown() || ShipClient.ROLL_RIGHT.isDown())) {
             override = new Input(false, false, false, false, false, false, false);
-            manual();
+            manual("roll keys");
             return;
         }
         try {
@@ -260,11 +264,14 @@ public final class AutopilotClient {
         double[] dv = {want[0] - v[0], want[1] - v[1], want[2] - v[2]};
         double dvm = Math.sqrt(dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2]);
         Vector3d dir;
-        if (dvm > 0.5) {
+        if (dvm > 2.0 || burning && dvm > 1.0) {
             double[] m = Frames.galacticToMc(dv[0], dv[1], dv[2]);
             dir = new Vector3d(m[0], m[1], m[2]).normalize();
         } else {
-            double[] m = Frames.galacticToMc(want[0], want[1], want[2]);
+            // Nothing to gain: hold the attitude the next burn will most likely want, instead of chasing a noise vector.
+            // Descending, gravity keeps adding speed downward, so that is radially up; in orbit, along the motion.
+            double[] hold = descent ? rr : want;
+            double[] m = Frames.galacticToMc(hold[0], hold[1], hold[2]);
             dir = new Vector3d(m[0], m[1], m[2]);
             if (dir.lengthSquared() < 1e-9) dir.set(0, 1, 0);
             dir.normalize();

@@ -183,6 +183,14 @@ loom {
             vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=soi'
             programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
         }
+        // The 3D map and autopilot checks alone (AutoTest "nav" mode; the default run ends with them too).
+        autotestNav {
+            client()
+            configName = 'Galactica Autotest (3D map + autopilot)'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=nav'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
         showcase {
             client()
             configName = 'Galactica Showcase take'

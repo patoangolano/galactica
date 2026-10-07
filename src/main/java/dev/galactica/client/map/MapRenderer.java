@@ -132,8 +132,15 @@ public final class MapRenderer {
         }
     }
 
+    /** Render thread (screen init / removal), outside any pass: a new screen streams its own field. */
     static void attach(@Nullable GalaxyMapScreen s) {
         screen = s;
+        if (field != null) {
+            field.close();
+            field = null;
+        }
+        fieldQuads = 0;
+        if (s != null) s.field().markFresh(); // a resize re-runs init: upload the screen's current field again
     }
 
     /** The finished frame's texture view for the screen's blit, or null before the first frame. */

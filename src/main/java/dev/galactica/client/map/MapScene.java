@@ -22,9 +22,7 @@ import org.joml.Vector3d;
 import org.jspecify.annotations.Nullable;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * What the 3D map shows in one frame, built on the render thread from the camera: every object's sprite (written for
@@ -62,7 +60,6 @@ final class MapScene {
     int[] systemAddress;
     private final Neighbourhood nb = new Neighbourhood(Galactica.GALAXY);
     private final List<MapObject> catalog = new ArrayList<>(), deepSky = new ArrayList<>();
-    private final Map<Long, double[]> orbitCache = new HashMap<>();
     private long orbitSystem = Long.MIN_VALUE;
 
     MapScene() {
@@ -132,7 +129,6 @@ final class MapScene {
             system = near;
             if (orbitSystem != near.id()) {
                 orbitSystem = near.id();
-                orbitCache.clear();
                 systemAddress = TargetSearch.addressOf(Galactica.GALAXY, near);
             }
         }
@@ -196,14 +192,14 @@ final class MapScene {
         for (Body planet : TargetGeometry.system(s)) {
             GalacticPos pp = TargetGeometry.bodyPos(s, sp, planet, null, time);
             drawBody(cam, view, s, k, index, addressed, planet, null, pp, sp);
-            orbitLine(cam, s, sp, planet, 0x7090A8D0);
+            orbitLine(cam, s, sp, planet, time, 0x7090A8D0);
             for (Body moon : planet.moons()) {
                 GalacticPos mp = TargetGeometry.bodyPos(s, sp, planet, moon, time);
                 // A moon only once its orbit is resolvable: its distance from the planet over ~6 px.
                 double sep = moon.orbit().semiMajorAxis() * cam.pixelsPerMetreAtFocus();
                 if (sep < 6) continue;
                 drawBody(cam, view, s, k, index, addressed, moon, planet, mp, sp);
-                orbitLine(cam, s, pp, moon, 0x506C8098);
+                orbitLine(cam, s, pp, moon, time, 0x506C8098);
             }
         }
     }
@@ -223,25 +219,27 @@ final class MapScene {
         drawn.add(new Drawn(o, p[0], p[1], p[2], px));
     }
 
-    /** The orbit of {@code b} about {@code centre}, from its elements, projected; skipped while smaller than a few pixels. */
-    private void orbitLine(MapCamera cam, Star s, GalacticPos centre, Body b, int argb) {
-        double[] pts = orbitCache.get(b.id());
-        if (pts == null) {
-            pts = new double[ORBIT_POINTS * 3];
-            double[] buf = new double[3], g = new double[3];
-            double period = b.orbit().periodSeconds();
-            for (int i = 0; i < ORBIT_POINTS; i++) {
-                b.orbit().positionAt(period * i / (ORBIT_POINTS - 1), buf);
-                SystemFrame.toGalactic(s, buf[0], buf[1], buf[2], g);
-                pts[i * 3] = g[0];
-                pts[i * 3 + 1] = g[1];
-                pts[i * 3 + 2] = g[2];
-            }
-            orbitCache.put(b.id(), pts);
-        }
+    /**
+     * The orbit of {@code b} about {@code centre}, from its elements, projected; skipped while smaller than a few pixels.
+     * Sampled from the body's current position round one period, so the line always runs through the body (a fixed
+     * sampling cut corners next to it at close zoom).
+     */
+    private void orbitLine(MapCamera cam, Star s, GalacticPos centre, Body b, double time, int argb) {
         if (b.orbit().apoapsis() * cam.pixelsPerMetreAtFocus() < 4) return;
+        double[] pts = orbitPoints;
+        double[] buf = new double[3], g = new double[3];
+        double period = b.orbit().periodSeconds();
+        for (int i = 0; i < ORBIT_POINTS; i++) {
+            b.orbit().positionAt(time + period * i / (ORBIT_POINTS - 1), buf);
+            SystemFrame.toGalactic(s, buf[0], buf[1], buf[2], g);
+            pts[i * 3] = g[0];
+            pts[i * 3 + 1] = g[1];
+            pts[i * 3 + 2] = g[2];
+        }
         lines.add(new Polyline(projectPolyline(cam, centre, pts), argb, false));
     }
+
+    private final double[] orbitPoints = new double[ORBIT_POINTS * 3];
 
     /** Projects offsets (metres from {@code centre}) to screen; a point behind the eye is NaN (the screen breaks the line there). */
     static double[] projectPolyline(MapCamera cam, GalacticPos centre, double[] offsets) {

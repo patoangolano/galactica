@@ -12,7 +12,7 @@ import net.minecraft.network.chat.Component;
 import org.joml.Vector3fc;
 
 /**
- * The locked target on the HUD: a small panel at the top centre (name, kind, distance, ETA, the autopilot's phase,
+ * The locked target on the HUD: a small panel at the top right (name, kind, distance, ETA, the autopilot's phase,
  * the pilot's for a passenger) and, in space, a marker where the target lies on screen, or an arrow on the screen's
  * edge pointing toward it when it is behind or off to a side.
  */
@@ -40,7 +40,8 @@ public final class TargetHud {
                 : Component.translatable("hud.galactica.autopilot.line.off", dev.galactica.client.nav.AutopilotClient.toggleKey.getTranslatedKeyMessage());
         int pw = Math.max(font.width(l1), Math.max(l2 == null ? 0 : font.width(l2), font.width(l3))) + 12;
         int lines = l2 == null ? 2 : 3;
-        int x0 = w / 2 - pw / 2, y0 = 4;
+        // Top right: the nav panel holds the top left, the ship HUD starts 56 px down on the right.
+        int x0 = w - pw - 4, y0 = 4;
         g.fill(x0, y0, x0 + pw, y0 + lines * 11 + 6, 0x90000814);
         g.fill(x0, y0, x0 + pw, y0 + 1, TARGET);
         int y = y0 + 4;

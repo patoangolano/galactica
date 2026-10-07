@@ -78,6 +78,11 @@ public final class MapStarField {
         return current;
     }
 
+    /** Asks the renderer to upload the current batch again (its GPU copy was dropped). */
+    public void markFresh() {
+        fresh = true;
+    }
+
     /** True once after a new batch arrived (the renderer re-uploads it). */
     public boolean takeFresh() {
         boolean f = fresh;
