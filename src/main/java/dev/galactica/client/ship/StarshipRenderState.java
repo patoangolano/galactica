@@ -16,6 +16,11 @@ public class StarshipRenderState extends EntityRenderState {
     public float gear = 1F, canopy, gimbalYaw, gimbalPitch;
     /** RCS command bits ({@link dev.galactica.ship.ShipAnimator}). */
     public int rcs;
+    /**
+     * True when the local camera sits in this ship's cockpit in first person: the exterior canopy (glass and frame
+     * hoops) is hidden and the interior glass and live display are drawn instead.
+     */
+    public boolean cockpitView;
     /** Static pressure around the ship, bar (0 in space). */
     public float ambientBar;
 

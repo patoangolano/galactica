@@ -1,7 +1,6 @@
 package dev.galactica.client.ship.geckolib;
 
 import dev.galactica.Galactica;
-import dev.galactica.client.ship.StarshipModel;
 import dev.galactica.client.ship.StarshipRenderState;
 import dev.galactica.client.ship.StarshipRenderer;
 import dev.galactica.ship.ShipAnimator;
@@ -44,8 +43,9 @@ import net.minecraft.world.phys.AABB;
  *   <li>controller {@code canopy}: {@code canopy.open} while nobody is aboard, {@code canopy.close} once boarded;</li>
  *   <li>nozzle gimbal: posed every frame from the thrust-vector state in {@link #adjustModelBonesForRender}.</li>
  * </ul>
- * The geometry holds only the hull layer; the emissive lights and engine cores, and the exhaust, are drawn by the
- * shared vanilla code on top, from the same part table, so nothing is drawn twice.
+ * The geometry holds only the opaque hull layer; the canopy glass, the cockpit interior, the emissive lights and
+ * engine cores, and the exhaust, are drawn by the shared vanilla code on top, from the same part table, so nothing
+ * is drawn twice.
  */
 public final class GeckoShipRendering {
     private GeckoShipRendering() {}
@@ -111,13 +111,12 @@ public final class GeckoShipRendering {
     }
 
     static final class Renderer extends GeoReplacedEntityRenderer<ShipAnimatable, Starship, StarshipRenderState> {
-        private final StarshipModel lights, cores;
+        private final StarshipRenderer.Layers layers;
 
         Renderer(EntityRendererProvider.Context context) {
             super(context, new Model(), new ShipAnimatable());
-            this.lights = new StarshipModel(context.bakeLayer(StarshipModel.LIGHTS_LAYER));
-            this.cores = new StarshipModel(context.bakeLayer(StarshipModel.CORES_LAYER));
-            this.shadowRadius = 1.5F;
+            this.layers = StarshipRenderer.Layers.bake(context);
+            this.shadowRadius = 3.5F;
         }
 
         @Override
@@ -160,6 +159,9 @@ public final class GeckoShipRendering {
             // Stowed legs sit inside the pods and nose; hide them once folded, as the built-in model does.
             boolean stowed = ShipAnimator.ease(1F - s.gear) >= 0.98F;
             for (String leg : GEAR_BONES) bones.ifPresent(leg, b -> b.skipRender(stowed).skipChildrenRender(stowed));
+            // From the cockpit the exterior canopy hoops would cut across the view; the shared code draws the interior.
+            boolean inside = s.cockpitView;
+            bones.ifPresent("canopy", b -> b.skipRender(inside).skipChildrenRender(inside));
         }
 
         @Override
@@ -170,7 +172,7 @@ public final class GeckoShipRendering {
         @Override
         public void submit(StarshipRenderState state, PoseStack pose, SubmitNodeCollector out, CameraRenderState camera) {
             super.submit(state, pose, out, camera);
-            StarshipRenderer.submitOverlays(state, pose, out, camera, lights, cores);
+            StarshipRenderer.submitOverlays(state, pose, out, camera, layers);
         }
     }
 }

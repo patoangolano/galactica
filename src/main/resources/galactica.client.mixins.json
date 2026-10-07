@@ -9,6 +9,8 @@
     "ship.EntityTurnShipMixin",
     "ship.EntityLightShipMixin",
     "ship.LocalPlayerShipInputMixin",
+    "ship.EntityRenderStateShipMixin",
+    "ship.LivingRendererShipMixin",
     "earthsky.EarthSkyMixin",
     "planet.LoadingScreenMixin"
   ],

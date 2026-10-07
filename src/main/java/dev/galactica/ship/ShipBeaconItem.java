@@ -39,10 +39,18 @@ public class ShipBeaconItem extends Item {
         if (hit.getType() == HitResult.Type.BLOCK) {
             at = hit.getLocation();
             Direction face = hit.getDirection();
-            // Off a wall or ceiling, back away by half the hull so the ship does not spawn inside the block.
-            if (face != Direction.UP) at = at.add(face.getStepX() * 1.6, face == Direction.DOWN ? -1.6 : 0, face.getStepZ() * 1.6);
+            // Off a wall or ceiling, back away by half the box so the ship does not spawn inside the block.
+            double half = ShipDimensions.BOX_WIDTH / 2.0 + 0.1;
+            if (face != Direction.UP) at = at.add(face.getStepX() * half, face == Direction.DOWN ? -ShipDimensions.BOX_HEIGHT - 0.1 : 0, face.getStepZ() * half);
         } else {
-            at = end.subtract(0, 0.75, 0);
+            at = end.subtract(0, ShipDimensions.PIVOT, 0);
+        }
+        // Keep the box off the player: at least half the box plus an arm's length away horizontally.
+        Vec3 flat = new Vec3(at.x - player.getX(), 0, at.z - player.getZ());
+        double clear = ShipDimensions.BOX_WIDTH / 2.0 + 1.0;
+        if (flat.length() < clear) {
+            Vec3 dir = flat.lengthSqr() > 1e-4 ? flat.normalize() : Vec3.directionFromRotation(0F, player.getYRot());
+            at = new Vec3(player.getX() + dir.x * clear, at.y, player.getZ() + dir.z * clear);
         }
 
         Starship ship = ShipEntities.SHIP.create(level, EntitySpawnReason.SPAWN_ITEM_USE);

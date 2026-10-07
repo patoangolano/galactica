@@ -135,13 +135,31 @@ public final class AutoTest {
         // (azimuth toward port from the nose, elevation above the ship's horizon).
         clearChat(40);
         orientShip(5, 35, 30);       shot(10, "17_ship_boarded");
+        // The cockpit interior in first person, close to the Sun (2 degrees in radius), the Sun high ahead-left
+        // through the canopy; then rolled almost inverted, so the seat, glass and display ride the roll.
+        server(5, "park near the Sun (2 deg)", sp -> parkNearStar(sp, null, 2));
+        hud(40, false);
+        orientShip(5, 30, 14);       shot(10, "17a_cockpit_sun");
+        rollShip(5, 150);            shot(10, "17a2_cockpit_rolled");
+        // The night side: the Sun behind and below, the cabin lit by its instrument glow.
+        orientShip(5, 180, -40);     shot(10, "17a3_cockpit_shadow");
+        cmd(5, "galactica goto Sol");
         // Exteriors without the HUD: the chase view with the Sun behind and above the camera, then a 3/4 front orbit.
-        hud(5, false);
-        camera(5, net.minecraft.client.CameraType.THIRD_PERSON_BACK);
+        camera(40, net.minecraft.client.CameraType.THIRD_PERSON_BACK);
         orientShip(5, 150, 35);      shot(10, "17b_ship_exterior");
         orientShip(5, -60, 40);
-        STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(145, 18, 7.5F)));
+        STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(145, 18, 17F)));
         shot(10, "17c_ship_exterior_front");
+        // The pilot inside the canopy: close orbits from the port side and from ahead and above the nose.
+        orientShip(5, 120, 50);
+        STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(-80, 22, 8F)));
+        shot(10, "17e_pilot_in_canopy_side");
+        STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(165, 38, 9F)));
+        shot(10, "17f_pilot_in_canopy_front");
+        // Pitched and rolled: the crew turns with the hull and stays under the glass.
+        rollShip(5, 35);
+        STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(-70, 15, 9F)));
+        shot(10, "17g_pilot_in_canopy_rolled");
         STEPS.add(new Step(5, dev.galactica.client.ship.ShipCamera::clearOrbit));
         // The mirrored front view (F5 twice) with the same tilt and lift as the chase view.
         camera(5, net.minecraft.client.CameraType.THIRD_PERSON_FRONT);
@@ -170,6 +188,9 @@ public final class AutoTest {
         STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Mars")));
         look(200, 0, -10);  shot(5, "20_mars_descent");
         STEPS.add(new Step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Mars", 0.38)));
+        shipOnGround(560, "Mars");   // ~28 s of free fall from the entry height at 0.38 g
+        shot(5, "21a_mars_cockpit");
+        landedExterior("21c_mars_ship_landed");
         cmd(5, "galactica ground");
         look(80, 30, 8);    shot(5, "21_mars_ground");
         look(20, 210, 5);   shot(5, "21b_mars_ground_back");
@@ -177,6 +198,9 @@ public final class AutoTest {
         STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Earth")));
         look(200, 0, -10);  shot(5, "22_earth_descent");
         STEPS.add(new Step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Earth", 1.0)));
+        shipOnGround(300, "Earth");
+        shot(5, "22a_earth_cockpit");
+        landedExterior("22c_earth_ship_landed");
         cmd(5, "galactica ground");
         look(80, 30, 8);    shot(5, "22b_earth_ground");
         cmd(20, "galactica goto Sol");
@@ -258,6 +282,49 @@ public final class AutoTest {
                     sunAzDeg, sunElDeg, String.format(java.util.Locale.ROOT, "%.1f", Math.toDegrees(Math.acos(Math.min(1F, bestDot)))),
                     state.direct, state.toStar);
         }));
+    }
+
+    /** Rolls the piloted ship about its nose by {@code deg} (right wing down), keeping its heading and pitch. */
+    private static void rollShip(int wait, float deg) {
+        STEPS.add(new Step(wait, () -> {
+            var ship = dev.galactica.client.ship.ShipClient.piloted(Minecraft.getInstance());
+            if (ship == null) return;
+            ship.setAttitude(new org.joml.Quaternionf(ship.attitude()).rotateZ((float) Math.toRadians(deg)));
+            Galactica.LOG.info("[autotest] ship rolled {} deg", deg);
+        }));
+    }
+
+    /**
+     * After a landing: the piloted ship rests on the terrain (on the ground, its gear feet no more than a block and a
+     * half above the column under its centre; the box rests on the highest block of its 6×6 footprint), with the
+     * crew alive and aboard. Logs PASS or FAIL.
+     */
+    private static void shipOnGround(int wait, String body) {
+        STEPS.add(new Step(wait, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            var ship = mc.player != null && mc.player.getVehicle() instanceof dev.galactica.ship.Starship s ? s : null;
+            if (ship == null) {
+                Galactica.LOG.warn("[autotest] FAIL ship on ground on {}: not aboard (alive {})", body, mc.player != null && mc.player.isAlive());
+                return;
+            }
+            int top = mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+                    net.minecraft.util.Mth.floor(ship.getX()), net.minecraft.util.Mth.floor(ship.getZ()));
+            double gap = ship.getY() - top;
+            boolean inside = !mc.level.noCollision(ship, ship.getBoundingBox().deflate(0.05));
+            boolean ok = ship.onGround() && gap > -0.05 && gap < 1.5 && !inside && mc.player.isAlive();
+            Galactica.LOG.info("[autotest] {} ship on ground on {}: onGround {}, feet {} over the column top {}, embedded {}, speed {} m/s",
+                    ok ? "PASS" : "FAIL", body, ship.onGround(), String.format(java.util.Locale.ROOT, "%.2f", gap), top, inside,
+                    String.format(java.util.Locale.ROOT, "%.2f", ship.getDeltaMovement().length() * 20));
+        }));
+    }
+
+    /** A third-person shot of the landed ship from ahead and above, then back to first person. */
+    private static void landedExterior(String name) {
+        camera(5, net.minecraft.client.CameraType.THIRD_PERSON_BACK);
+        STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(150, 20, 18F)));
+        shot(10, name);
+        STEPS.add(new Step(5, dev.galactica.client.ship.ShipCamera::clearOrbit));
+        camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
     }
 
     /** Presses or releases a key mapping inside the game (no OS input). */

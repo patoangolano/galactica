@@ -78,9 +78,9 @@ public class Starship extends VehicleEntity {
     /** Hull points per point of incoming damage: a ship survives ~20 unarmed punches, a creeper twice. */
     private static final float HULL_PER_DAMAGE = 5F;
     private static final float HULL_PER_IRON = 10F;
-    /** Seats in the body frame, blocks from the model pivot (0.75 above the entity origin). */
-    private static final Vector3fc PILOT_SEAT = new Vector3f(0F, -0.45F, 0.75F), PASSENGER_SEAT = new Vector3f(0F, -0.45F, -0.55F);
-    private static final double PIVOT = 0.75;
+    /** Seats in the body frame, blocks from the model pivot ({@link ShipDimensions}: tandem, both under the canopy). */
+    private static final Vector3fc PILOT_SEAT = ShipDimensions.PILOT_SEAT, PASSENGER_SEAT = ShipDimensions.PASSENGER_SEAT;
+    private static final double PIVOT = ShipDimensions.PIVOT;
 
     /**
      * Downward gravity, m/s², for levels other than space (space uses {@link ShipGravity} in the pilot's frame).
@@ -210,7 +210,7 @@ public class Starship extends VehicleEntity {
         canopyO = canopy;
         gimbalYawO = gimbalYaw;
         gimbalPitchO = gimbalPitch;
-        gearDown = ShipAnimator.gearDown(gearDown, onGround(), heightAboveGround(12));
+        gearDown = ShipAnimator.gearDown(gearDown, onGround(), heightAboveGround(16));
         gear = ShipAnimator.approach(gear, gearDown ? 1F : 0F, (float) ShipFlightModel.TICK, ShipAnimator.GEAR_SECONDS);
         boolean open = ShipAnimator.canopyOpen(getPassengers().size());
         canopy = ShipAnimator.approach(canopy, open ? 1F : 0F, (float) ShipFlightModel.TICK, ShipAnimator.CANOPY_SECONDS);
@@ -487,8 +487,8 @@ public class Starship extends VehicleEntity {
 
     @Override
     public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
-        // Step out beside the hull (port side), not into the cockpit glass.
-        Vector3f side = attitude.transform(new Vector3f(2.2F, 0F, 0F));
+        // Step out beside the hull (port side, ahead of the wing root and clear of the box), not into the glass.
+        Vector3f side = attitude.transform(new Vector3f(ShipDimensions.BOX_WIDTH / 2F + 0.8F, 0F, 1.0F));
         return new Vec3(getX() + side.x, getY() + Math.max(0, side.y), getZ() + side.z);
     }
 

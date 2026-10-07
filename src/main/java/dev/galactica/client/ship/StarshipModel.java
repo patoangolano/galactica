@@ -11,12 +11,13 @@ import net.minecraft.client.model.geom.builders.MeshDefinition;
 import java.util.function.Consumer;
 
 /**
- * The Starship's cuboid model (v3): a 4.8-block heavy fighter with twin rear thruster pods, swept wings with canted
- * tip fins, a forward glass canopy and tricycle gear. Geometry and the 256² material-atlas texture come from one part
+ * The Starship's cuboid model (v4): a 13.6-block fighter ({@link dev.galactica.ship.ShipDimensions}) with twin rear thruster pods, swept wings with canted
+ * tip fins, a tandem glass cockpit and tricycle gear. Geometry and the 1024² material-atlas texture come from one part
  * table in {@code assets-src/ship/gen_starship.py}; the boxes are its output ({@link StarshipGeometry}). Units are
  * 1/16 block, Y down (the renderer applies {@code scale(-1,-1,1)}), +Z is the nose.
  *
- * <p>Three layers share the texture and the bone tree: the opaque hull, the always-on lights, and the engine cores.
+ * <p>Six layers share the texture and the bone tree: the opaque hull, the translucent canopy glass, the always-on
+ * lights, the engine cores, and the cockpit interior with its emissive keys.
  * {@link #setupAnim} poses the moving bones (gear, canopy, nozzle gimbal) from the render state, in every layer
  * alike, using {@link ShipAnimator}'s angles converted to ModelPart space (rotations about X and Y change sign
  * under the renderer's 180° turn about Z).
@@ -25,6 +26,9 @@ public class StarshipModel extends EntityModel<StarshipRenderState> {
     public static final ModelLayerLocation HULL_LAYER = new ModelLayerLocation(Galactica.id("ship"), "main");
     public static final ModelLayerLocation LIGHTS_LAYER = new ModelLayerLocation(Galactica.id("ship"), "lights");
     public static final ModelLayerLocation CORES_LAYER = new ModelLayerLocation(Galactica.id("ship"), "cores");
+    public static final ModelLayerLocation GLASS_LAYER = new ModelLayerLocation(Galactica.id("ship"), "glass");
+    public static final ModelLayerLocation COCKPIT_LAYER = new ModelLayerLocation(Galactica.id("ship"), "cockpit");
+    public static final ModelLayerLocation COCKPIT_LIGHTS_LAYER = new ModelLayerLocation(Galactica.id("ship"), "cockpit_lights");
     private static final int TEX = StarshipGeometry.TEXTURE_SIZE;
     private static final float DEG = (float) (Math.PI / 180.0);
 
@@ -58,6 +62,18 @@ public class StarshipModel extends EntityModel<StarshipRenderState> {
         return layer(StarshipGeometry::cores);
     }
 
+    public static LayerDefinition createGlassLayer() {
+        return layer(StarshipGeometry::glass);
+    }
+
+    public static LayerDefinition createCockpitLayer() {
+        return layer(StarshipGeometry::cockpit);
+    }
+
+    public static LayerDefinition createCockpitLightsLayer() {
+        return layer(StarshipGeometry::cockpitLights);
+    }
+
     @Override
     public void setupAnim(StarshipRenderState state) {
         super.setupAnim(state);
@@ -69,6 +85,8 @@ public class StarshipModel extends EntityModel<StarshipRenderState> {
         // Stowed legs sit inside the pods and nose: hide them once fully folded so nothing pokes through the skin.
         gearFront.visible = gearLeft.visible = gearRight.visible = stow < 0.98F;
         canopy.xRot = -ShipAnimator.CANOPY_OPEN_DEG * open * DEG;
+        // From the cockpit the exterior hoops and glass would cut across the view: the interior draws its own.
+        canopy.visible = !state.cockpitView;
         nozzleLeft.xRot = nozzleRight.xRot = -state.gimbalPitch * DEG;
         nozzleLeft.yRot = nozzleRight.yRot = -state.gimbalYaw * DEG;
     }
