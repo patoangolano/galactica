@@ -28,9 +28,11 @@ public final class AutoTest {
 
     private static final List<Step> STEPS = new ArrayList<>();
     private static final String TAG = System.getProperty("galactica.autotest.tag", "");
-    /** Run mode: -Dgalactica.autotest.mode, else the GALACTICA_AUTOTEST_MODE environment variable (e.g. "m7"). */
-    private static final String MODE = System.getProperty("galactica.autotest.mode",
-            System.getenv().getOrDefault("GALACTICA_AUTOTEST_MODE", ""));
+    /**
+     * Run mode from -Dgalactica.autotest.mode only (e.g. "m7"). No environment fallback: a stale
+     * variable in the shell would silently replace the default and Iris runs.
+     */
+    private static final String MODE = System.getProperty("galactica.autotest.mode", "");
     private static int index, countdown = 200;
     private static Consumer<Minecraft> perTick = mc -> {};
 
@@ -38,7 +40,9 @@ public final class AutoTest {
         if (!Boolean.getBoolean("galactica.autotest")) return;
         Galactica.LOG.info("[autotest] enabled{}{}", TAG.isEmpty() ? "" : " (" + TAG + ")", MODE.isEmpty() ? "" : " mode " + MODE);
         if ("m7".equals(MODE)) {
-            cmd(0, "galactica kit");
+            // The test world persists between runs: empty the inventory so every run starts with one kit.
+            cmd(0, "clear");
+            cmd(5, "galactica kit");
             cmd(10, "galactica launch");
             cmd(40, "galactica goto Sol");
             m7();
@@ -168,10 +172,6 @@ public final class AutoTest {
         STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Venus")));
         STEPS.add(new Step(40, () -> Minecraft.getInstance().player.connection.sendCommand("galactica ground")));
         look(80, 30, 5);    shot(5, "24_venus_ground");
-        // M7 effects, from space again.
-        cmd(20, "galactica launch");
-        cmd(40, "galactica goto Sol");
-        m7();
         STEPS.add(new Step(60, () -> Minecraft.getInstance().stop()));
         ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
     }
@@ -420,13 +420,23 @@ public final class AutoTest {
         cmd(5, "gamemode survival");
         cmd(20, "galactica ground");
         // The touchdown can take a few seconds while the column generates.
+        // Aimed 4 degrees under the sun, so the disc sits just above the crosshair instead of under it.
         STEPS.add(new Step(140, () -> {
             double[] sun = dev.galactica.client.planet.SurfaceSkyOverlay.lastSunDir();
-            if (sun != null) aimDir(sun[0], sun[1], sun[2]);
+            if (sun != null) {
+                double h = Math.sqrt(sun[0] * sun[0] + sun[2] * sun[2]);
+                aim((float) Math.toDegrees(Math.atan2(-sun[0], sun[2])), (float) -Math.toDegrees(Math.atan2(sun[1], h)) + 4f);
+            }
             Galactica.LOG.info("[autotest] surface sun direction {} ({})", sun == null ? "unknown" : java.util.Arrays.toString(sun),
                     dev.galactica.client.planet.SurfaceSkyOverlay.lastSunProbe());
         }));
         shot(10, "m7_30_mars_surface_sun");
+        STEPS.add(new Step(1, () -> {
+            double[] sun = dev.galactica.client.planet.SurfaceSkyOverlay.lastSunDir();
+            boolean ok = sun != null && sun[1] > 0 && dev.galactica.client.planet.SurfaceSkyOverlay.lastSunDrawn();
+            Galactica.LOG.info("[autotest] {} surface sun disc on Mars ({})", ok ? "PASS" : "FAIL",
+                    dev.galactica.client.planet.SurfaceSkyOverlay.lastSunProbe());
+        }));
         cmd(10, "galactica launch");
         cmd(40, "galactica goto Sol");
         server(40, "park 300 km over Earth", sp -> parkOverBody(sp, "Earth", 300e3));
@@ -450,6 +460,7 @@ public final class AutoTest {
      */
     private static void entry(String body, String prefix) {
         aimNadir(80, body, 0);
+        aimShipAtNadir(5, body);
         shot(5, prefix + "_a_start");
         STEPS.add(new Step(5, () -> {
             Galactica.LOG.info("[autotest] entry {} begins", body);
@@ -511,7 +522,11 @@ public final class AutoTest {
 
     /**
      * The warp drive as the sprint key would spool it, set on the server: 15 %/tick from 1 km/s,
-     * capped at half the distance to the surface ahead per second (NavServer's governor). Set on the
+     * capped at nav.maxSpeed() and at half the distance to the surface ahead per second (NavServer's
+     * governor) plus the rate at which the body's own orbital motion opens that distance. NavServer
+     * lacks that last term, so a real dive can level off above the switch altitude when the body
+     * recedes along the line of flight (Mars, some orbital phases: see the M7 report); the term keeps
+     * this visual test independent of that flight bug. Set on the
      * server rather than by holding the sprint mapping, so the dive does not depend on the client
      * input reaching the server. Fuel rules still apply: a survival EVA cannot warp
      * (Starship.consumeWarpFuel). The server decays an unpowered drive by 0.8 before it moves the
@@ -528,8 +543,13 @@ public final class AutoTest {
             GalacticPos here = serverHere(sp);
             var look = sp.getLookAngle();
             double[] dir = Frames.mcToGalactic(look.x, look.y, look.z);
-            double governor = Math.max(1e3, 0.5 * NavServer.neighbourhood(sp).distanceToNearestSurfaceAhead(here, nav.timeSeconds(), dir));
-            drive[0] = Math.min(governor, Math.max(1e3, drive[0] * 1.15));
+            Neighbourhood nb = NavServer.neighbourhood(sp);
+            double t = nav.timeSeconds();
+            double ahead = nb.distanceToNearestSurfaceAhead(here, t, dir);
+            double later = nb.distanceToNearestSurfaceAhead(here, t + 1, dir);
+            double recede = ahead < 1e15 && later < 1e15 ? Math.max(0, later - ahead) : 0;
+            double governor = Math.max(1e3, 0.5 * ahead + recede);
+            drive[0] = Math.min(Math.min(nav.maxSpeed(), governor), Math.max(1e3, drive[0] * 1.15));
             sp.setAttached(Galactica.NAV, nav.withSpeed(drive[0] / 0.8));
         });
     }
@@ -606,6 +626,42 @@ public final class AutoTest {
      * Aims at a body: {@code elevDeg} 0 looks straight down at the nadir; otherwise the aim is that
      * many degrees from the horizon (negative = below it, so the limb sits above the screen centre).
      */
+    /**
+     * Points a piloted starship's nose at the centre of {@code name}. The pilot's view follows the nose
+     * (EntityTurnShipMixin), so {@link #aimNadir} alone leaves the ship on its deploy heading. Set on
+     * both sides: the client's predicted attitude is what it sends back, and the server turns towards
+     * that at a capped rate. No-op on foot.
+     */
+    private static void aimShipAtNadir(int wait, String name) {
+        STEPS.add(new Step(wait, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship ship)) return;
+            SkyManager mgr = SkyManager.get();
+            GalacticPos eye = mgr.viewer();
+            if (eye == null || mgr.nav() == null) return;
+            for (Neighbourhood.Located l : mgr.neighbourhood().locateBodies(eye, mgr.nav().timeSeconds())) {
+                if (!l.body().name().equalsIgnoreCase(name)) continue;
+                double[] g = l.pos().metresFrom(eye);
+                double[] n = Frames.galacticToMc(g[0], g[1], g[2]);
+                double len = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                org.joml.Quaternionf q = new org.joml.Quaternionf().rotationTo(0, 0, 1,
+                        (float) (n[0] / len), (float) (n[1] / len), (float) (n[2] / len));
+                ship.setAttitude(q);
+                var srv = mc.getSingleplayerServer();
+                if (srv != null) {
+                    java.util.UUID id = ship.getUUID();
+                    srv.execute(() -> {
+                        for (var lvl : srv.getAllLevels()) {
+                            if (lvl.getEntity(id) instanceof dev.galactica.ship.Starship s) s.setAttitude(q);
+                        }
+                    });
+                }
+                Galactica.LOG.info("[autotest] ship nose aimed at the centre of {}", name);
+                return;
+            }
+        }));
+    }
+
     private static void aimNadir(int wait, String name, float elevDeg) {
         STEPS.add(new Step(wait, () -> {
             SkyManager mgr = SkyManager.get();

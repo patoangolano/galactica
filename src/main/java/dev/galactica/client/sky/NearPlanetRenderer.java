@@ -309,9 +309,13 @@ public final class NearPlanetRenderer {
             DynamicTexture globe = clip.globe();
             double horizon = Math.acos(Math.min(1, x.radius / x.d)) * 0.9995;
             if (globe != null) addPart(PARTS, vertex, cap(buf, x, horizon, 0), globe, true);
+            // Each level fades into whatever is drawn under it; the bottom one only when the globe cap is there.
+            boolean under = globe != null;
             for (int k = clip.coarsestUsable(); k >= Math.min(minLevel, SurfaceClipmap.LEVELS - 1); k--) {
                 SurfaceClipmap.Level l = clip.level(k);
-                if (l.ready()) addPart(PARTS, vertex, level(buf, x, l), l.texture(), false);
+                if (!l.ready()) continue;
+                addPart(PARTS, vertex, level(buf, x, l, under), l.texture(), false);
+                under = true;
             }
             DynamicTexture clouds = clip.clouds();
             if (clouds != null && (b.type() == BodyType.TERRAN || b.type() == BodyType.OCEAN)) {
@@ -396,8 +400,11 @@ public final class NearPlanetRenderer {
         return n;
     }
 
-    /** One clipmap level as a patch of the sphere; quads behind the horizon are skipped. */
-    private static int level(BufferBuilder buf, Ctx x, SurfaceClipmap.Level l) {
+    /**
+     * One clipmap level as a patch of the sphere; quads behind the horizon are skipped. {@code fade}
+     * feathers its rim, for a level drawn over something (a coarser level or the globe cap).
+     */
+    private static int level(BufferBuilder buf, Ctx x, SurfaceClipmap.Level l, boolean fade) {
         float[][] q = new float[4][5];
         int[] c = new int[4];
         double[] nrm = new double[3];
@@ -422,7 +429,8 @@ public final class NearPlanetRenderer {
                     if (facing >= -1e-6 * x.d) visible = false;
                     q[k][3] = (float) fu;
                     q[k][4] = (float) fv;
-                    c[k] = feather(surfaceVertex(x, nrm, q[k], 0, 0), fu, fv);
+                    int col = surfaceVertex(x, nrm, q[k], 0, 0);
+                    c[k] = fade ? feather(col, fu, fv) : col;
                 }
                 if (!visible) continue;
                 emitInward(buf, q, c);
