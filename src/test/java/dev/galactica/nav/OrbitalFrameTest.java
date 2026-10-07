@@ -104,6 +104,9 @@ class OrbitalFrameTest {
         double[] el = OrbitalFrame.apsides(new double[] {rp, 0, 0}, new double[] {0, vp, 0}, MU_EARTH);
         assertEquals(rp, el[0], 1);
         assertEquals(ra, el[1], 10);
+        double[] radial = OrbitalFrame.apsides(new double[] {2e7, 0, 0}, new double[] {-10, 0, 0}, MU_EARTH);
+        assertEquals(0, radial[0], 1, "a straight fall meets the centre");
+        assertEquals(2e7, radial[1], 2e3, "and its apoapsis is (about) where it falls from");
         double vEsc = Math.sqrt(2 * MU_EARTH / rp) * 1.01;
         assertEquals(Double.POSITIVE_INFINITY, OrbitalFrame.apsides(new double[] {rp, 0, 0}, new double[] {0, vEsc, 0}, MU_EARTH)[1]);
     }

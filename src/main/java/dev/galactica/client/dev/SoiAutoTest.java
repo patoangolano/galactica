@@ -126,6 +126,21 @@ public final class SoiAutoTest {
         });
     }
 
+    /** Puts the piloted ship at row {@code y} (same column), on the client and the integrated server. */
+    private static void moveShip(Minecraft mc, Starship ship, double y) {
+        double x = ship.getX(), z = ship.getZ();
+        ship.setPos(x, y, z);
+        ship.xo = x;
+        ship.yo = y;
+        ship.zo = z;
+        var srv = mc.getSingleplayerServer();
+        if (srv == null) return;
+        java.util.UUID id = ship.getUUID();
+        srv.execute(() -> {
+            for (var lvl : srv.getAllLevels()) if (lvl.getEntity(id) instanceof Starship s) s.setPos(x, y, z);
+        });
+    }
+
     private static void stopShip(Minecraft mc, Starship ship) {
         ship.overrideVelocity(Vec3.ZERO);
         var srv = mc.getSingleplayerServer();
@@ -203,13 +218,14 @@ public final class SoiAutoTest {
     }
 
     /**
-     * (a) From the Overworld in a ship: stop, nose straight up, main engine until the take-off switch, then hands off.
-     * Passes when the craft reached space and, left alone, either fell back into Earth or stayed within 200 km of it
-     * and was coming down by the end; before the fix Earth receded at ~1.5 km per tick.
+     * (a) From the Overworld in a ship: stopped ten rows under the take-off row, nose straight up, main engine until the
+     * switch (~280 m/s, an Overworld block being ~10 m), then hands off. Passes when the craft reached space and, left
+     * alone, stayed within 200 km of Earth and either fell back into it or was on a bound, decelerating climb by the
+     * end (finite apoapsis under 200 km, radial speed falling). Before the fix Earth receded at ~1.5 km per tick.
      */
     static Phase takeOff(int coastTicks) {
         int[] leftAt = {-1}, backAt = {-1};
-        double[] max = {0}, end = {Double.NaN};
+        double[] max = {0}, end = {Double.NaN}, vr = {Double.NaN, Double.NaN}, ap = {Double.NaN};
         return (mc, t) -> {
             Starship ship = ShipClient.piloted(mc);
             if (t == 0) {
@@ -218,6 +234,7 @@ public final class SoiAutoTest {
                     return true;
                 }
                 stopShip(mc, ship);
+                moveShip(mc, ship, dev.galactica.planet.PlanetEntry.EXIT_Y - 10);
                 setAttitude(mc, ship, new Quaternionf().rotationX((float) Math.toRadians(-90)));
                 Galactica.LOG.info("[autotest] take-off: nose up at y={}", String.format(Locale.ROOT, "%.0f", ship.getY()));
             }
@@ -241,20 +258,31 @@ public final class SoiAutoTest {
                 max[0] = Math.max(max[0], alt);
                 end[0] = alt;
             }
+            OrbitReadout o = OrbitReadout.current(mc);
+            if (o != null) {
+                if (coast >= 20 && Double.isNaN(vr[0])) vr[0] = o.vertical();
+                vr[1] = o.vertical();
+                ap[0] = o.apoapsis();
+            }
             if (coast % 40 == 0 && backAt[0] < 0) Galactica.LOG.info("[autotest] take-off coast t={} altitude {} ({})", coast, km(alt), readout(mc));
             if (backAt[0] < 0 && coast < coastTicks) return false;
             boolean bounded = max[0] < 200e3;
-            boolean ok = bounded && (backAt[0] >= 0 || end[0] <= max[0]);
+            boolean falling = Double.isFinite(ap[0]) && ap[0] < 200e3 && vr[1] < vr[0];
+            boolean ok = bounded && (backAt[0] >= 0 || falling);
             Galactica.LOG.info("[autotest] {} take-off from Earth, hands off: highest {}, {}", ok ? "PASS" : "FAIL", km(max[0]),
                     backAt[0] >= 0 ? "fell back and re-entered after " + String.format(Locale.ROOT, "%.1f s", backAt[0] / 20.0)
-                            : "still in space after " + coast / 20 + " s at " + km(end[0]));
+                            : String.format(Locale.ROOT, "still in space after %d s at %s, radial speed %.0f -> %.0f m/s, apoapsis %s",
+                                    coast / 20, km(end[0]), vr[0], vr[1], OrbitReadout.apsis(ap[0])));
             return true;
         };
     }
 
-    /** (d) A suited player at rest in space for {@code length} ticks: the altitude drops by ½ g t² (±30 %). */
+    /**
+     * (d) A suited player left alone in space for {@code length} ticks: the altitude drops by −v₀·t + ½ g t² (±30 %),
+     * v₀ being the radial speed when the measurement starts (the frame has been falling since the player was parked).
+     */
     static Phase evaFall(int length) {
-        double[] start = {Double.NaN, 0}, startTime = {0};
+        double[] start = {Double.NaN, 0}, startTime = {0}, v0 = {0};
         return (mc, t) -> {
             double alt = earthAltitude(mc);
             NavState nav = mc.player.getAttached(Galactica.NAV);
@@ -266,19 +294,22 @@ public final class SoiAutoTest {
                 return false;
             }
             if (Double.isNaN(start[0])) {
+                OrbitReadout o = OrbitReadout.current(mc);
+                if (o == null) return false;
                 start[0] = alt;
                 startTime[0] = nav.timeSeconds();
+                v0[0] = o.vertical();
                 return false;
             }
             if (t < length) return false;
             double elapsed = nav.timeSeconds() - startTime[0];
             double r = alt + 6.371e6;
             double g = dev.galactica.science.Units.G * dev.galactica.science.Units.EARTH_MASS / (r * r);
-            double expected = 0.5 * g * elapsed * elapsed, fell = start[0] - alt;
+            double expected = -v0[0] * elapsed + 0.5 * g * elapsed * elapsed, fell = start[0] - alt;
             boolean ok = fell > 0.7 * expected && fell < 1.3 * expected && mc.player.getVehicle() == null;
             Galactica.LOG.info(String.format(Locale.ROOT,
-                    "[autotest] %s EVA pulled down by Earth: fell %.0f m in %.1f s from %s (1/2 g t^2 = %.0f m at g = %.2f m/s^2)",
-                    ok ? "PASS" : "FAIL", fell, elapsed, km(start[0]), expected, g));
+                    "[autotest] %s EVA pulled down by Earth: fell %.0f m in %.1f s from %s (-v0 t + 1/2 g t^2 = %.0f m, v0 = %.1f m/s, g = %.2f m/s^2)",
+                    ok ? "PASS" : "FAIL", fell, elapsed, km(start[0]), expected, v0[0], g));
             return true;
         };
     }

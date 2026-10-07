@@ -189,7 +189,8 @@ public final class OrbitalFrame {
         double ecc = len(e);
         double p = h2 / mu; // semi-latus rectum
         double rp = p / (1 + ecc);
-        double ra = ecc < 1 ? p / (1 - ecc) : Double.POSITIVE_INFINITY;
+        // From the energy rather than p/(1 − e): a radial fall (e → 1) still has a finite apoapsis, its current height.
+        double ra = energy < 0 ? 2 * (-mu / (2 * energy)) - rp : Double.POSITIVE_INFINITY;
         return new double[] {rp, ra, energy};
     }
 
