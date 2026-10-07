@@ -328,8 +328,9 @@ public class Starship extends VehicleEntity {
     /**
      * After the box move, keeps the hull beyond the box out of terrain. If the probes ended up inside a block, the
      * move is redone from {@code start} one axis at a time (vertical first, as vanilla resolves the box), keeping
-     * each axis that leaves the probes clear and zeroing the velocity along the others; a probe stopping a descent
-     * counts as touching down (the ship rests on its wing or nose like on its gear). If the turn this tick is what
+     * each axis that leaves the probes clear and zeroing the velocity along the others; a probe stopping a descent,
+     * or holding the hull sideways while it settles, counts as touching down (the ship rests on its wing or nose like
+     * on its gear). If the turn this tick is what
      * pushed the hull into the ground, the turn is undone first; if even that does not free it (a block placed into
      * a wing), the ship steps up by up to two blocks, and is otherwise left to the box alone so it never wedges.
      */
@@ -354,7 +355,7 @@ public class Starship extends VehicleEntity {
         }
         Vec3 d = end.subtract(start), v = getDeltaMovement();
         double vx = v.x, vy = v.y, vz = v.z;
-        boolean touchdown = false;
+        boolean touchdown = false, scraped = false;
         Vec3 p = base, t = p.add(0, d.y, 0);
         if (hullClear(level, t, attitude)) p = t;
         else {
@@ -363,10 +364,19 @@ public class Starship extends VehicleEntity {
         }
         t = p.add(d.x, 0, 0);
         if (hullClear(level, t, attitude)) p = t;
-        else vx = 0;
+        else {
+            vx = 0;
+            scraped = true;
+        }
         t = p.add(0, 0, d.z);
         if (hullClear(level, t, attitude)) p = t;
-        else vz = 0;
+        else {
+            vz = 0;
+            scraped = true;
+        }
+        // A hull held sideways by a slope while settling (not climbing) rests on it too, so skid friction applies
+        // and it comes to rest instead of creeping down the face.
+        if (scraped && d.y <= 0) touchdown = true;
         if (!level.noCollision(this, getBoundingBox().move(p.subtract(end)))) p = base;
         setPos(p);
         setDeltaMovement(vx, vy, vz);

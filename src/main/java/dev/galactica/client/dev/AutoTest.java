@@ -400,7 +400,8 @@ public final class AutoTest {
 
     /**
      * Holds the script (after {@code wait}) until the ridden ship is on the ground, for at most {@code maxTicks}
-     * (then logs FAIL). Meanwhile clears derelict ships from earlier runs around the landing site every second.
+     * (then logs FAIL). Meanwhile keeps the wings level and clears derelict ships from earlier runs around the landing
+     * site every second.
      */
     private static void awaitShipOnGround(int wait, int maxTicks) {
         STEPS.add(new Step(wait, () -> {
@@ -409,6 +410,11 @@ public final class AutoTest {
             hold = () -> {
                 var mc = Minecraft.getInstance();
                 if (ticks[0]++ % 20 == 0) clearDerelicts(mc);
+                // Wings-level autopilot until touchdown: the pilot's client owns the attitude, so a stray mouse move
+                // during the long fall (the machine is shared) cannot leave the hull on its side or back.
+                if (dev.galactica.client.ship.ShipClient.piloted(mc) instanceof dev.galactica.ship.Starship p && !p.onGround()) {
+                    p.setAttitude(new org.joml.Quaternionf().rotationY((float) Math.toRadians(-p.getYRot())));
+                }
                 boolean done = mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship s) || s.onGround();
                 if (!done && holdLeft == 0) Galactica.LOG.warn("[autotest] FAIL ship did not touch down within {} ticks", maxTicks);
                 return done;
