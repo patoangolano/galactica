@@ -63,4 +63,23 @@ public final class ShipCamera {
     public static float lift() {
         return orbiting ? 0F : CHASE_LIFT;
     }
+
+    /** The Kestrel's hull reach, which the chase framing was tuned on. */
+    private static final float KESTREL_REACH = dev.galactica.ship.ShipDimensions.HULL_REACH;
+
+    /**
+     * Chase framing scaled to the ship: a block-built freighter twice the Kestrel's reach is chased from twice as far,
+     * so it fills the frame the same way (orbits keep the distance they asked for). 1 for the Kestrel.
+     */
+    private static float scale(dev.galactica.ship.Starship ship) {
+        return Math.max(1F, ship.spec().hullReach() / KESTREL_REACH);
+    }
+
+    public static float distance(dev.galactica.ship.Starship ship) {
+        return orbiting ? orbitDistance : CHASE_DISTANCE * scale(ship);
+    }
+
+    public static float lift(dev.galactica.ship.Starship ship) {
+        return orbiting ? 0F : CHASE_LIFT * scale(ship);
+    }
 }

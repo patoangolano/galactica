@@ -99,9 +99,9 @@ public abstract class CameraShipMixin {
         if (this.detached) {
             // Aimed at the hull centre (StarshipRenderer.PIVOT_BLOCKS above the entity origin), framed by ShipCamera.
             Vector3f target = ship.getAttitude(partialTicks, new Quaternionf()).transform(ShipCamera.target(new Vector3f()));
-            Vec3 aim = ship.getPosition(partialTicks).add(target.x, StarshipRenderer.PIVOT_BLOCKS + target.y, target.z);
+            Vec3 aim = ship.getPosition(partialTicks).add(target.x, ship.pivot() + target.y, target.z);
             this.setPosition(aim);
-            this.move(-ShipCamera.distance(), ShipCamera.lift(), 0.0F);
+            this.move(-ShipCamera.distance(ship), ShipCamera.lift(ship), 0.0F);
             this.setPosition(galactica$clipToTerrain(ship, aim, this.position()));
         } else {
             this.setPosition(ship.pilotEyePosition(this.entity, partialTicks, Mth.lerp(partialTicks, this.eyeHeightOld, this.eyeHeight)));

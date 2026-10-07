@@ -24,7 +24,12 @@ public final class DriveRules {
     public static final double WARP_HYDROGEN_PER_TICK = ShipFlightModel.TICK / WARP_SECONDS_PER_HYDROGEN;
 
     public static double rangeLy(int exotic) {
-        return Math.min(Math.max(0, exotic) * LY_PER_EXOTIC, TIER_RANGE_LY);
+        return rangeLy(exotic, TIER_RANGE_LY);
+    }
+
+    /** Range with a drive of tier range {@code tierLy} (0: no hyperdrive aboard). */
+    public static double rangeLy(int exotic, double tierLy) {
+        return Math.min(Math.max(0, exotic) * LY_PER_EXOTIC, Math.max(0, tierLy));
     }
 
     /** Exotic matter consumed by a jump of {@code distanceLy}; any jump costs at least one unit. */
@@ -33,7 +38,11 @@ public final class DriveRules {
     }
 
     public static boolean canJump(double distanceLy, int exotic) {
-        return Double.isFinite(distanceLy) && distanceLy <= rangeLy(exotic) && exoticCost(distanceLy) <= exotic;
+        return canJump(distanceLy, exotic, TIER_RANGE_LY);
+    }
+
+    public static boolean canJump(double distanceLy, int exotic, double tierLy) {
+        return Double.isFinite(distanceLy) && distanceLy <= rangeLy(exotic, tierLy) && exoticCost(distanceLy) <= exotic;
     }
 
     /** Hydrogen one tick of warp at {@code speed} m/s costs. */

@@ -38,8 +38,8 @@ public final class ShipHud {
         float h = ship.hydrogen(), hull = ship.hull();
         String[] lines = {
                 tr("hud.galactica.ship.title", tr(ship.coupled() ? "hud.galactica.ship.coupled" : "hud.galactica.ship.decoupled")),
-                tr("hud.galactica.ship.hydrogen", String.format("%.1f", h), String.format("%.0f", Starship.MAX_HYDROGEN)),
-                tr("hud.galactica.ship.exotic", ship.exotic(), String.format("%.0f", DriveRules.rangeLy(ship.exotic()))),
+                tr("hud.galactica.ship.hydrogen", String.format("%.1f", h), String.format("%.0f", ship.maxHydrogen())),
+                tr("hud.galactica.ship.exotic", ship.exotic(), String.format("%.0f", DriveRules.rangeLy(ship.exotic(), ship.jumpTierLy()))),
                 tr("hud.galactica.ship.hull", Math.round(hull)),
                 tr("hud.galactica.ship.speed", String.format("%.1f", speed)),
         };
@@ -61,7 +61,7 @@ public final class ShipHud {
         }
         if (spool != null) g.text(font, spool, x0 + 5, y, CYAN, false);
         // Hydrogen gauge under the panel.
-        int bw = (int) ((x1 - x0 - 8) * Math.min(1F, h / Starship.MAX_HYDROGEN));
+        int bw = (int) ((x1 - x0 - 8) * Math.min(1F, h / ship.maxHydrogen()));
         g.fill(x0 + 4, y0 + hgt - 3, x0 + 4 + bw, y0 + hgt - 1, h < 5 ? WARN : CYAN);
     }
 

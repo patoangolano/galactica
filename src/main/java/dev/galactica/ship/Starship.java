@@ -85,9 +85,6 @@ public class Starship extends VehicleEntity {
     /** Hull points per point of incoming damage: a ship survives ~20 unarmed punches, a creeper twice. */
     private static final float HULL_PER_DAMAGE = 5F;
     private static final float HULL_PER_IRON = 10F;
-    /** Seats in the body frame, blocks from the model pivot ({@link ShipDimensions}: tandem, both under the canopy). */
-    private static final Vector3fc PILOT_SEAT = ShipDimensions.PILOT_SEAT, PASSENGER_SEAT = ShipDimensions.PASSENGER_SEAT;
-    private static final double PIVOT = ShipDimensions.PIVOT;
     /** Dev autotest run: crew changes are logged. */
     private static final boolean AUTOTEST = Boolean.getBoolean("galactica.autotest");
 
@@ -275,9 +272,44 @@ public class Starship extends VehicleEntity {
     public int spoolTicks() { return entityData.get(DATA_SPOOL); }
     public boolean isSpooling() { return spoolTicks() > 0; }
 
-    public void setHydrogen(float h) { entityData.set(DATA_HYDROGEN, Math.clamp(h, 0F, MAX_HYDROGEN)); }
-    public void setExotic(int x) { entityData.set(DATA_EXOTIC, Math.clamp(x, 0, MAX_EXOTIC)); }
-    public void setHull(float h) { entityData.set(DATA_HULL, Math.clamp(h, 0F, MAX_HULL)); }
+    public void setHydrogen(float h) { entityData.set(DATA_HYDROGEN, Math.clamp(h, 0F, maxHydrogen())); }
+    public void setExotic(int x) { entityData.set(DATA_EXOTIC, Math.clamp(x, 0, maxExotic())); }
+    public void setHull(float h) { entityData.set(DATA_HULL, Math.clamp(h, 0F, maxHull())); }
+
+    // ---------------------------------------------------------------- what this craft is (ShipSpec)
+
+    /**
+     * Mass, engines, tanks, drive, seats, size and hull probes of this craft. The Kestrel's are fixed
+     * ({@link ShipSpec#KESTREL}); a block-built ship ({@link ShipStructure}) computes its own from its parts, on the
+     * server and on every client from the same blocks, so the server's clamps never read a value a client sent.
+     */
+    public ShipSpec spec() {
+        return ShipSpec.KESTREL;
+    }
+
+    public float maxHydrogen() { return spec().maxHydrogen(); }
+    public int maxExotic() { return spec().maxExotic(); }
+    public float maxHull() { return spec().maxHull(); }
+
+    /** Hyperdrive tier range, light years; 0 if the craft has no hyperdrive. */
+    public double jumpTierLy() { return spec().jumpRangeLy(); }
+
+    /** Pivot (hull centre, attitude centre) above the entity origin, blocks. */
+    public float pivot() { return spec().pivot(); }
+
+    /** Seat {@code index} (0 = pilot) in the body frame, blocks from the pivot. */
+    public Vector3fc seat(int index) {
+        var seats = spec().seats();
+        return seats.get(Math.clamp(index, 0, seats.size() - 1));
+    }
+
+    /**
+     * Whether this craft can be flown right now. Always for the Kestrel; a block-built ship's client waits for its
+     * block set (its spec, so its thrust and probes, come from it).
+     */
+    public boolean flightReady() {
+        return true;
+    }
 
     /** Main-engine throttle for the exhaust glow, −1 … 1: predicted for the local pilot, synced for everyone else. */
     public float throttle() {
@@ -395,7 +427,7 @@ public class Starship extends VehicleEntity {
         // put it, velocity kept. Flying on meanwhile (vanilla ignores its moves until the client has loaded) carried a
         // 285 m/s ship 8 km past the chunks the server was sending, so the screen waited out its 30 s timeout and the
         // first accepted vehicle move then swept a collision box kilometres long, stalling the server for a minute.
-        if (isLocalInstanceAuthoritative() && !(level().isClientSide() && !pilotReady.getAsBoolean())) {
+        if (isLocalInstanceAuthoritative() && flightReady() && !(level().isClientSide() && !pilotReady.getAsBoolean())) {
             if (level().isClientSide()) pilotStep();
             else coastStep();
             Vec3 start = position();
@@ -447,11 +479,22 @@ public class Starship extends VehicleEntity {
      * nose, wings, fins and tail reach up to 7 blocks out and are only held out of terrain by this test.
      */
     public static boolean hullClear(Level level, Vec3 origin, Quaternionfc q) {
+        return probesClear(level, origin, q, ShipHullProbes.POINTS, ShipDimensions.PIVOT);
+    }
+
+    /** {@link #hullClear} with this craft's own probes and pivot ({@link #spec()}). */
+    public boolean hullClearAt(Level level, Vec3 origin, Quaternionfc q) {
+        ShipSpec s = spec();
+        return probesClear(level, origin, q, s.probes(), s.pivot());
+    }
+
+    /** True if none of {@code probes} (body frame, from a pivot {@code pivot} above {@code origin}) is inside a block. */
+    public static boolean probesClear(Level level, Vec3 origin, Quaternionfc q, float[][] probes, double pivot) {
         Vector3f v = new Vector3f();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        for (float[] p : ShipHullProbes.POINTS) {
+        for (float[] p : probes) {
             q.transform(v.set(p[0], p[1], p[2]));
-            double x = origin.x + v.x, y = origin.y + PIVOT + v.y, z = origin.z + v.z;
+            double x = origin.x + v.x, y = origin.y + pivot + v.y, z = origin.z + v.z;
             pos.set(Mth.floor(x), Mth.floor(y), Mth.floor(z));
             BlockState state = level.getBlockState(pos);
             if (state.isAir()) continue;
@@ -479,15 +522,15 @@ public class Starship extends VehicleEntity {
         Vec3 end = position();
         if (sweptClear(level, start, end, attitude)) return;
         Vec3 base = start;
-        if (!hullClear(level, base, attitude)) {
-            if (hullClear(level, base, attitudeO)) {
+        if (!hullClearAt(level, base, attitude)) {
+            if (hullClearAt(level, base, attitudeO)) {
                 attitude.set(attitudeO);
                 syncRotationFields();
             } else {
                 Vec3 freed = null;
                 for (int i = 1; i <= 8 && freed == null; i++) {
                     Vec3 c = base.add(0, 0.25 * i, 0);
-                    if (hullClear(level, c, attitude) && level.noCollision(this, getBoundingBox().move(c.subtract(end)))) freed = c;
+                    if (hullClearAt(level, c, attitude) && level.noCollision(this, getBoundingBox().move(c.subtract(end)))) freed = c;
                 }
                 if (freed == null) return;
                 base = freed;
@@ -533,10 +576,10 @@ public class Starship extends VehicleEntity {
     private static final double SWEEP_STEP = 0.4;
 
     /** True if the probes stay clear all along the straight move from {@code from} to {@code to}. */
-    private static boolean sweptClear(Level level, Vec3 from, Vec3 to, Quaternionfc q) {
+    private boolean sweptClear(Level level, Vec3 from, Vec3 to, Quaternionfc q) {
         Vec3 d = to.subtract(from);
         int n = Math.max(1, (int) Math.ceil(d.length() / SWEEP_STEP));
-        for (int i = 1; i <= n; i++) if (!hullClear(level, from.add(d.scale((double) i / n)), q)) return false;
+        for (int i = 1; i <= n; i++) if (!hullClearAt(level, from.add(d.scale((double) i / n)), q)) return false;
         return true;
     }
 
@@ -545,20 +588,20 @@ public class Starship extends VehicleEntity {
      * 1/1024 of a swept stretch: the samples find the first blocked stretch, a bisection the contact inside it.
      * {@code from} itself is assumed clear.
      */
-    static double clearFraction(Level level, Vec3 from, Vec3 delta, Quaternionfc q) {
+    double clearFraction(Level level, Vec3 from, Vec3 delta, Quaternionfc q) {
         double len = delta.length();
         if (len < 1e-9) return 1;
         int n = Math.max(1, (int) Math.ceil(len / SWEEP_STEP));
         double lo = 0;
         for (int i = 1; i <= n; i++) {
             double hi = (double) i / n;
-            if (hullClear(level, from.add(delta.scale(hi)), q)) {
+            if (hullClearAt(level, from.add(delta.scale(hi)), q)) {
                 lo = hi;
                 continue;
             }
             for (int k = 0; k < 10; k++) {
                 double mid = (lo + hi) / 2;
-                if (hullClear(level, from.add(delta.scale(mid)), q)) lo = mid;
+                if (hullClearAt(level, from.add(delta.scale(mid)), q)) lo = mid;
                 else hi = mid;
             }
             return lo;
@@ -577,7 +620,7 @@ public class Starship extends VehicleEntity {
      */
     public boolean restingContact() {
         Vec3 down = position().add(0, -CONTACT_DEPTH, 0);
-        return !level().noCollision(this, getBoundingBox().move(0, -CONTACT_DEPTH, 0)) || !hullClear(level(), down, attitude);
+        return !level().noCollision(this, getBoundingBox().move(0, -CONTACT_DEPTH, 0)) || !hullClearAt(level(), down, attitude);
     }
 
     /**
@@ -597,7 +640,7 @@ public class Starship extends VehicleEntity {
             gearAnchor = new Vec3(getX(), 0, getZ());
         } else if (dx != 0 || dz != 0) {
             Vec3 held = new Vec3(gearAnchor.x, getY(), gearAnchor.z);
-            if (hullClear(level(), held, attitude) && level().noCollision(this, getBoundingBox().move(-dx, 0, -dz))) setPos(held);
+            if (hullClearAt(level(), held, attitude) && level().noCollision(this, getBoundingBox().move(-dx, 0, -dz))) setPos(held);
         }
         Vec3 v = getDeltaMovement();
         setDeltaMovement(0, v.y, 0);
@@ -612,12 +655,15 @@ public class Starship extends VehicleEntity {
     private void pilotStep() {
         Input in = pilotInput;
         float yawKeys = (in.right() ? 1F : 0F) - (in.left() ? 1F : 0F);
+        ShipSpec spec = spec();
+        // A heavier hull turns slower: its RCS torque against its inertia scales every commanded rate (1 for the Kestrel).
+        double turn = spec.turnScale();
         var c = new ShipFlightModel.Controls(
                 (in.forward() ? 1 : 0) - (in.backward() ? 1 : 0),
                 (in.jump() ? 1 : 0) - (in.shift() ? 1 : 0),
-                mouseYaw + yawKeys * ShipFlightModel.KEY_YAW_RATE * ShipFlightModel.TICK,
-                mousePitch,
-                rollAxis * ShipFlightModel.KEY_ROLL_RATE * ShipFlightModel.TICK,
+                turn * (mouseYaw + yawKeys * ShipFlightModel.KEY_YAW_RATE * ShipFlightModel.TICK),
+                turn * mousePitch,
+                turn * rollAxis * ShipFlightModel.KEY_ROLL_RATE * ShipFlightModel.TICK,
                 coupled);
         mouseYaw = mousePitch = 0;
         Quaterniond q = new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w);
@@ -626,7 +672,7 @@ public class Starship extends VehicleEntity {
         // Weight on the gear: touching now (box or probe within 1/16 block), not "touched within the last ticks",
         // so a ship that hops off or rolls over a ledge is airborne at once and its flight assist takes over.
         boolean grounded = onGround() || restingContact();
-        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK, grounded, assistReference());
+        ShipFlightModel.step(spec, q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK, grounded, assistReference());
         gearHolds = ShipFlightModel.parked(c, hydrogen(), grounded) && v.x == 0 && v.z == 0 && gravityIsVertical(g);
         // Speed beyond the block cap goes to the frame (reported with the velocity, ShipClient), not lost.
         if (level().dimension() == Galactica.SPACE) pendingRebase.add(ShipFlightModel.krakensbane(v));
@@ -685,7 +731,7 @@ public class Starship extends VehicleEntity {
             float throttle = (in.forward() ? 1F : 0F) - (in.backward() ? 1F : 0F);
             if (hydrogen() <= 0) throttle = 0;
             if (throttle != 0) lastMainBurnTick = tickCount;
-            if (throttle != 0) setHydrogen(hydrogen() - Math.abs(throttle) * (float) (ShipFlightModel.TICK / ShipFlightModel.MAIN_SECONDS_PER_HYDROGEN));
+            if (throttle != 0) setHydrogen(hydrogen() - Math.abs(throttle) * (float) (ShipFlightModel.TICK * spec().hydrogenPerSecond()));
             if (entityData.get(DATA_THRUST) != throttle) entityData.set(DATA_THRUST, throttle);
             byte rcs = (byte) ShipAnimator.rcsMask((in.jump() ? 1 : 0) - (in.shift() ? 1 : 0),
                     (in.right() ? 1 : 0) - (in.left() ? 1 : 0), 0F);
@@ -763,7 +809,7 @@ public class Starship extends VehicleEntity {
         // Velocity-change credit (m/s): what the engines plus gravity can do per elapsed tick (10 % and 0.5 m/s of float
         // slack), banked for at most 20 ticks and spent by the reports, Krakensbane rebase included. The main engine
         // only counts while the server burns hydrogen for it, so frame velocity is never free.
-        double perTick = ShipFlightModel.maxDeltaVPerTick(mainBurning, gravity().length()) * 1.1 + 0.5;
+        double perTick = ShipFlightModel.maxDeltaVPerTick(spec(), mainBurning, gravity().length()) * 1.1 + 0.5;
         dvBudget.refill(elapsed, perTick);
         // Touching terrain, the pilot's collision may have stopped the ship along any axis: the ground takes
         // 190 m/s off a hull in one tick, which no engine could. Collisions only remove velocity, so per axis the
@@ -827,7 +873,7 @@ public class Starship extends VehicleEntity {
         Vec3 p = position();
         double e = CONTACT_DEPTH;
         double[][] offsets = {{0, -e, 0}, {0, e, 0}, {e, 0, 0}, {-e, 0, 0}, {0, 0, e}, {0, 0, -e}};
-        for (double[] o : offsets) if (!hullClear(level, p.add(o[0], o[1], o[2]), attitude)) return true;
+        for (double[] o : offsets) if (!hullClearAt(level, p.add(o[0], o[1], o[2]), attitude)) return true;
         return false;
     }
 
@@ -850,9 +896,9 @@ public class Starship extends VehicleEntity {
     private boolean service(Player player, ItemStack stack) {
         Item hydrogenCell = item("hydrogen_cell"), exoticMatter = item("exotic_matter");
         boolean ok;
-        if (hydrogenCell != Items.AIR && stack.is(hydrogenCell)) ok = hydrogen() <= MAX_HYDROGEN - 1;
-        else if (exoticMatter != Items.AIR && stack.is(exoticMatter)) ok = exotic() < MAX_EXOTIC;
-        else if (stack.is(Items.IRON_INGOT)) ok = hull() < MAX_HULL;
+        if (hydrogenCell != Items.AIR && stack.is(hydrogenCell)) ok = hydrogen() <= maxHydrogen() - 1;
+        else if (exoticMatter != Items.AIR && stack.is(exoticMatter)) ok = exotic() < maxExotic();
+        else if (stack.is(Items.IRON_INGOT)) ok = hull() < maxHull();
         else return false;
         if (!ok) return false;
         if (!level().isClientSide()) {
@@ -879,7 +925,7 @@ public class Starship extends VehicleEntity {
 
     @Override
     protected boolean canAddPassenger(Entity passenger) {
-        return getPassengers().size() < 2;
+        return getPassengers().size() < spec().seatCount();
     }
 
     @Override
@@ -891,9 +937,9 @@ public class Starship extends VehicleEntity {
     protected void positionRider(Entity passenger, Entity.MoveFunction move) {
         if (!hasPassenger(passenger)) return;
         boolean pilot = getFirstPassenger() == passenger;
-        Vector3f seat = attitude.transform(new Vector3f(pilot ? PILOT_SEAT : PASSENGER_SEAT));
+        Vector3f seat = attitude.transform(new Vector3f(seat(getPassengers().indexOf(passenger))));
         Vec3 attach = passenger.getVehicleAttachmentPoint(this);
-        move.accept(passenger, getX() + seat.x - attach.x, getY() + PIVOT + seat.y - attach.y, getZ() + seat.z - attach.z);
+        move.accept(passenger, getX() + seat.x - attach.x, getY() + pivot() + seat.y - attach.y, getZ() + seat.z - attach.z);
         if (pilot) {
             // The pilot looks down the nose: keeps warp heading (look vector) and the rider model aligned.
             passenger.setYRot(getYRot());
@@ -915,7 +961,7 @@ public class Starship extends VehicleEntity {
     public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
         double yaw = Math.toRadians(getYRot());
         double fx = -Math.sin(yaw), fz = Math.cos(yaw);
-        double side = ShipDimensions.BOX_WIDTH / 2.0 + 0.8, nose = ShipDimensions.HULL_REACH + 1.0;
+        double side = spec().boxWidth() / 2.0 + 0.8, nose = spec().hullReach() + 1.0;
         double[][] spots = {{side, 1.0}, {-side, 1.0}, {0, nose}, {0, -nose}};
         boolean space = level().dimension() == Galactica.SPACE;
         for (double[] s : spots) {
@@ -1028,9 +1074,9 @@ public class Starship extends VehicleEntity {
      */
     public Vec3 riderEyePosition(Entity rider, float partialTick, float eyeHeight) {
         Vec3 attach = rider.getVehicleAttachmentPoint(this);
-        Vector3f seat = new Vector3f(getFirstPassenger() == rider ? PILOT_SEAT : PASSENGER_SEAT);
+        Vector3f seat = new Vector3f(seat(Math.max(0, getPassengers().indexOf(rider))));
         Vector3f eye = getAttitude(partialTick, new Quaternionf()).transform(seat.add((float) -attach.x, eyeHeight - (float) attach.y, (float) -attach.z));
-        return getPosition(partialTick).add(eye.x, PIVOT + eye.y, eye.z);
+        return getPosition(partialTick).add(eye.x, pivot() + eye.y, eye.z);
     }
 
     /** The pilot's eye in world space ({@link #riderEyePosition}). */
@@ -1110,7 +1156,7 @@ public class Starship extends VehicleEntity {
         in.read("attitude", ExtraCodecs.QUATERNIONF).ifPresent(this::setAttitude);
         setHydrogen(in.getFloatOr("hydrogen", 0F));
         setExotic(in.getIntOr("exotic", 0));
-        setHull(in.getFloatOr("hull", MAX_HULL));
+        setHull(in.getFloatOr("hull", maxHull()));
         coupled = in.getBooleanOr("coupled", true);
         entityData.set(DATA_COUPLED, coupled);
     }

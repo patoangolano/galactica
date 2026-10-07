@@ -118,9 +118,18 @@ public final class ShipFlightModel {
      */
     public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt,
                               boolean grounded, Vector3dc frame) {
+        return step(ShipSpec.KESTREL, attitude, velocity, c, gravity, hydrogen, dt, grounded, frame);
+    }
+
+    /**
+     * The step for any craft: thrust, braking and RCS authority come from {@code spec} (the Kestrel's are the class
+     * constants), so a block-built ship with its own engines flies through the same arithmetic.
+     */
+    public static double step(ShipSpec spec, Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen,
+                              double dt, boolean grounded, Vector3dc frame) {
         if (parked(c, hydrogen, grounded)) {
             c = new Controls(c.thrust(), Math.min(0, c.lift()), c.yawDeg(), c.pitchDeg(), c.rollDeg(), false);
-            double burned = step(attitude, velocity, c, gravity, hydrogen, dt, false, frame);
+            double burned = step(spec, attitude, velocity, c, gravity, hydrogen, dt, false, frame);
             gearFriction(velocity, gravity, dt);
             return burned;
         }
@@ -133,12 +142,13 @@ public final class ShipFlightModel {
         Vector3d fwd = attitude.transform(new Vector3d(0, 0, 1));
         Vector3d up = attitude.transform(new Vector3d(0, 1, 0));
         Vector3d side = attitude.transform(new Vector3d(1, 0, 0));
-        velocity.fma(throttle * MAIN_ACCEL * dt, fwd).fma(lift * RCS_ACCEL * dt, up).fma(dt, gravity);
+        double mainAccel = throttle >= 0 ? spec.mainAccel() : spec.reverseAccel(), rcsAccel = spec.rcsAccel();
+        velocity.fma(throttle * mainAccel * dt, fwd).fma(lift * rcsAccel * dt, up).fma(dt, gravity);
 
         if (c.coupled()) {
             // Each RCS axis has its own thruster pair, so the budget is per axis; an axis the pilot is
             // commanding is left alone.
-            double budget = RCS_ACCEL * dt;
+            double budget = rcsAccel * dt;
             Vector3d rel = new Vector3d(velocity).add(frame);
             velocity.fma(-toward0(rel.dot(side), budget), side);
             if (lift == 0) velocity.fma(-toward0(rel.dot(up), budget), up);
@@ -146,7 +156,7 @@ public final class ShipFlightModel {
 
         double v = velocity.length();
         if (v > MAX_SPEED) velocity.mul(MAX_SPEED / v);
-        return Math.min(hydrogen, Math.abs(throttle) * dt / MAIN_SECONDS_PER_HYDROGEN);
+        return Math.min(hydrogen, Math.abs(throttle) * dt * spec.hydrogenPerSecond());
     }
 
     /**
@@ -187,7 +197,13 @@ public final class ShipFlightModel {
      * Main engine only counts with fuel aboard; RCS acts on up to three axes at once.
      */
     public static double maxDeltaVPerTick(boolean fuelled, double gravity) {
-        return ((fuelled ? MAIN_ACCEL : 0) + Math.sqrt(3) * RCS_ACCEL + gravity) * TICK;
+        return maxDeltaVPerTick(ShipSpec.KESTREL, fuelled, gravity);
+    }
+
+    /** {@link #maxDeltaVPerTick(boolean, double)} for the craft {@code spec} describes (the server's own copy, never the client's). */
+    public static double maxDeltaVPerTick(ShipSpec spec, boolean fuelled, double gravity) {
+        double main = fuelled ? Math.max(spec.mainAccel(), spec.reverseAccel()) : 0;
+        return (main + Math.sqrt(3) * spec.rcsAccel() + gravity) * TICK;
     }
 
     /**

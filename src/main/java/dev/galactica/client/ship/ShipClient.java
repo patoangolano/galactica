@@ -136,7 +136,7 @@ public final class ShipClient {
     /** After the tick the prediction for this tick is final: report it. */
     private static void afterTick(Minecraft mc) {
         Starship ship = piloted(mc);
-        if (ship == null || !ClientPlayNetworking.canSend(ShipControlPayload.TYPE) || !Starship.pilotReady()) return;
+        if (ship == null || !ClientPlayNetworking.canSend(ShipControlPayload.TYPE) || !Starship.pilotReady() || !ship.flightReady()) return;
         int seq = ship.recordReport(ship.getDeltaMovement());
         Vec3 v = ship.getDeltaMovement().scale(20.0);
         ClientPlayNetworking.send(new ShipControlPayload(ship.getId(), seq, new Quaternionf(ship.attitude()),

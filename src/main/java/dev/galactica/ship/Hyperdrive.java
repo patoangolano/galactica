@@ -46,15 +46,19 @@ public final class Hyperdrive {
             pilot.sendOverlayMessage(Component.translatable("hud.galactica.hyperjump.aborted"));
             return;
         }
+        if (ship.jumpTierLy() <= 0) {
+            pilot.sendOverlayMessage(Component.translatable("hud.galactica.hyperjump.no_drive"));
+            return;
+        }
         JumpTargetInfo t = targetSource.target(pilot);
         if (t == null) {
             pilot.sendOverlayMessage(Component.translatable("hud.galactica.hyperjump.no_target"));
             return;
         }
         double ly = distanceLy(pilot, t);
-        if (!DriveRules.canJump(ly, ship.exotic())) {
+        if (!DriveRules.canJump(ly, ship.exotic(), ship.jumpTierLy())) {
             pilot.sendOverlayMessage(Component.translatable("hud.galactica.hyperjump.out_of_range", t.name(),
-                    String.format("%.2f", ly), String.format("%.1f", DriveRules.rangeLy(ship.exotic())), DriveRules.exoticCost(ly)));
+                    String.format("%.2f", ly), String.format("%.1f", DriveRules.rangeLy(ship.exotic(), ship.jumpTierLy())), DriveRules.exoticCost(ly)));
             return;
         }
         ship.beginSpool(t);
@@ -65,7 +69,7 @@ public final class Hyperdrive {
     /** End of spool: re-check (fuel can be pulled out mid-spool), pay, arrive, bring the crew along. */
     static void complete(Starship ship, ServerPlayer pilot, JumpTargetInfo t) {
         double ly = distanceLy(pilot, t);
-        if (!DriveRules.canJump(ly, ship.exotic())) {
+        if (!DriveRules.canJump(ly, ship.exotic(), ship.jumpTierLy())) {
             pilot.sendOverlayMessage(Component.translatable("hud.galactica.hyperjump.aborted"));
             return;
         }
