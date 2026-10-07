@@ -360,19 +360,27 @@ public final class AutoTest {
             boolean hullClear = dev.galactica.ship.Starship.hullClear(mc.level, ship.position(), ship.attitude());
             // The gap under the box centre only says how rough the site is: on a slope the hull rests on a probe (nose or
             // wing) over a ledge, so it is reported but does not fail the landing; resting, upright and clear does.
+            // Settled: at rest now, and it has not crept since the pilot let go (the trace window, 40 ticks).
+            double drift = traceStart == null ? Double.NaN : Math.hypot(ship.getX() - traceStart.x, ship.getZ() - traceStart.z);
             boolean ok = ship.onGround() && gap > -0.05 && !inside && hullClear && tilt < 35 && !onShip && mc.player.isAlive()
-                    && ship.getDeltaMovement().length() * 20 < 0.5;
+                    && ship.getDeltaMovement().length() * 20 < 0.05 && !(drift > 0.05);
             Galactica.LOG.info("[autotest] {} ship on ground on {}: onGround {}, box bottom {} over the footprint's top block {}, embedded {}, "
-                            + "hull probes clear {}, tilt {} deg, on another ship {}, speed {} m/s",
+                            + "hull probes clear {}, tilt {} deg, on another ship {}, speed {} m/s, horizontal drift since release {} blocks",
                     ok ? "PASS" : "FAIL", body, ship.onGround(), String.format(java.util.Locale.ROOT, "%.2f", gap), top, inside, hullClear,
                     String.format(java.util.Locale.ROOT, "%.0f", tilt), onShip,
-                    String.format(java.util.Locale.ROOT, "%.2f", ship.getDeltaMovement().length() * 20));
+                    String.format(java.util.Locale.ROOT, "%.2f", ship.getDeltaMovement().length() * 20),
+                    String.format(java.util.Locale.ROOT, "%.3f", drift));
         }));
     }
 
     /** Logs the ridden ship's velocity, position, ground contact and sneak every 2 ticks for {@code ticks} ticks, then moves on. */
+    /** The ridden ship's position when {@link #traceShip} began (the pilot had just let go). */
+    private static net.minecraft.world.phys.Vec3 traceStart;
+
     private static void traceShip(int ticks) {
         STEPS.add(new Step(1, () -> {
+            var mc0 = Minecraft.getInstance();
+            traceStart = mc0.player != null && mc0.player.getVehicle() instanceof dev.galactica.ship.Starship s0 ? s0.position() : null;
             Consumer<Minecraft> previous = perTick;
             int[] n = {0};
             perTick = m -> {
@@ -396,6 +404,11 @@ public final class AutoTest {
     private static void earthSun() {
         cmd(5, "weather clear");
         cmd(5, "time set noon");
+        // The saved world may still be raining: vanilla fades rain out over ~100 ticks after "weather clear".
+        STEPS.add(new Step(1, () -> {
+            holdLeft = 300;
+            hold = () -> Minecraft.getInstance().level == null || Minecraft.getInstance().level.getRainLevel(1F) < 0.01F;
+        }));
         clearChat(5);
         look(40, 0, -89.9f);
         shot(5, "00d_earth_sun_noon");
@@ -539,9 +552,17 @@ public final class AutoTest {
         STEPS.add(new Step(wait, () -> {
             holdLeft = maxTicks;
             int[] ticks = {0};
+            boolean[] traced = {false};
             hold = () -> {
                 var mc = Minecraft.getInstance();
                 if (ticks[0]++ % 20 == 0) clearDerelicts(mc);
+                // Per-tick movement phases (Starship.traceTicks) from 40 blocks above the terrain through touchdown.
+                if (!traced[0] && mc.player != null && mc.player.getVehicle() instanceof dev.galactica.ship.Starship t
+                        && t.getY() - mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+                        net.minecraft.util.Mth.floor(t.getX()), net.minecraft.util.Mth.floor(t.getZ())) < 40) {
+                    traced[0] = true;
+                    dev.galactica.ship.Starship.traceTicks = 80;
+                }
                 // Wings-level autopilot until touchdown: the pilot's client owns the attitude, so a stray mouse move
                 // during the long fall (the machine is shared) cannot leave the hull on its side or back.
                 if (dev.galactica.client.ship.ShipClient.piloted(mc) instanceof dev.galactica.ship.Starship p && !p.onGround()) {

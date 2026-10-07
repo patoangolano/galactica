@@ -61,16 +61,18 @@ public final class SunAppearance {
     }
 
     /**
-     * Opacity of the glare sprite at {@code thetaDeg} from the Sun's centre, for a sprite reaching
-     * {@code edgeDeg}: the eye's (or lens's) bloom around the disc, a Gaussian core about twice the disc,
-     * plus the solar aureole, forward scattering by aerosols that falls off roughly as θ^−1.3 within a
-     * few degrees (Deepak 1977), faded to zero at the sprite edge.
+     * Glare added to the sky (fraction of display white, before the airmass filter) at {@code thetaDeg} from the Sun's
+     * centre, for a sprite reaching {@code edgeDeg}. Three parts: the bloom a daylight exposure gives a source some
+     * 10⁵ times the sky's surface brightness, a Gaussian blown out to white within ~1° (so on screen the Sun is a
+     * glowing ball a few degrees wide around its true 0.53° disc); the solar aureole, forward scattering by aerosols
+     * falling off roughly as θ^−1.3 (Deepak 1977); and a broad glow over the next tens of degrees. Tapered to zero at
+     * the sprite edge.
      */
     public static double glare(double thetaDeg, double edgeDeg) {
         if (thetaDeg >= edgeDeg) return 0;
-        double core = 0.55 * Math.exp(-Math.pow(thetaDeg / 0.45, 2));
-        double aureole = 0.30 * Math.pow(0.3 / Math.max(thetaDeg, 0.3), 1.3);
-        double broad = 0.05 * Math.exp(-thetaDeg / 2.5);
+        double core = 1.1 * Math.exp(-Math.pow(thetaDeg / 0.9, 2));
+        double aureole = 0.35 * Math.pow(0.6 / Math.max(thetaDeg, 0.6), 1.3);
+        double broad = 0.10 * Math.exp(-thetaDeg / 7.0);
         double e = 1 - Math.pow(thetaDeg / edgeDeg, 2);
         return Math.min(1, (core + aureole + broad) * e * e);
     }

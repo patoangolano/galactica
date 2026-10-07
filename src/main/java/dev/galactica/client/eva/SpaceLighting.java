@@ -17,6 +17,13 @@ import org.joml.Vector3f;
  * ({@link ShipEnvironment#evaLight}); this only sets the direction. Far from any star (or in any other dimension)
  * vanilla's lights are restored. Updated once a tick, outside any render pass: the star moves by far less than a
  * degree per tick even at full impulse.
+ *
+ * <p>The level lights are global (vanilla has one pair for every entity in the level), so this also turns the
+ * diffuse shading of every other entity in space toward the star, a ship's crew and anything else drawn with
+ * entity lighting included. That is deliberate: it is the light they are all actually in, and it matches the
+ * hull's own star shading ({@link ShipEnvironment#sample}); how bright each one is still comes from its own
+ * lightmap route (the crew's {@link ShipEnvironment#passengerLight}, an EVA player's occlusion-tested
+ * {@link ShipEnvironment#evaLight}).
  */
 public final class SpaceLighting {
     private SpaceLighting() {}

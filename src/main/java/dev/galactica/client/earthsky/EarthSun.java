@@ -7,10 +7,12 @@ import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.galactica.client.ship.IrisCompat;
 import dev.galactica.client.sky.SkyTextures;
@@ -38,10 +40,14 @@ import java.util.Locale;
  * airmass extinction near the horizon ({@link SunAppearance#filter}) and fades with rain like vanilla's.
  *
  * <p><b>Size.</b> The disc has the true angular diameter, asin(R☉ / 1 AU) × 2 = 0.53° (about 8 px across at 70° FOV
- * on a 1080-line window), not vanilla's ~17° square, which is what makes it read as the Sun rather than a lamp.
- * What makes a real Sun look big is glare: the eye's bloom and the aerosol aureole, which spread its light over a
- * few degrees. That is drawn as its own halo reaching {@value #GLARE_HALF_DEG}°, bright within ~1° and fading as
- * θ^−1.3, so the Sun is unmistakable at a glance and still physically sized when looked at.
+ * on a 1080-line window), as every star and planet the mod draws (the other planets' suns in
+ * {@code SurfaceSkyOverlay} too), not vanilla's ~17° square. On its own that disc is a pin-prick: what makes the
+ * real Sun look big and blinding is glare, the eye's or the lens's bloom plus the aerosol aureole, which spread its
+ * light over degrees. That is drawn as an additive halo (vanilla's own {@code CELESTIAL} blend, the one its square
+ * sun used, so it lightens the sky instead of greying it) reaching {@value #GLARE_HALF_DEG}°: blown out to white
+ * within about 1°, the way a daylight exposure renders the Sun, then the aureole's θ^−1.3 and a broad
+ * glow. So the Sun reads at a glance like a photographed Sun, about as large as vanilla's at first sight, and the
+ * plasma disc inside it is still the true size when looked at.
  *
  * <p>Two steps, because uniform uploads and buffer creation are illegal inside a render pass:
  * {@link #prepare} at HEAD of {@code SkyRenderer.render} (no pass open yet), {@link #render} at HEAD of
@@ -53,7 +59,7 @@ public final class EarthSun {
 
     /** Angular radius of the Sun from 1 AU, rad (0.2666°). */
     public static final double ANGULAR_RADIUS = Math.asin(StarCatalog.SOL.radiusMetres() / Units.AU);
-    public static final double GLARE_HALF_DEG = 8.0;
+    public static final double GLARE_HALF_DEG = 20.0;
     /** Shells: glare behind the plasma disc (89, {@link StarDiscRenderer#SHELL_RADIUS}), the fallback sprite in between. */
     private static final float R_GLARE = 92f, R_SPRITE = 90f;
     private static final int GLARE_SIZE = 256;
@@ -105,15 +111,16 @@ public final class EarthSun {
         if (!enabled()) return false;
         if (!drawThisFrame) return true; // set, or rained out: nothing to draw, and no square sun either
         Matrix4f modelView = new Matrix4f(RenderSystem.getModelViewStack()).mul(poseStack.last().pose());
-        float glareAlpha = (float) (fade * SunAppearance.luminance(FILTER));
-        if (glareAlpha > 0.004f) {
-            draw(pass, modelView, glareQuad, glare.getTextureView(), new Vector4f(FILTER[0], FILTER[1], FILTER[2], glareAlpha), "Sun glare");
+        // Additive (CELESTIAL): the halo adds Sol's filtered light to the sky; rain fades it like vanilla's sun.
+        if (fade * SunAppearance.luminance(FILTER) > 0.004f) {
+            draw(pass, RenderPipelines.CELESTIAL, modelView, glareQuad, glare.getTextureView(),
+                    new Vector4f(FILTER[0], FILTER[1], FILTER[2], fade), "Sun glare");
         }
         boolean drawn = gpuThisFrame && StarDiscRenderer.draw(pass, modelView, 0f, 1f, 0f, ANGULAR_RADIUS, VISUAL,
                 new Vector4f(FILTER[0], FILTER[1], FILTER[2], 1f));
         if (!drawn) {
             Vector4f c = new Vector4f(BLACKBODY[0] * FILTER[0], BLACKBODY[1] * FILTER[1], BLACKBODY[2] * FILTER[2], fade);
-            draw(pass, modelView, spriteQuad, SkyTextures.disc().getTextureView(), c, "Sun disc");
+            draw(pass, RenderPipelines.END_SKY, modelView, spriteQuad, SkyTextures.disc().getTextureView(), c, "Sun disc");
         }
         probeGpu = drawn;
         probeFrame = System.nanoTime();
@@ -151,39 +158,45 @@ public final class EarthSun {
             for (int y = 0; y < GLARE_SIZE; y++) {
                 for (int x = 0; x < GLARE_SIZE; x++) {
                     double dx = (x + 0.5) / GLARE_SIZE * 2 - 1, dy = (y + 0.5) / GLARE_SIZE * 2 - 1;
-                    // The quad is gnomonic but 8° is close enough to flat that radius maps linearly to angle.
-                    double theta = Math.sqrt(dx * dx + dy * dy) * GLARE_HALF_DEG;
+                    // The quad is a gnomonic (tangent-plane) projection: radius r on it is atan(r·tan half) from the centre.
+                    double theta = Math.toDegrees(Math.atan(Math.sqrt(dx * dx + dy * dy) * Math.tan(Math.toRadians(GLARE_HALF_DEG))));
                     int a = (int) Math.round(255 * SunAppearance.glare(theta, GLARE_HALF_DEG));
                     img.setPixel(x, y, (a << 24) | 0xFFFFFF);
                 }
             }
             glare = new DynamicTexture(() -> "galactica:earth_sun_glare", img);
         }
-        if (glareQuad == null) glareQuad = quad(R_GLARE, Math.toRadians(GLARE_HALF_DEG), "Galactica Earth sun glare");
+        // CELESTIAL takes POSITION_TEX, END_SKY POSITION_TEX_COLOR.
+        if (glareQuad == null) glareQuad = quad(R_GLARE, Math.toRadians(GLARE_HALF_DEG), DefaultVertexFormat.POSITION_TEX, "Galactica Earth sun glare");
         // SkyTextures.disc() puts the disc in the inner half of its quad, its halo outside.
-        if (spriteQuad == null) spriteQuad = quad(R_SPRITE, 2 * ANGULAR_RADIUS, "Galactica Earth sun disc");
+        if (spriteQuad == null) spriteQuad = quad(R_SPRITE, 2 * ANGULAR_RADIUS, DefaultVertexFormat.POSITION_TEX_COLOR, "Galactica Earth sun disc");
         SkyTextures.disc(); // created lazily, and creating it uploads
     }
 
     /** A quad centred on vanilla's sun direction (+Y in the sun pose) at {@code radius}, half-angle {@code half}. */
-    private static GpuBuffer quad(float radius, double half, String label) {
+    private static GpuBuffer quad(float radius, double half, VertexFormat format, String label) {
         float h = (float) (Math.tan(half) * radius);
         float[][] v = {{-h, radius, -h, 0, 0}, {h, radius, -h, 1, 0}, {h, radius, h, 1, 1}, {-h, radius, h, 0, 1}};
-        try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
-            BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
-            // END_SKY culls back faces and the camera is at the centre: face the origin.
-            for (int k : SkyMesh.inwardOrder(v)) b.addVertex(v[k][0], v[k][1], v[k][2]).setUv(v[k][3], v[k][4]).setColor(0xFFFFFFFF);
+        boolean colour = format == DefaultVertexFormat.POSITION_TEX_COLOR;
+        try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(4 * format.getVertexSize())) {
+            BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, format);
+            // The sky pipelines cull back faces and the camera is at the centre: face the origin.
+            for (int k : SkyMesh.inwardOrder(v)) {
+                b.addVertex(v[k][0], v[k][1], v[k][2]).setUv(v[k][3], v[k][4]);
+                if (colour) b.setColor(0xFFFFFFFF);
+            }
             try (MeshData mesh = b.buildOrThrow()) {
                 return RenderSystem.getDevice().createBuffer(() -> label, GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
             }
         }
     }
 
-    private static void draw(RenderPass pass, Matrix4f modelView, GpuBuffer vb, GpuTextureView texture, Vector4f colour, String label) {
+    private static void draw(RenderPass pass, RenderPipeline pipeline, Matrix4f modelView, GpuBuffer vb, GpuTextureView texture,
+                             Vector4f colour, String label) {
         RenderSystem.AutoStorageIndexBuffer quads = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(modelView, colour);
         pass.pushDebugGroup(() -> label);
-        pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.END_SKY));
+        pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline));
         RenderSystem.bindDefaultUniforms(pass);
         pass.setUniform("DynamicTransforms", transforms);
         pass.setUniform("Sampler0", texture, SkyTextures.linearClamp());

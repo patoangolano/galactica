@@ -31,4 +31,13 @@ class SunAppearanceTest {
         assertTrue(SunAppearance.glare(1, 8) > SunAppearance.glare(4, 8));
         assertEquals(0, SunAppearance.glare(8, 8));
     }
+
+    @Test
+    void glareReadsAsABlownOutBallAroundTheTrueDisc() {
+        // White out to ~0.7 deg (the disc is 0.27 deg in radius), still bright at 1 deg, a faint glow at 10 deg.
+        assertEquals(1.0, SunAppearance.glare(0.5, 20), 1e-9);
+        assertTrue(SunAppearance.glare(1, 20) > 0.45);
+        double far = SunAppearance.glare(10, 20);
+        assertTrue(far > 0.01 && far < 0.1, "broad glow at 10 deg: " + far);
+    }
 }
