@@ -67,7 +67,7 @@ public final class OriginShiftClient {
         if (root != null) shiftTree(root.getRootVehicle(), d, done);
         if (!done.contains(player)) shiftTree(player.getRootVehicle(), d, done);
         NavState nav = player.getAttached(Galactica.NAV);
-        player.setAttached(Galactica.NAV, (nav != null ? nav : NavState.initial()).withOrigin(msg.origin()));
+        player.setAttached(Galactica.NAV, (nav != null ? nav : NavState.initial()).withOrigin(msg.origin()).withTime(msg.time()));
         applied++;
         ClientPlayNetworking.send(new OriginShiftAckPayload(msg.seq()));
     }

@@ -68,6 +68,14 @@ public final class AutoTest {
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
+        if ("soi".equals(MODE)) {
+            // The orbital frame alone (OrbitalFrame): the four SOI checks, from a fresh login.
+            cmd(0, "clear");
+            soi();
+            STEPS.add(new Step(40, () -> Minecraft.getInstance().stop()));
+            ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+            return;
+        }
         if ("showcase".equals(MODE)) {
             showcase();
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
@@ -262,8 +270,63 @@ public final class AutoTest {
         STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Venus")));
         STEPS.add(new Step(40, () -> Minecraft.getInstance().player.connection.sendCommand("galactica ground")));
         look(80, 30, 5);    shot(5, "24_venus_ground");
+        soi();
         STEPS.add(new Step(60, () -> Minecraft.getInstance().stop()));
         ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+    }
+
+    /**
+     * The patched-conic orbital frame near Earth ({@link SoiAutoTest}): (c) a minute on a circular orbit at 400 km,
+     * (b) flying at Earth from 2,000 km on the main engine, (a) a ship's take-off from the Overworld left alone, (d) a
+     * suited player at rest 1,000 km up, then (b) again on the warp drive. Each logs one PASS/FAIL line.
+     */
+    private static void soi() {
+        cmd(5, "galactica kit");
+        cmd(10, "galactica launch");
+        cmd(40, "galactica goto Sol");
+        cmd(20, "galactica ship");
+        clearChat(20);
+        // Assist off before the orbit is set: on, it brakes the orbital speed relative to Earth from the first tick.
+        STEPS.add(new Step(5, () -> {
+            var ship = dev.galactica.client.ship.ShipClient.piloted(Minecraft.getInstance());
+            if (ship != null && ship.coupled()) ship.toggleCoupled();
+        }));
+        server(20, "park 400 km over Earth on a circular orbit", sp -> {
+            parkOverBody(sp, "Earth", 400e3);
+            var d = NavServer.circularize(sp);
+            Galactica.LOG.info("[autotest] circularized around {}", d == null ? "nothing" : d.name());
+        });
+        STEPS.add(new Step(20, () -> SoiAutoTest.start(SoiAutoTest.orbit(400e3, 1200))));
+        awaitSoi(1, 1400, "orbit");
+        server(5, "park 2000 km over Earth", sp -> parkOverBody(sp, "Earth", 2000e3));
+        STEPS.add(new Step(40, () -> SoiAutoTest.start(SoiAutoTest.approach("main engine", false, 6000))));
+        awaitSoi(1, 6300, "approach");
+        STEPS.add(new Step(5, () -> SoiAutoTest.start(SoiAutoTest.takeOff(1600))));
+        awaitSoi(1, 3000, "take-off");
+        server(20, "leave the ship", net.minecraft.server.level.ServerPlayer::stopRiding);
+        cmd(10, "galactica launch");
+        server(40, "park 1000 km over Earth on EVA", sp -> parkOverBody(sp, "Earth", 1000e3));
+        STEPS.add(new Step(40, () -> SoiAutoTest.start(SoiAutoTest.evaFall(200))));
+        awaitSoi(1, 400, "EVA fall");
+        cmd(5, "gamemode creative");
+        server(5, "park 2000 km over Earth on EVA", sp -> parkOverBody(sp, "Earth", 2000e3));
+        aimNadir(40, "Earth", 0);
+        STEPS.add(new Step(5, () -> SoiAutoTest.start(SoiAutoTest.approach("warp drive", true, 1200))));
+        awaitSoi(1, 1500, "warp approach");
+        cmd(5, "gamemode survival");
+        // The world is saved on exit: leave the space frame in high Earth orbit, not where the entry switched.
+        cmd(20, "galactica goto Sol");
+    }
+
+    /** Holds the script (after {@code wait}) until the running {@link SoiAutoTest} phase has logged its verdict. */
+    private static void awaitSoi(int wait, int maxTicks, String label) {
+        STEPS.add(new Step(wait, () -> {
+            holdLeft = maxTicks;
+            hold = () -> {
+                if (!SoiAutoTest.done() && holdLeft == 0) Galactica.LOG.warn("[autotest] FAIL soi {}: no verdict within {} ticks", label, maxTicks);
+                return SoiAutoTest.done();
+            };
+        }));
     }
 
     /** Empties the chat and the action-bar line, so earlier command output does not cover the next shot. */

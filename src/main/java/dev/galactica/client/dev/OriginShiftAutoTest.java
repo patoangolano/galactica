@@ -21,7 +21,7 @@ import java.util.Locale;
  * invariants are checked:
  * <ul>
  *   <li>per rendered frame, the camera's <i>galactic</i> position (origin + camera, exactly what the sky is drawn
- *       from) moves no more than the velocity allows for the frame time, and never backwards along it — a
+ *       from), taken relative to the body whose frame the craft flies in, moves no more than the velocity allows for the frame time, and never backwards along it — a
  *       recentre whose block shift and origin change did not land together, or a rubber-band, breaks this;</li>
  *   <li>per tick, a pilot stays mounted on the same ship <i>instance</i>, and that instance is still the one in the
  *       client level and not removed — a ship the server removed and re-added (the reported blinking) changes
@@ -112,7 +112,7 @@ public final class OriginShiftAutoTest {
             if (p.getVehicle() instanceof Starship again) ship = again; // count each loss once
         }
         Vec3 local = root.position();
-        GalacticPos viewer = SkyManager.get().viewer();
+        GalacticPos viewer = SkyManager.get().viewer() == null ? null : bodyRelative(SkyManager.get().viewer());
         double[] gal = viewer == null || start == null ? new double[3] : viewer.metresFrom(start);
         Vec3 cam = mc.gameRenderer.mainCamera().position();
         String line = String.format(Locale.ROOT, "tick %d craft=%s cam=%s galFromStart=(%.1f, %.1f, %.1f) v=%.2f",
@@ -138,9 +138,24 @@ public final class OriginShiftAutoTest {
         lastLocal = local;
     }
 
+    /**
+     * The camera relative to the body whose frame the craft flies in. The frame co-moves with that body
+     * ({@code OrbitalFrame}), so the galactic origin itself now moves ~1.5 km per tick near Earth; what must be
+     * continuous is the position relative to the body, which is exactly what the sky shows.
+     */
+    private static GalacticPos bodyRelative(GalacticPos viewer) {
+        SkyManager mgr = SkyManager.get();
+        if (mgr.nav() == null) return viewer;
+        var d = dev.galactica.nav.OrbitalFrame.dominant(mgr.neighbourhood(), viewer, mgr.nav().timeSeconds());
+        if (d == null) return viewer;
+        double[] r = viewer.metresFrom(d.pos());
+        return Frames.SOL_POS.plusMetres(r[0], r[1], r[2]);
+    }
+
     /** Once per rendered frame with the camera's galactic position (SkyManager). */
-    private static void frame(GalacticPos viewer) {
+    private static void frame(GalacticPos galactic) {
         if (!active || ticks < 10) return;
+        GalacticPos viewer = bodyRelative(galactic);
         // Game time of this frame: the camera is interpolated between the last two ticks by exactly this partial
         // tick, so the motion allowed since the previous frame is velocity x elapsed game time (no wall-clock jitter).
         double now = ticks + Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false);

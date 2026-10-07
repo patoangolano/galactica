@@ -7,6 +7,7 @@ import dev.galactica.nav.GalacticPos;
 import dev.galactica.nav.NavServer;
 import dev.galactica.nav.NavState;
 import dev.galactica.nav.Neighbourhood;
+import dev.galactica.nav.OrbitalFrame;
 import dev.galactica.planet.transfer.EarthOverworld;
 import dev.galactica.planet.transfer.EntryAerothermo;
 import dev.galactica.planet.transfer.PlasmaStatePayload;
@@ -298,12 +299,22 @@ public final class PlanetEntry {
             return false;
         }
         Body body = hit.body();
-        // Local up and the craft's velocity (galactic m/s, Krakensbane frame on the space side). Spin is horizontal,
-        // so the radial rate needs no ground correction.
+        // Local up and the craft's velocity relative to the body (galactic m/s): its block velocity plus the space
+        // frame's own velocity (OrbitalFrame, which co-moves with the dominant body). Spin is horizontal, so the radial
+        // rate needs no ground correction.
         double[] radial = here.metresFrom(hit.pos());
         double rMag = Math.sqrt(radial[0] * radial[0] + radial[1] * radial[1] + radial[2] * radial[2]);
         double[] up = {radial[0] / rMag, radial[1] / rMag, radial[2] / rMag};
         double[] vGal = TransferKinematics.spaceMcToGalactic(new double[] {root.getDeltaMovement().x, root.getDeltaMovement().y, root.getDeltaMovement().z});
+        if (nav.anchor() == body.id()) {
+            double[] vf = nav.frameVelocity();
+            for (int i = 0; i < 3; i++) vGal[i] += vf[i];
+        } else if (nav.anchor() != OrbitalFrame.ANCHOR_UNSET) {
+            // The frame is anchored elsewhere (a moon's shell reaching past its sphere of influence): re-express it.
+            double[] vf = OrbitalFrame.handOver(nav.frameVelocity(), OrbitalFrame.anchorVelocity(nb, here, nav.anchor(), t),
+                    OrbitalFrame.anchorVelocity(nb, here, body.id(), t));
+            for (int i = 0; i < 3; i++) vGal[i] += vf[i];
+        }
         if (nav.speed() > 0) {
             Vec3 look = p.getLookAngle();
             double[] g = Frames.mcToGalactic(look.x, look.y, look.z);
@@ -500,7 +511,11 @@ public final class PlanetEntry {
             if (attitude != null) ship.setAttitude(new Quaternionf((float) attitude[0], (float) attitude[1], (float) attitude[2], (float) attitude[3]));
             ship.setDeltaMovement(velocity);
         }
-        for (ServerPlayer rider : riders) arrive(rider, dest, addr, body, eva && rider == p);
+        for (ServerPlayer rider : riders) {
+            // The orbit ends here: a later launch or take-off sets the frame afresh.
+            rider.setAttached(Galactica.NAV, rider.getAttachedOrCreate(Galactica.NAV).resetFrame());
+            arrive(rider, dest, addr, body, eva && rider == p);
+        }
         return true;
     }
 
@@ -737,10 +752,14 @@ public final class PlanetEntry {
         double[] vGround = TransferKinematics.fromSurface(new double[] {dm.x, dm.y, dm.z}, frame, mpb);
         double[] spin = TransferKinematics.spinVelocity(pole, TransferKinematics.spinRate(b.rotationHours()),
                 new double[] {dir[0] * d, dir[1] * d, dir[2] * d});
-        // The space flight model caps speed at ShipFlightModel.MAX_SPEED: hand over no more than it accepts.
-        double[] v = clamp(TransferKinematics.galacticToSpaceMc(TransferKinematics.inertial(vGround, spin)),
-                ShipFlightModel.MAX_SPEED * ShipFlightModel.TICK);
+        // The hull keeps its ground-relative velocity (capped at what the space flight model accepts); the rest of the
+        // inertial velocity (the ground's own spin, anything over the cap) goes to the space frame, which co-moves with
+        // this body (OrbitalFrame): leaving the surface puts the craft on the trajectory it is really on.
+        double[] vInertial = TransferKinematics.inertial(vGround, spin);
+        double[] v = clamp(TransferKinematics.galacticToSpaceMc(vGround), ShipFlightModel.KRAKENSBANE_SPEED * ShipFlightModel.TICK);
         Vec3 velocity = new Vec3(v[0], v[1], v[2]);
+        double[] hull = TransferKinematics.spaceMcToGalactic(v);
+        double[] frameVelocity = {vInertial[0] - hull[0], vInertial[1] - hull[1], vInertial[2] - hull[2]};
         double[] angles = TransferKinematics.lookAngles(TransferKinematics.directionToSpace(
                 TransferKinematics.lookVector(root.getYRot(), root.getXRot()), frame));
         double[] attitude = null;
@@ -770,6 +789,7 @@ public final class PlanetEntry {
                 rider.setAttached(Galactica.NAV, rider.getAttachedOrCreate(Galactica.NAV)
                         .withOrigin(target.plusMetres(-g[0], -g[1], -g[2])).withSpeed(0));
             }
+            rider.setAttached(Galactica.NAV, rider.getAttachedOrCreate(Galactica.NAV).withFrame(frameVelocity, b.id()));
             rider.removeAttached(SURFACE);
             ARRIVALS.remove(rider.getUUID());
             clearGravity(rider);

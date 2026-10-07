@@ -109,6 +109,8 @@ public class Starship extends VehicleEntity {
     // Server-side bookkeeping.
     private @Nullable JumpTargetInfo pendingJump;
     private int lastReportTick, lastMainBurnTick = Integer.MIN_VALUE / 2;
+    /** Server: velocity change (m/s) the pilot's reports may still claim, refilled per elapsed tick. */
+    private final DeltaVBudget dvBudget = new DeltaVBudget();
     /**
      * Where a parked ship's gear holds it (x, z), while static friction holds: {@link #gearHolds} is set by
      * {@link #pilotStep} / {@link #coastStep} when the gear stopped all sliding this tick, and the anchor is cleared as
@@ -120,6 +122,12 @@ public class Starship extends VehicleEntity {
     public static int traceTicks;
     // Pilot's client: reports awaiting a possible server clamp.
     private final PilotReconciler reconciler = new PilotReconciler();
+    /** Pilot's client: velocity (m/s, world frame) handed to the space frame since the last report (Krakensbane). */
+    private final Vector3d pendingRebase = new Vector3d();
+    /** Pilot's client: rebases already reported, by report number, until the synced NAV acknowledges them. */
+    private final java.util.ArrayDeque<SentRebase> sentRebases = new java.util.ArrayDeque<>();
+
+    private record SentRebase(int seq, Vector3d rebase) {}
     // Client-side visual state (gear, canopy, gimbal), ticked for every ship the client sees.
     private float gear = 1F, gearO = 1F, canopy, canopyO, gimbalYaw, gimbalYawO, gimbalPitch, gimbalPitchO;
     private boolean gearDown = true;
@@ -127,6 +135,17 @@ public class Starship extends VehicleEntity {
     public Starship(EntityType<? extends Starship> type, Level level) {
         super(type, level);
         this.blocksBuilding = true;
+    }
+
+    private static java.util.function.BooleanSupplier pilotReady = () -> true;
+
+    /** Client: whether the local player has finished loading the level it is in (set by the client half). */
+    public static void setPilotReady(java.util.function.BooleanSupplier ready) {
+        pilotReady = ready;
+    }
+
+    public static boolean pilotReady() {
+        return pilotReady.getAsBoolean();
     }
 
     public static void setGravityModel(ToDoubleFunction<Level> model) {
@@ -144,18 +163,13 @@ public class Starship extends VehicleEntity {
     }
 
     /**
-     * Server: GM/r² toward the dominant body in the pilot's galactic frame when in space; the level's surface
-     * gravity elsewhere. An unpiloted ship in space has no frame of its own (block space is shared by every
-     * player's floating origin), so it coasts in free fall.
+     * Server: the level's surface gravity outside space. In space the block velocity feels none: the dominant body's
+     * GM/r² acts on the craft's whole free-falling frame ({@link dev.galactica.nav.OrbitalFrame}), which the server
+     * integrates alone, so the pilot's prediction and the server never disagree about it.
      */
     private Vector3f computeGravity(@Nullable ServerPlayer pilot) {
         if (level().dimension() != Galactica.SPACE) return new Vector3f(0F, (float) -gravityAt(level()), 0F);
-        if (pilot == null) return new Vector3f();
-        NavState nav = pilot.getAttachedOrCreate(Galactica.NAV);
-        GalacticPos here = Frames.playerPos(nav, getX(), getY(), getZ());
-        double[] g = ShipGravity.pull(ShipGravity.attractors(NavServer.neighbourhood(pilot), here, nav.timeSeconds()));
-        double[] mc = Frames.galacticToMc(g[0], g[1], g[2]);
-        return new Vector3f((float) mc[0], (float) mc[1], (float) mc[2]);
+        return new Vector3f();
     }
 
     // ---------------------------------------------------------------- synced state
@@ -206,6 +220,17 @@ public class Starship extends VehicleEntity {
      */
     public int recordReport(Vec3 perTick) {
         return reconciler.record(toMetres(perTick));
+    }
+
+    /** Pilot's client: the velocity (m/s) moved into the space frame since the last report, then cleared. */
+    public Vector3f takeRebase(int seq) {
+        Vector3f r = new Vector3f((float) pendingRebase.x, (float) pendingRebase.y, (float) pendingRebase.z);
+        // Kept until the server's NAV says it folded report seq in: the flight-assist reference must not lose it for
+        // a round trip (ShipFlightModel.step against assistReference()).
+        if (pendingRebase.lengthSquared() > 0) sentRebases.addLast(new SentRebase(seq, new Vector3d(r.x, r.y, r.z)));
+        while (sentRebases.size() > 200) sentRebases.removeFirst();
+        pendingRebase.zero();
+        return r;
     }
 
     /**
@@ -356,7 +381,11 @@ public class Starship extends VehicleEntity {
         attitudeO.set(attitude);
         attitudeSync.apply(attitude, level().isClientSide() && !isLocalInstanceAuthoritative());
         super.tick();
-        if (isLocalInstanceAuthoritative()) {
+        // Pilot's client still on the level-loading screen (just switched dimension): hold the ship where the server
+        // put it, velocity kept. Flying on meanwhile (vanilla ignores its moves until the client has loaded) carried a
+        // 285 m/s ship 8 km past the chunks the server was sending, so the screen waited out its 30 s timeout and the
+        // first accepted vehicle move then swept a collision box kilometres long, stalling the server for a minute.
+        if (isLocalInstanceAuthoritative() && !(level().isClientSide() && !pilotReady.getAsBoolean())) {
             if (level().isClientSide()) pilotStep();
             else coastStep();
             Vec3 start = position();
@@ -572,12 +601,33 @@ public class Starship extends VehicleEntity {
         // Weight on the gear: touching now (box or probe within 1/16 block), not "touched within the last ticks",
         // so a ship that hops off or rolls over a ledge is airborne at once and its flight assist takes over.
         boolean grounded = onGround() || restingContact();
-        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK, grounded);
+        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK, grounded, assistReference());
         gearHolds = ShipFlightModel.parked(c, hydrogen(), grounded) && v.x == 0 && v.z == 0 && gravityIsVertical(g);
+        // Speed beyond the block cap goes to the frame (reported with the velocity, ShipClient), not lost.
+        if (level().dimension() == Galactica.SPACE) pendingRebase.add(ShipFlightModel.krakensbane(v));
         attitude.set((float) q.x, (float) q.y, (float) q.z, (float) q.w);
         localThrottle = hydrogen() > 0 ? (float) c.thrust() : 0F;
         setDeltaMovement(v.x * ShipFlightModel.TICK, v.y * ShipFlightModel.TICK, v.z * ShipFlightModel.TICK);
         syncRotationFields();
+    }
+
+    /**
+     * Pilot's client: the velocity (m/s, world frame) of the block frame relative to the dominant body, against which
+     * flight assist measures: the synced orbital-frame velocity, plus the rebases reported since the report the server
+     * last acknowledged ({@link NavState#rebaseAck()}), plus what was folded in since the last report.
+     * Zero outside space.
+     */
+    private Vector3d assistReference() {
+        if (level().dimension() != Galactica.SPACE || !(getControllingPassenger() instanceof Player p)) return new Vector3d();
+        NavState nav = p.getAttached(Galactica.NAV);
+        if (nav == null) return new Vector3d(pendingRebase);
+        double[] f = nav.frameVelocity();
+        double[] mc = Frames.galacticToMc(f[0], f[1], f[2]);
+        Vector3d r = new Vector3d(mc[0], mc[1], mc[2]).add(pendingRebase);
+        // Reported but not yet in the synced frame velocity: the server's NAV lags a round trip behind.
+        while (!sentRebases.isEmpty() && sentRebases.peekFirst().seq() <= nav.rebaseAck()) sentRebases.removeFirst();
+        for (SentRebase s : sentRebases) r.add(s.rebase());
+        return r.isFinite() ? r : new Vector3d();
     }
 
     /** Nobody at the controls (server): free fall plus whatever velocity it had. */
@@ -662,28 +712,61 @@ public class Starship extends VehicleEntity {
      * server keeps the velocity so vanilla's "moved too quickly" check compares the reported move against the
      * ship's real speed, not against zero.
      */
-    void acceptPilotReport(ServerPlayer pilot, int seq, Quaternionfc q, Vector3fc velocity, boolean assist) {
+    void acceptPilotReport(ServerPlayer pilot, int seq, Quaternionfc q, Vector3fc velocity, boolean assist, Vector3fc rebase) {
         if (!q.isFinite() || !velocity.isFinite() || q.lengthSquared() < 1e-6) return;
         int now = tickCount;
-        int ticks = Math.clamp(now - lastReportTick, 1, 20);
+        // Elapsed server ticks, not reports: several reports in one tick (a burst after lag, or a modified client
+        // spamming them) share that tick's budget instead of each getting one of its own.
+        int elapsed = Math.clamp(now - lastReportTick, 0, 20);
+        int ticks = Math.max(1, elapsed);
         lastReportTick = now;
 
         Vector3d v = new Vector3d(velocity.x(), velocity.y(), velocity.z());
+        // Krakensbane: the part of the velocity the client moved into the frame still counts against the engines.
+        Vector3d moved = new Vector3d();
+        if (rebase.isFinite() && level().dimension() == Galactica.SPACE) {
+            moved.set(rebase.x(), rebase.y(), rebase.z());
+            double cap = 2 * ShipFlightModel.MAX_SPEED;
+            if (moved.length() > cap) moved.mul(cap / moved.length());
+        }
         Vector3d prev = toMetres(getDeltaMovement());
         // W/S held right now counts too: the input packet arrives before this report, but serverStep (which stamps
         // lastMainBurnTick) only runs in the next entity tick, so the first tick of every burn would be clamped.
         Input in = pilot.getLastClientInput();
         boolean mainBurning = hydrogen() > 0 && (in.forward() || in.backward() || tickCount - lastMainBurnTick <= ticks + 1);
-        double maxDv = ShipFlightModel.maxDeltaVPerTick(mainBurning, gravity().length()) * ticks * 1.1 + 0.5;
+        // Velocity-change credit (m/s): what the engines plus gravity can do per elapsed tick (10 % and 0.5 m/s of float
+        // slack), banked for at most 20 ticks and spent by the reports, Krakensbane rebase included. The main engine
+        // only counts while the server burns hydrogen for it, so frame velocity is never free.
+        double perTick = ShipFlightModel.maxDeltaVPerTick(mainBurning, gravity().length()) * 1.1 + 0.5;
+        dvBudget.refill(elapsed, perTick);
         // Touching terrain, the pilot's collision may have stopped the ship along any axis: the ground takes
         // 190 m/s off a hull in one tick, which no engine could. Collisions only remove velocity, so per axis the
         // reference becomes the reported speed when it is smaller with the same sign, or zero when it reversed (a
         // bounce or thrust away still counts against the engines). Without this the server kept the impact speed and
         // its clamp handed it back to the pilot every tick (ShipCorrectionPayload) for seconds after touchdown.
         Vector3d base = touchingTerrain() ? collisionBase(prev, v) : prev;
-        Vector3d dv = new Vector3d(v).sub(base);
-        if (dv.length() > maxDv) v.set(base).fma(maxDv / dv.length(), dv);
+        Vector3d total = new Vector3d(v).add(moved);
+        Vector3d dv = new Vector3d(total).sub(base);
+        double wanted = dv.length();
+        double granted = dvBudget.spend(wanted);
+        if (granted < wanted) {
+            total.set(base).fma(granted / wanted, dv);
+            // Split what is left the way the client splits it.
+            v.set(total);
+            moved = level().dimension() == Galactica.SPACE ? ShipFlightModel.krakensbane(v) : new Vector3d();
+        }
         if (v.length() > ShipFlightModel.MAX_SPEED) v.mul(ShipFlightModel.MAX_SPEED / v.length());
+        if (level().dimension() == Galactica.SPACE) {
+            NavState nav = pilot.getAttachedOrCreate(Galactica.NAV);
+            NavState next = nav.withRebaseAck(seq);
+            if (moved.lengthSquared() > 0) {
+                double[] g = Frames.mcToGalactic(moved.x, moved.y, moved.z);
+                double[] f = nav.frameVelocity();
+                next = next.withFrame(new double[] {f[0] + g[0], f[1] + g[1], f[2] + g[2]}, nav.anchor());
+            }
+            pilot.setAttached(Galactica.NAV, next);
+            if (moved.lengthSquared() > 0) carryCrew(pilot, nav.origin(), next);
+        }
         // The pilot ignores the tracker's velocity echo, so a clamp has to be told explicitly.
         if (v.distance(velocity.x(), velocity.y(), velocity.z()) >= PilotReconciler.EPSILON)
             ServerPlayNetworking.send(pilot, new ShipCorrectionPayload(getId(), seq, new Vector3f((float) v.x, (float) v.y, (float) v.z)));
@@ -906,7 +989,8 @@ public class Starship extends VehicleEntity {
             if (e instanceof ServerPlayer crew && crew != pilot) {
                 NavState nav = crew.getAttachedOrCreate(Galactica.NAV);
                 crew.setAttached(Galactica.NAV, new NavState(nav.origin().plusMetres(d[0], d[1], d[2]),
-                        pilotNow.speed(), nav.maxSpeed(), pilotNow.timeSeconds()));
+                        pilotNow.speed(), nav.maxSpeed(), pilotNow.timeSeconds(),
+                        pilotNow.frameVx(), pilotNow.frameVy(), pilotNow.frameVz(), pilotNow.anchor(), nav.rebaseAck()));
             }
         }
     }

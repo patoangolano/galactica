@@ -31,6 +31,11 @@ public final class ShipFlightModel {
      * behind; real distances are covered by the warp drive, which moves the frame instead of the ship.
      */
     public static final double MAX_SPEED = 300.0;
+    /**
+     * In space, block speed beyond this is handed to the frame ({@link #krakensbane}), so burns keep adding speed past
+     * {@link #MAX_SPEED} (orbital speed is ~7.7 km/s) while the hull's block velocity stays under a chunk per tick.
+     */
+    public static final double KRAKENSBANE_SPEED = 0.95 * MAX_SPEED;
     public static final double TICK = 0.05;
     /** Keyboard yaw (A/D) and roll (Q/E) rates, degrees per second. */
     public static final double KEY_YAW_RATE = 45.0, KEY_ROLL_RATE = 90.0;
@@ -65,7 +70,22 @@ public final class ShipFlightModel {
      * @return hydrogen burned this step (never more than {@code hydrogen})
      */
     public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt) {
-        return step(attitude, velocity, c, gravity, hydrogen, dt, false);
+        return step(attitude, velocity, c, gravity, hydrogen, dt, false, ZERO);
+    }
+
+    private static final Vector3dc ZERO = new Vector3d();
+
+    /**
+     * {@link #step} with flight assist measured against a reference: {@code frame} (m/s, world frame) is the velocity
+     * the craft's block frame already has relative to the body it flies near (in space, the orbital frame's velocity,
+     * {@code OrbitalFrame}). Coupled mode then nulls the craft's velocity across the nose <i>relative to that body</i>
+     * ({@code velocity + frame}), not relative to a frame that is itself falling or orbiting; the correction goes into
+     * {@code velocity}, and whatever piles up past {@link #KRAKENSBANE_SPEED} is folded back into the frame by
+     * {@link #krakensbane}, which is how the assist slows the frame down.
+     */
+    public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt,
+                              Vector3dc frame) {
+        return step(attitude, velocity, c, gravity, hydrogen, dt, false, frame);
     }
 
     /**
@@ -82,19 +102,25 @@ public final class ShipFlightModel {
         return grounded && c.lift() <= 0 && (hydrogen <= 0 || c.thrust() == 0);
     }
 
+    /** {@link #step(Quaterniond, Vector3d, Controls, Vector3dc, double, double, boolean, Vector3dc)} with no frame. */
+    public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt,
+                              boolean grounded) {
+        return step(attitude, velocity, c, gravity, hydrogen, dt, grounded, ZERO);
+    }
+
     /**
-     * As {@link #step(Quaterniond, Vector3d, Controls, Vector3dc, double, double)}, knowing whether the hull rests on
-     * the ground. A parked ship ({@link #parked}) gets no flight-assist hover (the assist would otherwise null the
-     * velocity along the dorsal axis, gravity included, and float the hull on its own thrusters instead of
+     * As {@link #step(Quaterniond, Vector3d, Controls, Vector3dc, double, double, Vector3dc)}, knowing whether the hull
+     * rests on the ground. A parked ship ({@link #parked}) gets no flight-assist hover (the assist would otherwise null
+     * the velocity along the dorsal axis, gravity included, and float the hull on its own thrusters instead of
      * letting it settle on its gear) and its gear holds it: Coulomb friction removes up to μ·g·dt of horizontal speed
      * each step and stops it outright below that (static friction), so a landed ship comes to rest on flat ground
      * and on any slope gentler than atan μ ≈ 39°. Taking off (lift up, or the main engine) is untouched.
      */
     public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt,
-                              boolean grounded) {
+                              boolean grounded, Vector3dc frame) {
         if (parked(c, hydrogen, grounded)) {
             c = new Controls(c.thrust(), Math.min(0, c.lift()), c.yawDeg(), c.pitchDeg(), c.rollDeg(), false);
-            double burned = step(attitude, velocity, c, gravity, hydrogen, dt, false);
+            double burned = step(attitude, velocity, c, gravity, hydrogen, dt, false, frame);
             gearFriction(velocity, gravity, dt);
             return burned;
         }
@@ -113,13 +139,26 @@ public final class ShipFlightModel {
             // Each RCS axis has its own thruster pair, so the budget is per axis; an axis the pilot is
             // commanding is left alone.
             double budget = RCS_ACCEL * dt;
-            velocity.fma(-toward0(velocity.dot(side), budget), side);
-            if (lift == 0) velocity.fma(-toward0(velocity.dot(up), budget), up);
+            Vector3d rel = new Vector3d(velocity).add(frame);
+            velocity.fma(-toward0(rel.dot(side), budget), side);
+            if (lift == 0) velocity.fma(-toward0(rel.dot(up), budget), up);
         }
 
         double v = velocity.length();
         if (v > MAX_SPEED) velocity.mul(MAX_SPEED / v);
         return Math.min(hydrogen, Math.abs(throttle) * dt / MAIN_SECONDS_PER_HYDROGEN);
+    }
+
+    /**
+     * Krakensbane: removes from {@code velocity} (m/s, in place) whatever exceeds {@link #KRAKENSBANE_SPEED} and returns
+     * it, to be added to the space frame's velocity. The sum, the craft's real velocity, is unchanged.
+     */
+    public static Vector3d krakensbane(Vector3d velocity) {
+        double v = velocity.length();
+        if (!(v > KRAKENSBANE_SPEED)) return new Vector3d();
+        Vector3d excess = new Vector3d(velocity).mul(1 - KRAKENSBANE_SPEED / v);
+        velocity.sub(excess);
+        return excess;
     }
 
     /**

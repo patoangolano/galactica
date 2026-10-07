@@ -206,9 +206,10 @@ public final class FloatingOrigin {
      * Moves {@code leader}'s craft by {@code d} blocks and tells every player aboard, each with their own new origin:
      * the leader's is {@code leaderNew}, the crew's move by the same galactic displacement (as
      * {@code Starship.carryCrew} will write). Call before the NAV attachments are written, so each client sees the
-     * payload first and the attachment sync that follows is a no-op.
+     * payload first and the attachment sync that follows is a no-op. {@code time} is the clock that goes with the new
+     * origins: the frame co-moves with a planet, so an origin only means something together with its time.
      */
-    public static void apply(ServerPlayer leader, Vec3 d, GalacticPos leaderOld, GalacticPos leaderNew) {
+    public static void apply(ServerPlayer leader, Vec3 d, GalacticPos leaderOld, GalacticPos leaderNew, double time) {
         Entity root = leader.getRootVehicle();
         List<Entity> craft = new ArrayList<>();
         craft.add(root);
@@ -234,7 +235,7 @@ public final class FloatingOrigin {
             rider.level().getChunkSource().move(rider);
             int seq = nextSeq++;
             PENDING.put(rider.getUUID(), new Pending(seq, d, now));
-            ServerPlayNetworking.send(rider, new OriginShiftPayload(seq, root.getId(), d.x, d.y, d.z, origin));
+            ServerPlayNetworking.send(rider, new OriginShiftPayload(seq, root.getId(), d.x, d.y, d.z, origin, time));
         }
     }
 

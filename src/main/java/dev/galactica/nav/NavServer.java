@@ -7,6 +7,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
@@ -26,6 +27,12 @@ import java.util.UUID;
  * distance per second to the nearest surface ahead (35° cone), so the ship decelerates smoothly on
  * arrival, as in Elite's supercruise, while leaving a planet is unrestricted. Sneaking cuts the drive. While warping only the galactic origin moves;
  * the player's block position is untouched.
+ *
+ * <p><b>Orbital frame.</b> Every tick the frame co-moves with the body whose sphere of influence the craft is in,
+ * carries the craft's velocity relative to it and falls under its gravity ({@link OrbitalFrame}), so a planet no
+ * longer runs away at its orbital speed once a craft leaves it, and a craft at the right speed orbits. While the warp
+ * drive moves, the frame is frozen (no gravity, velocity kept), and a warp into another body's sphere arrives at rest
+ * relative to that body.
  *
  * <p><b>Floating origin.</b> A craft more than {@link #ORIGIN_LIMIT} blocks from block (0,0,0) of its
  * frame is moved back to it and the offset is folded into {@link NavState#origin()} ({@link FloatingOrigin}), so
@@ -71,13 +78,17 @@ public final class NavServer {
         p.resetFallDistance();
         // Passengers ride in the pilot's frame; Starship.carryCrew moves their origin with the pilot's.
         if (dev.galactica.ship.Starship.isCrew(p)) {
-            // Nobody at the controls: the first player aboard still leads the floating origin (no drive).
-            if (dev.galactica.ship.Starship.leadsCraft(p)) recentreOnly(p, nav, t);
+            // Nobody at the controls: the first player aboard still leads the frame (orbit, recentre; no drive).
+            if (dev.galactica.ship.Starship.leadsCraft(p)) {
+                FloatingOrigin.keepCraftLoaded(p);
+                advance(p, nav, t, 0, null);
+            }
             return;
         }
         FloatingOrigin.keepCraftLoaded(p);
 
-        GalacticPos here = Frames.playerPos(nav, p.getX(), p.getY(), p.getZ());
+        Entity root = p.getRootVehicle();
+        GalacticPos here = Frames.playerPos(nav, root.getX(), root.getY(), root.getZ());
         double speed = nav.speed();
         // Raw key state, not isSprinting(): vanilla only counts as sprinting while moving forward,
         // and the drive should spool with the key alone, whatever direction the player drifts.
@@ -95,35 +106,40 @@ public final class NavServer {
 
         if (speed > 0 && !dev.galactica.ship.Starship.consumeWarpFuel(p, speed)) speed = 0;
 
-        GalacticPos origin = nav.origin();
+        double[] warpStep = null;
         if (speed > 0) {
             Vec3 look = p.getLookAngle();
             double[] g = Frames.mcToGalactic(look.x, look.y, look.z);
             double step = speed * TICK_SECONDS;
-            origin = origin.plusMetres(g[0] * step, g[1] * step, g[2] * step);
+            warpStep = new double[] {g[0] * step, g[1] * step, g[2] * step};
         }
+        advance(p, nav, t, speed, warpStep);
+    }
+
+    /**
+     * Moves the leader's frame one tick and writes it: the patched-conic frame step ({@link OrbitalFrame#advance}: the
+     * dominant body's own motion, the frame velocity, its gravity), the warp step, then the floating-origin recentre.
+     */
+    private static void advance(ServerPlayer p, NavState nav, double t, double speed, double[] warpStep) {
+        Entity root = p.getRootVehicle();
+        GalacticPos here = Frames.playerPos(nav, root.getX(), root.getY(), root.getZ());
+        OrbitalFrame.Advance frame = OrbitalFrame.advance(neighbourhood(p), here, nav.frameVelocity(), nav.anchor(),
+                nav.timeSeconds(), TICK_SECONDS, speed > 0);
+        double[] d = frame.originDelta();
+        GalacticPos origin = nav.origin().plusMetres(d[0], d[1], d[2]);
+        if (warpStep != null) origin = origin.plusMetres(warpStep[0], warpStep[1], warpStep[2]);
 
         // Floating origin: bring the craft back near block 0 and fold the offset into the galactic origin. The shift
         // reaches the riders' clients as one ordered event (FloatingOrigin), before the attachment sync below.
         Vec3 shift = FloatingOrigin.shiftNeeded(p);
         if (shift != null) origin = FloatingOrigin.fold(origin, shift);
 
-        NavState next = new NavState(origin, speed, nav.maxSpeed(), t);
-        if (shift != null) FloatingOrigin.apply(p, shift, nav.origin(), next.origin());
-        // Attachment writes are synced to the owner, so only write when something a client can see changed.
-        if (speed != 0 || nav.speed() != 0 || !origin.equals(nav.origin()) || (p.tickCount % 20) == 0) {
-            p.setAttached(Galactica.NAV, next);
-            dev.galactica.ship.Starship.carryCrew(p, nav.origin(), next);
-        }
-    }
-
-    /** Floating origin for a craft nobody pilots: same ordered shift, no warp step. */
-    private static void recentreOnly(ServerPlayer p, NavState nav, double t) {
-        FloatingOrigin.keepCraftLoaded(p);
-        Vec3 shift = FloatingOrigin.shiftNeeded(p);
-        if (shift == null) return;
-        NavState next = new NavState(FloatingOrigin.fold(nav.origin(), shift), nav.speed(), nav.maxSpeed(), t);
-        FloatingOrigin.apply(p, shift, nav.origin(), next.origin());
+        double[] v = frame.frameVelocity();
+        NavState next = new NavState(origin, speed, nav.maxSpeed(), t, v[0], v[1], v[2], frame.anchor(), nav.rebaseAck());
+        if (shift != null) FloatingOrigin.apply(p, shift, nav.origin(), next.origin(), t);
+        // Written (and synced to the owner) every tick: the frame co-moves with the planets and falls, so the origin and
+        // the clock change every tick and must reach the client together. (Writing only on change used to leave the
+        // clock of an idle craft advancing one tick per second.)
         p.setAttached(Galactica.NAV, next);
         dev.galactica.ship.Starship.carryCrew(p, nav.origin(), next);
     }
@@ -144,13 +160,39 @@ public final class NavServer {
         if (space == null) return false;
         if (p.level().dimension() != Galactica.SPACE) {
             p.setAttached(Galactica.RETURN_POINT, new ReturnPoint(p.level().dimension().identifier(), p.getX(), p.getY(), p.getZ()));
+            // Whatever orbit the frame carried when this player last left space is long over.
+            p.setAttached(Galactica.NAV, p.getAttachedOrCreate(Galactica.NAV).resetFrame());
         }
+        boolean fromSurface = p.level().dimension() != Galactica.SPACE;
         p.teleport(new TeleportTransition(space, new Vec3(0.5, 0, 0.5), Vec3.ZERO, p.getYRot(), p.getXRot(),
                 TeleportTransition.PLAY_PORTAL_SOUND));
         p.getAbilities().mayfly = true;
         p.getAbilities().flying = true;
         p.onUpdateAbilities();
+        if (fromSurface) clearOfEntryShell(p);
         return true;
+    }
+
+    /**
+     * After a launch: a frame left where an entry switched (a few km over a planet) would drop the player straight back
+     * in, so a launch that lands inside twice a body's entry altitude is raised along the radial to that height and
+     * put on a circular orbit there.
+     */
+    private static void clearOfEntryShell(ServerPlayer p) {
+        NavState nav = p.getAttachedOrCreate(Galactica.NAV);
+        GalacticPos here = Frames.playerPos(nav, p.getX(), p.getY(), p.getZ());
+        for (Neighbourhood.Located l : neighbourhood(p).locateBodies(here, nav.timeSeconds())) {
+            var b = l.body();
+            if (!b.type().solidSurface) continue;
+            double safe = 2 * dev.galactica.planet.PlanetEntry.entryAltitude(b);
+            double[] r = here.metresFrom(l.pos());
+            double rm = Math.sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+            if (rm - b.radiusMetres() >= safe || rm <= 0) continue;
+            double k = (b.radiusMetres() + safe) / rm;
+            moveTo(p, l.pos().plusMetres(r[0] * k, r[1] * k, r[2] * k));
+            circularize(p);
+            return;
+        }
     }
 
     /** Returns a player to where they launched from (or the overworld spawn). */
@@ -176,11 +218,34 @@ public final class NavServer {
         p.teleport(new TeleportTransition(dest, pos, Vec3.ZERO, p.getYRot(), p.getXRot(), TeleportTransition.PLAY_PORTAL_SOUND));
     }
 
-    /** Re-anchors the player's frame so that they stand at {@code target}. */
+    /** Re-anchors the player's frame so that they stand at {@code target}, at rest relative to the body that dominates there. */
     public static void moveTo(ServerPlayer p, GalacticPos target) {
         NavState nav = p.getAttachedOrCreate(Galactica.NAV);
         double[] g = Frames.mcToGalactic(p.getX(), p.getY(), p.getZ());
-        p.setAttached(Galactica.NAV, nav.withOrigin(target.plusMetres(-g[0], -g[1], -g[2])).withSpeed(0));
+        p.setAttached(Galactica.NAV, nav.withOrigin(target.plusMetres(-g[0], -g[1], -g[2])).withSpeed(0).resetFrame());
+    }
+
+    /**
+     * Puts the player's craft on a circular orbit through where it is now, around the body that dominates there: the
+     * frame takes the circular velocity (minus the craft's own block velocity), prograde about galactic north (or
+     * about galactic x when the craft sits over a pole of that axis). Returns the body, or null outside a system.
+     */
+    public static OrbitalFrame.Dominant circularize(ServerPlayer p) {
+        if (p.level().dimension() != Galactica.SPACE) return null;
+        NavState nav = p.getAttachedOrCreate(Galactica.NAV);
+        Entity root = p.getRootVehicle();
+        GalacticPos here = Frames.playerPos(nav, root.getX(), root.getY(), root.getZ());
+        OrbitalFrame.Dominant d = OrbitalFrame.dominant(neighbourhood(p), here, nav.timeSeconds());
+        if (d == null) return null;
+        double[] r = here.metresFrom(d.pos());
+        double rm = Math.sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+        double[] normal = Math.abs(r[2]) < 0.9 * rm ? new double[] {0, 0, 1} : new double[] {1, 0, 0};
+        double[] v = OrbitalFrame.circularVelocity(r, d.mu(), normal);
+        Vec3 dm = root.getDeltaMovement();
+        double[] own = Frames.mcToGalactic(dm.x * 20, dm.y * 20, dm.z * 20);
+        p.setAttached(Galactica.NAV, nav.withSpeed(0).withFrame(new double[] {v[0] - own[0], v[1] - own[1], v[2] - own[2]}, d.id()));
+        dev.galactica.ship.Starship.carryCrew(p, nav.origin(), p.getAttachedOrCreate(Galactica.NAV));
+        return d;
     }
 
     public static String formatSpeed(double ms) {

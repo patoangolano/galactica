@@ -48,6 +48,10 @@ public final class ShipClient {
 
     /** Call once from {@code GalacticaClient.onInitializeClient}. */
     public static void initClient() {
+        Starship.setPilotReady(() -> {
+            var connection = Minecraft.getInstance().getConnection();
+            return connection == null || connection.hasClientLoaded();
+        });
         ModelLayerRegistry.registerModelLayer(StarshipModel.HULL_LAYER, StarshipModel::createHullLayer);
         ModelLayerRegistry.registerModelLayer(StarshipModel.LIGHTS_LAYER, StarshipModel::createLightsLayer);
         ModelLayerRegistry.registerModelLayer(StarshipModel.CORES_LAYER, StarshipModel::createCoresLayer);
@@ -132,10 +136,10 @@ public final class ShipClient {
     /** After the tick the prediction for this tick is final: report it. */
     private static void afterTick(Minecraft mc) {
         Starship ship = piloted(mc);
-        if (ship == null || !ClientPlayNetworking.canSend(ShipControlPayload.TYPE)) return;
+        if (ship == null || !ClientPlayNetworking.canSend(ShipControlPayload.TYPE) || !Starship.pilotReady()) return;
         int seq = ship.recordReport(ship.getDeltaMovement());
         Vec3 v = ship.getDeltaMovement().scale(20.0);
         ClientPlayNetworking.send(new ShipControlPayload(ship.getId(), seq, new Quaternionf(ship.attitude()),
-                new Vector3f((float) v.x, (float) v.y, (float) v.z), ship.coupled()));
+                new Vector3f((float) v.x, (float) v.y, (float) v.z), ship.coupled(), ship.takeRebase(seq)));
     }
 }

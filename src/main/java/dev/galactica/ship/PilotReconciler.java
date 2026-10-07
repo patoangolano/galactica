@@ -20,6 +20,11 @@ public final class PilotReconciler {
     private final int[] seqs = new int[HISTORY];
     private final Vector3d[] reported = new Vector3d[HISTORY];
     private int next = 1, reconciledUpTo;
+    /**
+     * Last number issued by any reconciler on this client: report numbers keep rising across ships, so a new ship's
+     * reports are never taken for ones the server already acknowledged ({@code NavState.rebaseAck}).
+     */
+    private static int lastIssued;
 
     public PilotReconciler() {
         for (int i = 0; i < HISTORY; i++) reported[i] = new Vector3d();
@@ -27,7 +32,9 @@ public final class PilotReconciler {
 
     /** Records the velocity (m/s) about to be reported and returns the report's sequence number. */
     public int record(Vector3dc velocity) {
-        int seq = next++;
+        int seq = Math.max(next, lastIssued + 1);
+        next = seq + 1;
+        lastIssued = seq;
         int i = Math.floorMod(seq, HISTORY);
         seqs[i] = seq;
         reported[i].set(velocity);

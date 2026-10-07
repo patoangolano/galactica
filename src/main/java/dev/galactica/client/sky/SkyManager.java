@@ -110,6 +110,13 @@ public final class SkyManager {
         if (nav == null) nav = NavState.initial();
         Vec3 cam = mc.gameRenderer.mainCamera().position();
         viewer = Frames.playerPos(nav, cam.x, cam.y, cam.z);
+        if (nav.speed() <= 0) {
+            // The camera is interpolated between the last two ticks, the origin is not: it already holds this tick's
+            // frame motion (OrbitalFrame), ~385 m per tick in low orbit. Taking back the part of it the camera has not
+            // reached yet keeps the planet below gliding instead of stepping at 20 Hz.
+            double k = -(1.0 - mc.getDeltaTracker().getGameTimeDeltaPartialTick(false)) * 0.05;
+            viewer = viewer.plusMetres(nav.frameVx() * k, nav.frameVy() * k, nav.frameVz() * k);
+        }
         if (frameProbe != null) frameProbe.accept(viewer);
 
         int width = skyWidth();
