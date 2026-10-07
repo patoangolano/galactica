@@ -38,7 +38,7 @@ public final class OriginShiftAutoTest {
     private static String phase = "";
     private static Vec3 velocity = Vec3.ZERO;
     private static int ticks, recentres, shiftsAtStart, frames, frameFailures, backwardFailures, mountFailures, logAfter;
-    private static int shipId = -1, shipLost, strictJumps;
+    private static int shipId = -1, shipLost, strictJumps, offSteps;
     private static Starship ship;
     private static double worstRatio;
     private static GalacticPos start, lastFrame;
@@ -55,7 +55,7 @@ public final class OriginShiftAutoTest {
         LocalPlayer p = Minecraft.getInstance().player;
         phase = name;
         velocity = blocksPerTick;
-        ticks = recentres = frames = frameFailures = backwardFailures = mountFailures = logAfter = shipLost = strictJumps = 0;
+        ticks = recentres = frames = frameFailures = backwardFailures = mountFailures = logAfter = shipLost = strictJumps = offSteps = 0;
         worstRatio = 0;
         shiftsAtStart = OriginShiftClient.applied;
         ship = p.getVehicle() instanceof Starship s ? s : null;
@@ -80,8 +80,8 @@ public final class OriginShiftAutoTest {
                 && shipLost == 0 && frames > 100;
         Galactica.LOG.info(String.format(Locale.ROOT,
                 "[autotest] %s origin-recentre %s: recentres=%d shiftsApplied=%d ticks=%d frames=%d worstFrameJump=%.2f of allowed, "
-                        + "frameJumps=%d backwards=%d dismounts=%d shipRemoved=%d strictJumps=%d", ok ? "PASS" : "FAIL", phase, recentres,
-                shifts, ticks, frames, worstRatio, frameFailures, backwardFailures, mountFailures, shipLost, strictJumps));
+                        + "frameJumps=%d backwards=%d dismounts=%d shipRemoved=%d strictJumps=%d offSteps=%d", ok ? "PASS" : "FAIL", phase, recentres,
+                shifts, ticks, frames, worstRatio, frameFailures, backwardFailures, mountFailures, shipLost, strictJumps, offSteps));
     }
 
     private static void tick(Minecraft mc) {
@@ -106,6 +106,12 @@ public final class OriginShiftAutoTest {
         Vec3 cam = mc.gameRenderer.mainCamera().position();
         String line = String.format(Locale.ROOT, "tick %d craft=%s cam=%s galFromStart=(%.1f, %.1f, %.1f) v=%.2f",
                 ticks, fmt(local), fmt(cam), gal[0], gal[1], gal[2], root.getDeltaMovement().length());
+        // Diagnosis only: a tick step that is not the forced velocity means something else set the craft's
+        // velocity or position between two ticks (a server echo, a correction).
+        if (lastLocal != null && local.distanceTo(lastLocal) <= 500 && local.subtract(lastLocal).distanceTo(velocity) > 1.0
+                && offSteps++ < 5)
+            Galactica.LOG.info("[autotest] origin-recentre {}: tick {} craft stepped {} instead of {}", phase, ticks,
+                    fmt(local.subtract(lastLocal)), fmt(velocity));
         if (lastLocal != null && local.distanceTo(lastLocal) > 500) {
             recentres++;
             Galactica.LOG.info("[autotest] origin-recentre {} #{} (shift {})", phase, recentres, fmt(local.subtract(lastLocal)));

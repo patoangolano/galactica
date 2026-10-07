@@ -163,6 +163,19 @@ public class Starship extends VehicleEntity {
         else if (DATA_COUPLED.equals(key)) coupled = entityData.get(DATA_COUPLED);
     }
 
+    /**
+     * The server's entity tracker broadcasts this ship's velocity to every tracking player, the pilot included.
+     * On the pilot's client that velocity is only an echo of an earlier report, at least a tick old and clamped by
+     * {@link #acceptPilotReport}: applying it would overwrite the prediction, so the ship would keep coasting on
+     * a stale heading after a turn or a stop and lose part of every burn. The pilot's client owns the velocity,
+     * as it owns the position (vanilla already drops position packets for a locally authoritative vehicle).
+     */
+    @Override
+    public void lerpMotion(Vec3 movement) {
+        if (level().isClientSide() && isLocalInstanceAuthoritative()) return;
+        super.lerpMotion(movement);
+    }
+
     public float hydrogen() { return entityData.get(DATA_HYDROGEN); }
     public int exotic() { return entityData.get(DATA_EXOTIC); }
     public float hull() { return entityData.get(DATA_HULL); }
