@@ -158,8 +158,14 @@ public final class AutoTest {
         shot(100, "18_ship_thrust");
         key(5, "keyUp", false);
         camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
-        // Floating origin while piloting: the ship at ~14 blocks/tick through at least 3 recentres.
-        STEPS.add(new Step(5, () -> OriginShiftAutoTest.start("ship", new net.minecraft.world.phys.Vec3(0, 0, 14))));
+        // Floating origin while piloting: the ship at ~14 blocks/tick through at least 3 recentres. Bring it to
+        // rest first: the thrust shot leaves it coasting along its own heading, which the forced +z velocity
+        // would otherwise fight for the first second and read as backward motion.
+        STEPS.add(new Step(5, () -> {
+            var ship = dev.galactica.client.ship.ShipClient.piloted(Minecraft.getInstance());
+            if (ship != null) ship.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+        }));
+        STEPS.add(new Step(40, () -> OriginShiftAutoTest.start("ship", new net.minecraft.world.phys.Vec3(0, 0, 14))));
         shot(150, "18b_ship_recentre");
         STEPS.add(new Step(180, OriginShiftAutoTest::finish));
         cmd(20, "galactica where");
