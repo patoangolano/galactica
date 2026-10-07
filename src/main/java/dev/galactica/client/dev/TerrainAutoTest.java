@@ -44,9 +44,27 @@ final class TerrainAutoTest {
 
     private enum Feature { PEAK, VOLCANO, CANYON, CLIFF, COAST }
 
-    /** Ticks to let chunks (and LODs) build before a shot. */
+    /** Ticks to let chunks (and LODs) build before a shot, once the chunks around the camera are in. */
     private static int settle(String tag) {
-        return "dh".equals(tag) ? 700 : 260;
+        return "dh".equals(tag) ? 600 : 160;
+    }
+
+    /**
+     * A shot after the client holds every chunk within 6 chunks of the camera (at most {@code maxTicks}; a fresh
+     * tall Tectonic area takes far longer to generate than a planet slot), then {@code settle} more ticks for meshes.
+     */
+    private static void shotWhenLoaded(String tag, String name, int maxTicks) {
+        AutoTest.await(20, maxTicks, () -> {
+            var mc = Minecraft.getInstance();
+            if (mc.player == null || mc.level == null) return false;
+            int cx = mc.player.blockPosition().getX() >> 4, cz = mc.player.blockPosition().getZ() >> 4;
+            for (int dz = -6; dz <= 6; dz++)
+                for (int dx = -6; dx <= 6; dx++)
+                    if (mc.level.getChunkSource().getChunk(cx + dx, cz + dz,
+                            net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false) == null) return false;
+            return true;
+        });
+        AutoTest.shot(settle(tag), name);
     }
 
     static void tour(String tag) {
@@ -68,7 +86,7 @@ final class TerrainAutoTest {
         AutoTest.server(5, "Earth vista", sp -> park(sp, sp.getX(), Math.max(sp.level().getSeaLevel(), sp.level()
                 .getHeight(Heightmap.Types.WORLD_SURFACE, (int) sp.getX(), (int) sp.getZ())) + 400, sp.getZ(), 90, 25));
         AutoTest.cmd(5, "time set noon");
-        AutoTest.shot(settle(tag), "terrain_earth_vista");
+        shotWhenLoaded(tag, "terrain_earth_vista", 1200);
         AutoTest.cmd(5, "gamemode creative");
         AutoTest.hud(5, true);
         AutoTest.cmd(20, "galactica launch");
@@ -91,13 +109,13 @@ final class TerrainAutoTest {
         boolean first = true;
         for (Feature f : features) {
             AutoTest.server(5, label + " " + f, sp -> scout(sp, label, f, false));
-            AutoTest.shot(settle(tag), "terrain_" + label + "_" + f.name().toLowerCase(Locale.ROOT) + "_near");
+            shotWhenLoaded(tag, "terrain_" + label + "_" + f.name().toLowerCase(Locale.ROOT) + "_near", 1200);
             if (first) {
                 AutoTest.server(1, label + " chunks vs sampler", sp -> checkChunks(sp, label));
                 first = false;
             }
             AutoTest.server(5, label + " " + f + " wide", sp -> scout(sp, label, f, true));
-            AutoTest.shot(settle(tag), "terrain_" + label + "_" + f.name().toLowerCase(Locale.ROOT) + "_wide");
+            shotWhenLoaded(tag, "terrain_" + label + "_" + f.name().toLowerCase(Locale.ROOT) + "_wide", 1200);
         }
     }
 
@@ -169,16 +187,15 @@ final class TerrainAutoTest {
             return;
         }
         Target.remember(label, f, target);
-        aimFrom(sp, (x, z) -> t.solidTop(x, z), target, wide, Math.max(TerrainSampler.SEA_LEVEL, 0));
+        aimFrom(sp, (x, z) -> t.solidTop(x, z), target, wide ? 1600 : 200, wide, Math.max(TerrainSampler.SEA_LEVEL, 0));
         Galactica.LOG.info("[autotest] PASS terrain {} {}: {} at ({}, {}) y={} ({} blocks above sea; peak law {} blocks, vertical scale {})",
                 label, f.name().toLowerCase(Locale.ROOT), wide ? "wide view" : "near view", target.x, target.z, target.y,
                 target.y - TerrainSampler.SEA_LEVEL, String.format(Locale.ROOT, "%.0f", t.peakBlocks()),
                 String.format(Locale.ROOT, "%.3f", t.verticalScale()));
     }
 
-    /** Parks the camera {@code wide ? 1600 : 200} blocks from the target on its lowest side and aims at it. */
-    private static void aimFrom(ServerPlayer sp, IntBinaryOperator ground, Target target, boolean wide, int floorY) {
-        double dist = wide ? 1600 : 200;
+    /** Parks the camera {@code dist} blocks from the target on its lowest side (higher when {@code wide}) and aims at it. */
+    private static void aimFrom(ServerPlayer sp, IntBinaryOperator ground, Target target, double dist, boolean wide, int floorY) {
         double bestX = 0, bestZ = 0;
         int bestH = Integer.MAX_VALUE;
         for (int k = 0; k < 8; k++) {
@@ -192,7 +209,7 @@ final class TerrainAutoTest {
             }
         }
         double rise = Math.max(0, target.y - bestH);
-        double camY = wide ? Math.max(bestH, target.y) + 0.35 * dist : bestH + 0.45 * rise + 25;
+        double camY = wide ? Math.max(bestH, target.y) + Math.max(120, 0.35 * dist) : bestH + 0.45 * rise + 25;
         double aimY = target.feature == Feature.CANYON || target.feature == Feature.COAST ? target.y : target.y - (wide ? 0.4 * rise : 0.15 * rise);
         double dx = target.x - bestX, dz = target.z - bestZ, dy = aimY - camY;
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
@@ -312,9 +329,9 @@ final class TerrainAutoTest {
         AutoTest.cmd(5, "time set 3000");
         AutoTest.hud(5, false);
         AutoTest.server(5, "highest Tectonic ground near spawn", sp -> earthPeak(sp, false));
-        AutoTest.shot(settle(tag), "tectonic_earth_mountain_near");
+        shotWhenLoaded(tag, "tectonic_earth_mountain_near", 3000);
         AutoTest.server(5, "Tectonic mountains wide", sp -> earthPeak(sp, true));
-        AutoTest.shot(settle(tag), "tectonic_earth_mountain_wide");
+        shotWhenLoaded(tag, "tectonic_earth_mountain_wide", 3000);
         AutoTest.hud(5, true);
         AutoTest.cmd(5, "gamemode creative");
         // Earth entry from orbit onto the taller Overworld, suited in survival (the descent flight holds the arrival
@@ -325,9 +342,10 @@ final class TerrainAutoTest {
         AutoTest.cmd(40, "galactica goto Sol");
         AutoTest.step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Earth"));
         AutoTest.server(15, "Earth arrival row", TerrainAutoTest::checkArrival);
-        AutoTest.step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Earth", 1.0));
         AutoTest.cmd(5, "galactica ground");
         AutoTest.server(20, "Earth ground", TerrainAutoTest::checkGround);
+        // After the gravity attribute has synced (checked a tick after arrival it still reads space's 0 g).
+        AutoTest.step(60, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Earth", 1.0));
         // Approach, entry, take-off and EVA against the taller Overworld.
         AutoTest.soi();
     }
@@ -390,7 +408,8 @@ final class TerrainAutoTest {
             Target.remember("earth", Feature.PEAK, t);
         }
         if (sp.level() != ow) sp.teleport(new TeleportTransition(ow, sp.position(), Vec3.ZERO, 0, 0, TeleportTransition.DO_NOTHING));
-        aimFrom(sp, ground, t, wide, ow.getSeaLevel());
+        // No far-terrain renderer in the Overworld (only Distant Horizons): the "wide" view stays inside the render distance, higher.
+        aimFrom(sp, ground, t, wide ? 240 : 200, wide, ow.getSeaLevel());
         boolean ok = t.y > 200 && t.y <= ow.getMaxY();
         Galactica.LOG.info("[autotest] {} tectonic Earth highest ground near spawn y={} at ({}, {}) ({} view; vanilla terrain tops out near 256)",
                 ok ? "PASS" : "FAIL", t.y, t.x, t.z, wide ? "wide" : "near");

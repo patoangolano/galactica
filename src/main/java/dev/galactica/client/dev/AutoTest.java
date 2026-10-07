@@ -339,7 +339,13 @@ public final class AutoTest {
         awaitSoi(1, 6300, "approach");
         STEPS.add(new Step(5, () -> SoiAutoTest.start(SoiAutoTest.takeOff(1600))));
         awaitSoi(1, 3000, "take-off");
-        server(20, "leave the ship", net.minecraft.server.level.ServerPlayer::stopRiding);
+        // In one server step: a take-off that ended low (a taller Overworld moves the switch up) would otherwise fall
+        // back into Earth between leaving the ship and the park below.
+        server(20, "leave the ship, out of the frame's fall", sp -> {
+            sp.stopRiding();
+            NavServer.launch(sp);
+            parkOverBody(sp, "Earth", 1000e3);
+        });
         cmd(10, "galactica launch");
         server(40, "park 1000 km over Earth on EVA", sp -> parkOverBody(sp, "Earth", 1000e3));
         STEPS.add(new Step(40, () -> SoiAutoTest.start(SoiAutoTest.evaFall(200))));
