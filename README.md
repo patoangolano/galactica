@@ -60,7 +60,8 @@ Pacote recomendado (todos testados com o Galactica 26.3, autoteste completo PASS
 | FerriteCore | 9.0.0 | memória (estados de bloco e modelos) |
 | ImmediatelyFast | 1.17.1+26.3 | HUD, texto e entidades em lote |
 | EntityCulling | 1.11.2 | não desenha entidades escondidas atrás de blocos |
-| C2ME | 0.4.2-alpha.0.89+26.3 | geração de chunks em paralelo (alpha) |
+| C2ME | 0.4.2-alpha.0.90+26.3 | geração de chunks em paralelo (alpha; o 0.89 foi o testado no jogo, o 0.90 só compila e passa no `verifyPerfStack`) |
+| ScalableLux | 0.3.0-alpha.0.6+26.3 | luz em paralelo para as colunas altas dos planetas (alpha; ainda não rodado no jogo) |
 | Krypton | 0.3.2 | rede |
 | ModernFix-mVUS | 5.27.20-build.2 | memória e tempo de carregamento (fork do ModernFix para 26.x) |
 | Distant Horizons | 3.3.4 | terreno distante (opcional, pesado; integração própria, fora deste teste) |
@@ -81,6 +82,66 @@ Desenvolvimento:
 - `./gradlew runAutotestPerf`: autoteste completo e depois o benchmark (linhas `[perf]` no log: FPS médio, 1% low, percentis, alocação, draw calls, uploads, MSPT, tempo por seção do mod, amostragem de pilha com os caminhos de chamada mais quentes, e uma cena `planet_chunkgen` que gera terreno novo em Marte). `runAutotestPerfOnly` roda só o benchmark.
 - `./gradlew runAutotestPerfStack`: o mesmo com o pacote acima, em `runs/client-perf` (copie o mundo de `runs/client` e deixe o Sodium fora de `mods/`, porque ele já vem do pacote).
 - `./gradlew runPlayPerf`: jogo manual em `runs/play` com o pacote. A tarefa `verifyPerfStack` confere o SHA-512 de cada jar contra o Modrinth antes de abrir.
+
+## Terreno
+
+### Planetas mais altos
+
+As dimensões de pouso (`galactica:surface_N`) agora vão de y −512 a 1279 (1 792 blocos, 112 seções; antes −256 a 511). O nível do mar continua em 96, e as linhas de entrada e decolagem continuam em y 1500 e 1700, acima de todo terreno possível.
+
+O relevo segue uma lei física, com compressão vertical declarada:
+
+- **Altura máxima** que uma crosta sustenta antes de escoar: σ/(ρg) (Melosh 2011), ou seja, o Everest (8 848 m) dividido pela gravidade em g. Limitada ao Olympus Mons (21,9 km, o maior edifício conhecido) e a 8,5 % do raio do corpo (o pico de Rheasilvia em Vesta).
+- **Escala verdadeira até 900 blocos.** O mapa usa 1 bloco = 10 m num planeta do tamanho da Terra, 5,3 m em Marte, 2,7 m na Lua, 1 m em corpos pequenos, e o céu usa a mesma escala para a altitude. Até 900 blocos de pico o terreno é desenhado nessa escala (vertical = horizontal): um mundo terrestre de 1 g tem picos de ~885 blocos, como o Everest a 10 m/bloco.
+- **Acima disso, um fator único κ** comprime todo o relevo do corpo, preservando as formas: Marte κ ≈ 0,22 (um bloco vertical vale ~24 m), a Lua κ ≈ 0,11, Mercúrio 0,16. Um joelho suave de 760 a 1 120 blocos acima do mar só pega o empilhamento raro de montanha, vulcão e detalhe.
+- **Profundidade**: fundos de mar até 1,25× o pico (a Fossa das Marianas tem 1,25 Everest) e bacias secas até 0,6× (Hellas, a bacia SPA), limitados a 480 blocos com joelho até 560.
+
+Técnicas trazidas do Tectonic (sem dependência: o gerador é nosso):
+
+- escalas separadas para continentes (o campo macro, o mesmo que se vê da órbita), erosão (liga e desliga cordilheiras por região, deixando planícies entre elas) e cristas (ruído "ridged" ao quadrado);
+- escala vertical separada acima e abaixo do mar (montanhas mais altas não aprofundam os mares);
+- a largura das cordilheiras cresce com a altura delas (√(A/40)), então as encostas continuam escaláveis em qualquer corpo;
+- uma faixa 3D de ±24 blocos em volta da superfície, só em encostas de montanha e paredes de cânion: gradiente vertical mais ruído 3D, como o `final_density` do vanilla/Tectonic, para penhascos, saliências e arcos. O resto da coluna continua 2,5D;
+- cânions de fundo chato em mundos desérticos (tipo Valles Marineris, até 1/3 do pico de profundidade) e vulcões-escudo com caldeira em mundos desérticos, de lava e estufa (até 0,9 do pico).
+
+Distant Horizons e o terreno visto de longe (`SurfaceClipmap`, `FarTerrainRenderer`) leem as mesmas funções; o `LodColumnPlan` inclui a faixa 3D, coluna a coluna igual ao gerador de chunks (teste `LodColumnPlanTest`).
+
+Mundos antigos: na primeira inicialização com esta versão, os chunks já gerados das dimensões de pouso são apagados e regenerados (o planeta de cada slot é mantido). Construções em planetas se perdem; faça backup antes.
+
+Custo medido (PerfBench `planet_chunkgen`: espectador sobre terreno de Marte nunca gerado, 1 681 chunks em 10 s; uma rodada de cada, mesma máquina, outro agente podia estar usando a GPU):
+
+| | antes (768 blocos) | depois (1 792 blocos) |
+|---|---|---|
+| geração por chunk (`PLANET_CHUNK`) | 7,85 ms | 3,67 ms |
+| MSPT médio / máximo | 1,93 / 16,2 ms | 4,28 / 71,9 ms |
+| FPS médio / 1% low | 2 420 / 318 | 1 636 / 191 |
+| heap na cena | 1,4 GB | 2,6 GB |
+
+A geração ficou mais barata apesar da coluna 2,3× mais alta: a crosta funda que todas as colunas do chunk compartilham é escrita como seções inteiras de um só bloco (paleta de valor único: nenhuma escrita por bloco, quase nada no disco e na rede), e só a casca perto da superfície é escrita bloco a bloco. O que pesa é o resto do caminho de um chunk alto: luz, envio e memória (o MSPT dobrou e a heap quase dobrou). Por isso a altura ficou em 1 792 e não em 2 048 (que ainda empurraria as linhas de entrada para cima). O ScalableLux entrou no pacote de desempenho para a luz das colunas altas, mas não foi medido nesta rodada.
+
+### Terra com Tectonic
+
+A Terra é o Overworld, então mods de terreno do Overworld funcionam nela. Testado: **Tectonic 3.0.31-fabric-26.3** com **Lithostitched 2.0.4-fabric-26.3** (MIT, no Modrinth). **Terralith 2.6.5+26.3** é sugerido junto (licença Stardust Labs, nunca empacotado). Nada disso vem dentro do Galactica (`suggests` no `fabric.mod.json`).
+
+- As linhas de entrada e decolagem da Terra seguem a altura real do Overworld (`getMaxY()` lido ao vivo): 1500/1700 enquanto o topo do mundo estiver abaixo de y 1372, e acima disso sobem junto (topo + 128 e mais 200). Com o Tectonic configurado até y 2031 a chegada fica sempre acima do limite de construção, sem tela de carregamento.
+- O nível do mar da Terra também é lido do servidor (63 no vanilla e no Tectonic).
+- Distant Horizons: o Galactica só registra gerador próprio para `galactica:surface_*`. O Overworld fica sempre com o gerador do DH, que roda o gerador real, então o terreno do Tectonic aparece nos LODs.
+- O céu da Terra não depende da altura do terreno.
+
+Desenvolvimento: `./gradlew runAutotestTectonic` (mundo em `runs/client-tectonic`, Overworld a regenerar; `config/tectonic.json` de teste com `max_y` 1536 e `vertical_scale` 2,5) e `./gradlew runPlayTectonic`. `-Pgalactica.terralith=true` acrescenta o Terralith. A tarefa `verifyTectonicStack` confere o SHA-512 de cada jar contra o Modrinth.
+
+### Mods de renderização
+
+| Mod | Versão | Situação |
+|---|---|---|
+| Distant Horizons | 3.3.4-26.3 (API 7.2.0) | gerador de LOD próprio para os planetas (agora 1 792 blocos); Overworld com o gerador do DH |
+| Sodium Extra | mc26.3-0.9.4+fabric | funciona; deixe os botões Sky e Stars ligados, senão o céu real some |
+| Bobby | 5.2.16+mc26.3 | funciona; limpe o cache dele para `galactica:surface_*` se um slot mudar de planeta |
+| Nvidium | 0.4.4-beta7-26.3 | opcional (`-Pgalactica.nvidium=true`); só age em NVIDIA Turing+ e sem shaderpack, desliga-se sozinho no resto |
+| ScalableLux | 0.3.0-alpha.0.6+26.3 | no pacote de desempenho: luz em paralelo para as colunas altas |
+| Cosmos | 1.0.3-26.3 | conflito esperado (desenha suas próprias estrelas no Overworld); o Galactica avisa no log. Não testado em jogo |
+
+`./gradlew runAutotestDh` roda o passeio de terreno (Marte, um mundo terrestre de outro sistema, a Lua, a Terra) com DH, Sodium Extra e Bobby, em `runs/client-dh`; `runAutotestTerrain` faz o mesmo sem DH. `verifyDhStack` confere os SHA-512.
 
 ## Desenvolvimento
 

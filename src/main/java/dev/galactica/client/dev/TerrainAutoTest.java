@@ -86,6 +86,8 @@ final class TerrainAutoTest {
         AutoTest.server(5, "Earth vista", sp -> park(sp, sp.getX(), Math.max(sp.level().getSeaLevel(), sp.level()
                 .getHeight(Heightmap.Types.WORLD_SURFACE, (int) sp.getX(), (int) sp.getZ())) + 400, sp.getZ(), 90, 25));
         AutoTest.cmd(5, "time set noon");
+        // DH builds the Overworld's LODs with its own generator from real chunks: give it longer than a planet slot.
+        if ("dh".equals(tag)) AutoTest.step(1200, () -> { });
         shotWhenLoaded(tag, "terrain_earth_vista", 1200);
         AutoTest.cmd(5, "gamemode creative");
         AutoTest.hud(5, true);
@@ -198,18 +200,20 @@ final class TerrainAutoTest {
     private static void aimFrom(ServerPlayer sp, IntBinaryOperator ground, Target target, double dist, boolean wide, int floorY) {
         double bestX = 0, bestZ = 0;
         int bestH = Integer.MAX_VALUE;
+        // Mountains are seen from their lowest side; a canyon from its highest rim, looking down into it.
+        boolean fromRim = target.feature == Feature.CANYON;
         for (int k = 0; k < 8; k++) {
             double a = k * Math.PI / 4;
             double x = target.x + dist * Math.cos(a), z = target.z + dist * Math.sin(a);
             int h = Math.max(floorY, ground.applyAsInt((int) x, (int) z));
-            if (h < bestH) {
+            if (fromRim ? bestH == Integer.MAX_VALUE || h > bestH : h < bestH) {
                 bestH = h;
                 bestX = x;
                 bestZ = z;
             }
         }
         double rise = Math.max(0, target.y - bestH);
-        double camY = wide ? Math.max(bestH, target.y) + Math.max(120, 0.35 * dist) : bestH + 0.45 * rise + 25;
+        double camY = wide ? Math.max(bestH, target.y) + Math.max(120, 0.35 * dist) : fromRim ? bestH + 60 : bestH + 0.45 * rise + 25;
         double aimY = target.feature == Feature.CANYON || target.feature == Feature.COAST ? target.y : target.y - (wide ? 0.4 * rise : 0.15 * rise);
         double dx = target.x - bestX, dz = target.z - bestZ, dy = aimY - camY;
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
@@ -229,10 +233,20 @@ final class TerrainAutoTest {
             LAST.put(label + f, t);
         }
 
-        /** Best grid point (400-block steps over ±24 000 blocks) for the feature, or {@code reuse}. */
+        /**
+         * Best grid point for the feature, or {@code reuse}: 400-block steps over ±24 000 blocks, then 2 000-block
+         * steps over ±120 000 when that finds nothing (volcanoes are ~60 000 blocks apart on Mars; an Earth-like
+         * world may land you mid-ocean).
+         */
         static Target find(TerrainSampler t, int cx, int cz, Feature f, Target reuse) {
             if (reuse != null) return reuse;
-            int n = 120, step = 400;
+            Target near = find(t, cx, cz, f, 400);
+            boolean weak = near == null || (f != Feature.VOLCANO && f != Feature.CANYON && near.y < TerrainSampler.SEA_LEVEL + 20);
+            return weak ? find(t, cx, cz, f, 2000) : near;
+        }
+
+        private static Target find(TerrainSampler t, int cx, int cz, Feature f, int step) {
+            int n = 120;
             int[] h = new int[n * n];
             for (int j = 0; j < n; j++)
                 for (int i = 0; i < n; i++) h[j * n + i] = t.height(cx + (i - n / 2) * step, cz + (j - n / 2) * step);
@@ -245,7 +259,7 @@ final class TerrainAutoTest {
                         case PEAK -> y;
                         case VOLCANO -> t.volcanoAt(x, z);
                         case CANYON -> t.canyonAt(x, z);
-                        case CLIFF -> t.bandWeight(x, z) > 0.6 ? y : Double.NEGATIVE_INFINITY;
+                        case CLIFF -> t.bandWeight(x, z) > 0.6 && y > TerrainSampler.SEA_LEVEL + 20 ? y : Double.NEGATIVE_INFINITY;
                         case COAST -> {
                             if (y < TerrainSampler.SEA_LEVEL + 1 || y > TerrainSampler.SEA_LEVEL + 12) yield Double.NEGATIVE_INFINITY;
                             int high = Integer.MIN_VALUE, low = Integer.MAX_VALUE;
@@ -265,7 +279,7 @@ final class TerrainAutoTest {
                     }
                 }
             }
-            if (bi < 0 || best == Double.NEGATIVE_INFINITY || (f != Feature.PEAK && f != Feature.CLIFF && f != Feature.COAST && best <= 1)) return null;
+            if (bi < 0 || best == Double.NEGATIVE_INFINITY || ((f == Feature.VOLCANO || f == Feature.CANYON) && best <= 1)) return null;
             int x = cx + (bi - n / 2) * step, z = cz + (bj - n / 2) * step;
             // Refine on a 25-block grid around the coarse hit: the summit, the canyon floor, the coast line.
             int rx = x, rz = z;

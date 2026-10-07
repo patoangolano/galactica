@@ -531,8 +531,13 @@ public final class TerrainSampler {
                     + 0.35 * Noise.value(seed + 910, wx / 9, y / 7.0, z / 9.0);
             boolean solid = (h + 0.5 - y) / b + 0.85 * n > 0;
             c.bandSolid[y - lo] = solid;
-            if (solid && top == Integer.MIN_VALUE) top = y;
         }
+        // Above the 2.5D surface rock only grows up from rock (ledges and overhang lips), never as a floating blob:
+        // the noise alone would leave islands of a few blocks hanging in the air.
+        for (int y = Math.max(lo + 1, h + 1); y <= hi; y++) {
+            if (!c.bandSolid[y - 1 - lo]) c.bandSolid[y - lo] = false;
+        }
+        for (int y = hi; y >= lo && top == Integer.MIN_VALUE; y--) if (c.bandSolid[y - lo]) top = y;
         // Local depth: blocks of solid between y and the nearest air above it (0 for an exposed top block).
         int run = -1;
         for (int y = hi; y >= lo; y--) {
