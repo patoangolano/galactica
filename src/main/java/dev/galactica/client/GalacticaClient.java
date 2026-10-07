@@ -20,6 +20,7 @@ public final class GalacticaClient implements ClientModInitializer {
         dev.galactica.deepsky.DeepSky.initClient(dev.galactica.nav.Frames.GALAXY_SEED);
         dev.galactica.client.vfx.star.StarDiscRenderer.initClient();
         dev.galactica.client.planet.TransferClient.initClient();
+        dev.galactica.client.nav.OriginShiftClient.initClient();
         dev.galactica.client.dev.AutoTest.install();
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("nav_hud"), NavHud::extract);
     }

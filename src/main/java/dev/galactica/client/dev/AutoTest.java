@@ -130,6 +130,9 @@ public final class AutoTest {
         cmd(20, "galactica system");
         // M3: starship. Deploy and board near Earth, burn the main engine for 5 s, then a hyperjump.
         cmd(20, "galactica goto Sol");
+        // Floating origin on EVA: ~14 blocks/tick through at least 3 recentres, camera and sky continuous.
+        STEPS.add(new Step(20, () -> OriginShiftAutoTest.start("eva", new net.minecraft.world.phys.Vec3(0, 0, 14))));
+        STEPS.add(new Step(330, OriginShiftAutoTest::finish));
         cmd(40, "galactica ship");
         // The ship, not the pilot, sets the view while flying: turn the hull so the Sun is where each shot wants it
         // (azimuth toward port from the nose, elevation above the ship's horizon).
@@ -155,6 +158,10 @@ public final class AutoTest {
         shot(100, "18_ship_thrust");
         key(5, "keyUp", false);
         camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
+        // Floating origin while piloting: the ship at ~14 blocks/tick through at least 3 recentres.
+        STEPS.add(new Step(5, () -> OriginShiftAutoTest.start("ship", new net.minecraft.world.phys.Vec3(0, 0, 14))));
+        shot(150, "18b_ship_recentre");
+        STEPS.add(new Step(180, OriginShiftAutoTest::finish));
         cmd(20, "galactica where");
         cmd(20, "galactica nearest 3");
         STEPS.add(new Step(20, () -> Minecraft.getInstance().player.connection.sendCommand("galactica fuel 400 16")));
