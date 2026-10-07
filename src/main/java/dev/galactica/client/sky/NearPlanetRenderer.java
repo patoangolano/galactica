@@ -537,8 +537,21 @@ public final class NearPlanetRenderer {
         for (int m = 0; m < 3; m++) v[m] = p[m] / len;
         set(q, v, q[3], q[4], R_SHELL - (mode == 3 ? 0 : mode) * 0.2f);
         if (mode == 3) {
-            // Sun-lit image: the texel holds albedo × reflectance × exposure; add the star's colour.
-            return argb(enc(x.starR * x.brightness), enc(x.starG * x.brightness), enc(x.starB * x.brightness), 1);
+            // Sun-lit image: the texel holds albedo × reflectance × exposure; add the star's colour, and
+            // on a thin-air body that still counts as airless here (Mars, 6 mbar with dust of optical
+            // depth ~0.5) the sunlight's path through that air, as mode 0 applies: it dims and reddens
+            // the ground towards the terminator. Taken at the smooth sphere's sun angle (the texel's
+            // relief only tilts the surface under the same air column), floored at a grazing sun so
+            // rims lit just past the terminator are not cut to black by the vertex interpolation.
+            double tr = x.starR * x.brightness, tg = x.starG * x.brightness, tb = x.starB * x.brightness;
+            if (!x.atm.vacuum()) {
+                double mu0 = Math.max(0.02, dot(nrm, x.toStar));
+                x.atm.sunTransmittance(mu0, x.sunT);
+                tr *= x.sunT[0];
+                tg *= x.sunT[1];
+                tb *= x.sunT[2];
+            }
+            return argb(enc(tr), enc(tg), enc(tb), 1);
         }
         double mu0 = dot(nrm, x.toStar), mu = Math.max(1e-3, -dot(v, nrm)), cosScatter = dot(v, x.toStar);
         if (mode == 2) {

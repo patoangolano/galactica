@@ -128,32 +128,70 @@ public final class SpaceRelief {
      * highlands' crater density (Hartmann 1981), so callers pass ~0.3 on mare ground.
      */
     public double sample(double x, double y, double z, double footprint, boolean macroAlbedo, double fineWeight, double[] slope) {
-        double gx = 0, gy = 0, gz = 0, alb = 0;
+        return sample(x, y, z, footprint, Double.NaN, macroAlbedo, fineWeight, slope, null, null);
+    }
+
+    /**
+     * Both at once: the field for texels of {@code footprint} into {@code slope} (returned albedo
+     * factor), and the same field filtered for the coarser {@code coarseFootprint} into
+     * {@code coarseSlope} and {@code coarseFac[0]}. The crater fields are evaluated once. Images
+     * use the coarse field where the view foreshortens them (towards the limb a texel covers less
+     * than a pixel across, and its finest craters would alias into speckle). With a NaN
+     * {@code coarseFootprint} only the first is made.
+     */
+    public double sample(double x, double y, double z, double footprint, double coarseFootprint, boolean macroAlbedo,
+            double fineWeight, double[] slope, double[] coarseSlope, double[] coarseFac) {
+        boolean two = coarseSlope != null && !Double.isNaN(coarseFootprint);
+        double gx = 0, gy = 0, gz = 0, alb = 0, cx = 0, cy = 0, cz = 0, calb = 0;
         double[] g = GRAD.get();
         for (int i = 0; i < layers; i++) {
             double craterAngle = MEAN_DIAMETER_CELLS / freq[i];
-            double w = weight[i] * fade(craterAngle / Math.max(1e-12, footprint)) * (macroLayer[i] ? 1 : fineWeight);
-            if (w <= 0) continue;
+            double base = weight[i] * (macroLayer[i] ? 1 : fineWeight);
+            double w = base * fade(craterAngle / Math.max(1e-12, footprint));
+            double wc = two ? base * fade(craterAngle / Math.max(1e-12, coarseFootprint)) : 0;
+            if (w <= 0 && wc <= 0) continue;
             double f = freq[i];
             g[0] = g[1] = g[2] = 0;
             double v = PlanetMacro.craterFieldGrad(seed[i], x * f, y * f, z * f, g);
             // d(height)/d(unit-sphere coordinate), metres, then over the radius: a slope.
-            double k = w * f * metresPerUnit[i] / radius;
-            gx += k * g[0];
-            gy += k * g[1];
-            gz += k * g[2];
-            if (macroAlbedo || !macroLayer[i]) alb += albedoWeight[i] * w * v;
+            double k = f * metresPerUnit[i] / radius;
+            gx += w * k * g[0];
+            gy += w * k * g[1];
+            gz += w * k * g[2];
+            cx += wc * k * g[0];
+            cy += wc * k * g[1];
+            cz += wc * k * g[2];
+            if (macroAlbedo || !macroLayer[i]) {
+                alb += albedoWeight[i] * w * v;
+                calb += albedoWeight[i] * wc * v;
+            }
         }
         // Regolith tone: albedo varies by ±10 % on 50–200 km scales even within one unit (maturity,
         // titanium content of mare basalts, ejecta blankets), which keeps maria and highlands from
         // reading as flat paint. Faded in like a crater population of the same size.
         if (cratered) {
             double tw = fade(TONE_ANGLE / Math.max(1e-12, footprint));
-            if (tw > 0) alb += 0.10 * tw * PlanetMacro.fbmRot(toneSeed, x * TONE_FREQ, y * TONE_FREQ, z * TONE_FREQ, 3) / 0.6;
+            double twc = two ? fade(TONE_ANGLE / Math.max(1e-12, coarseFootprint)) : 0;
+            if (tw > 0 || twc > 0) {
+                double tone = 0.10 * PlanetMacro.fbmRot(toneSeed, x * TONE_FREQ, y * TONE_FREQ, z * TONE_FREQ, 3) / 0.6;
+                alb += tw * tone;
+                calb += twc * tone;
+            }
         }
-        // Tangential part only, softly limited to the ~35° of regolith at its angle of repose: the
-        // field's rim is a narrow ridge whose raw slope would otherwise stand near vertical on bodies
-        // whose craters are simple bowls (depth 0.2 D), and light rims far past the terminator.
+        limit(gx, gy, gz, x, y, z, slope);
+        if (two) {
+            limit(cx, cy, cz, x, y, z, coarseSlope);
+            if (coarseFac != null) coarseFac[0] = Math.max(0.25, 1 + calb);
+        }
+        return Math.max(0.25, 1 + alb);
+    }
+
+    /**
+     * Tangential part only, softly limited to the ~35° of regolith at its angle of repose: the
+     * field's rim is a narrow ridge whose raw slope would otherwise stand near vertical on bodies
+     * whose craters are simple bowls (depth 0.2 D), and light rims far past the terminator.
+     */
+    private static void limit(double gx, double gy, double gz, double x, double y, double z, double[] slope) {
         double dn = gx * x + gy * y + gz * z;
         double tx = gx - dn * x, ty = gy - dn * y, tz = gz - dn * z;
         double m = Math.sqrt(tx * tx + ty * ty + tz * tz);
@@ -161,7 +199,6 @@ public final class SpaceRelief {
         slope[0] = tx * lim;
         slope[1] = ty * lim;
         slope[2] = tz * lim;
-        return Math.max(0.25, 1 + alb);
     }
 
     /** 0 below 1.5 texels per crater, 1 above 3. */

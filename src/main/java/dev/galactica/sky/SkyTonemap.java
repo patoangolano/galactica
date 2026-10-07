@@ -53,6 +53,12 @@ public final class SkyTonemap {
      * flat white lens. Surface brightness does not depend on distance, so the covered pixels'
      * own bright end keeps the exposure of an observer inside the disk. "Covered" means brighter
      * than 10⁻³ of the near-maximum (p99.9).
+     *
+     * <p>The smaller the patch, the higher its percentile: p95 of the covered pixels while they
+     * fill a quarter of the sky or more, rising to p99 at 5 % and below. From the halo (~2 % of
+     * the sky) p95 put the whole bulge and inner disc on the highlight shoulder, a flat plateau
+     * a few levels below white that hid the dust lane; at p99 they stay on the logarithmic part
+     * and only the nucleus reaches the shoulder.
      */
     public static double anchor(double[] sortedLum, int n) {
         if (n <= 0) return 0;
@@ -67,8 +73,10 @@ public final class SkyTonemap {
             else hi = mid;
         }
         int covered = n - lo;
-        double p95Covered = covered > 0 ? sortedLum[Math.min(n - 1, lo + (int) (covered * 0.95))] : 0;
-        return Math.max(p99, p95Covered);
+        double share = covered / (double) n;
+        double pct = 0.95 + 0.04 * Math.max(0, Math.min(1, (0.25 - share) / 0.20));
+        double pCovered = covered > 0 ? sortedLum[Math.min(n - 1, lo + (int) (covered * pct))] : 0;
+        return Math.max(p99, pCovered);
     }
 
     /** A tonemap with explicit parameters (exposure = 1 / the luminance shown near the knee). */
