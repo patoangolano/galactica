@@ -127,6 +127,10 @@ public final class AutoTest {
         STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(145, 18, 7.5F)));
         shot(10, "17c_ship_exterior_front");
         STEPS.add(new Step(5, dev.galactica.client.ship.ShipCamera::clearOrbit));
+        // The mirrored front view (F5 twice) with the same tilt and lift as the chase view.
+        camera(5, net.minecraft.client.CameraType.THIRD_PERSON_FRONT);
+        orientShip(5, 30, 35);       shot(10, "17d_ship_front_mirrored");
+        camera(5, net.minecraft.client.CameraType.THIRD_PERSON_BACK);
         hud(5, true);
         // Main engine for 5 s in the chase view: the plume streams back toward the camera.
         orientShip(5, 150, 35);

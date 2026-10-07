@@ -23,7 +23,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * roll to 0; this runs at the tail of {@code alignWithEntity}, inside {@code Camera.update} and before
  * {@code prepareCullFrustum}, so the view matrix, frustum and first-person hand all see the same rotation.
  * In third person the camera chases from behind and above the hull, tilted down onto it (or looks back at the
- * nose in the mirrored view), framed by {@link ShipCamera}; in first person the eye rides the rotated seat, so it stays in the canopy when rolled.
+ * nose in the mirrored view, with the same tilt and lift in the camera's own frame, so both views look down onto the
+ * hull), framed by {@link ShipCamera}; in first person the eye rides the rotated seat, so it stays in the canopy when rolled.
  */
 @Mixin(Camera.class)
 public abstract class CameraShipMixin {
@@ -46,7 +47,11 @@ public abstract class CameraShipMixin {
 
     @Inject(method = "alignWithEntity(F)V", at = @At("TAIL"))
     private void galactica$shipAttitude(float partialTicks, CallbackInfo ci) {
-        if (this.entity == null || !(this.entity.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != this.entity) return;
+        if (this.entity == null || !(this.entity.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != this.entity) {
+            ShipCamera.clearOrbit(); // a screenshot orbit never outlives the flight it was set for
+            return;
+        }
+        if (!this.detached) ShipCamera.clearOrbit();
         boolean mirrored = this.detached && Minecraft.getInstance().options.getCameraType().isMirrored();
         // Ship forward is +Z, the camera looks down −Z: append the same half-turn vanilla folds into "π − yRot".
         // The mirrored (front) view skips it and looks back at the nose, as vanilla turns that view by 180°.

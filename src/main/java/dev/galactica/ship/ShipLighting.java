@@ -36,6 +36,20 @@ public final class ShipLighting {
      * so it fits in 8 bits); the gain is applied per fragment.
      */
     public static final float HULL_GAIN = 2.4F;
+    /** Where the hull shader's highlight shoulder starts (its {@code SHOULDER}), on the brightest channel. */
+    public static final double SHOULDER = 0.8;
+
+    /**
+     * Reference for the hull fragment shader: one channel of painted {@code albedo} lit by {@code shade} (the vertex
+     * colour), exposed by {@link #HULL_GAIN} and rolled off above {@link #SHOULDER}. A grey channel is its own
+     * brightest, so the shader's per-colour scaling reduces to this for greys.
+     */
+    public static double exposedGrey(double albedo, double shade) {
+        double m = albedo * HULL_GAIN * shade;
+        if (m <= SHOULDER) return m;
+        double k = 1.0 - SHOULDER;
+        return SHOULDER + k * (1.0 - Math.exp(-(m - SHOULDER) / k));
+    }
     public static final double INTERSTELLAR_AMBIENT = 0.30;
     public static final double MIN_DIRECT = 0.25;
     public static final double STOPS_PER_DECADE = 1.0;

@@ -59,6 +59,30 @@ public final class ShipEnvironment {
         }
     }
 
+    /** Packed light for the lightmap routes in space: bright inside a system, dim but visible far from stars. */
+    public static int lightCoords(float direct) {
+        int level = Math.round(5F + 10F * Math.clamp(direct, 0F, 1F));
+        return level << 20 | level << 4;
+    }
+
+    /** Render-thread scratch for {@link #passengerLight}. */
+    private static final StarshipRenderState PASSENGER = new StarshipRenderState();
+
+    /**
+     * Light for an entity riding {@code ship} (the pilot's body and first-person arm), or -1 outside space. The
+     * vanilla lightmap is zero there, which draws the pilot as a black silhouette against a sunlit hull.
+     */
+    public static int passengerLight(Starship ship, float partialTicks) {
+        if (ship.level().dimension() != Galactica.SPACE) return -1;
+        var pos = ship.getPosition(partialTicks);
+        StarshipRenderState s = PASSENGER;
+        s.x = pos.x;
+        s.y = pos.y;
+        s.z = pos.z;
+        sample(ship, s);
+        return lightCoords(s.direct);
+    }
+
     private static void starLight(Level level, StarshipRenderState state) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
