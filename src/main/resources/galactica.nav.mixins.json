@@ -5,6 +5,9 @@
   "compatibilityLevel": "JAVA_25",
   "mixins": [
     "ServerGamePacketListenerOriginMixin",
+    "SpaceBelowWorldMixin",
+    "SpaceChunkSaveMixin",
+    "SpaceViewDistanceMixin",
     "TrackedEntityRiderMixin"
   ],
   "client": [

@@ -15,6 +15,15 @@ public final class ShipHud {
     private static final int TEXT = 0xFFD8E4FF, DIM = 0xFF8C9AB8, ACCENT = 0xFFF07A1A, WARN = 0xFFFF5A4A, CYAN = 0xFF7FE0FF;
 
     public static void extract(GuiGraphicsExtractor g, DeltaTracker dt) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            extractTimed(g, dt);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.HUD, perf);
+        }
+    }
+
+    private static void extractTimed(GuiGraphicsExtractor g, DeltaTracker dt) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || !(mc.player.getVehicle() instanceof Starship ship)) return;
         // In the cockpit the panel display shows all of this (and more); the overlay would only cover the console.

@@ -188,6 +188,15 @@ public final class SurfaceSkyOverlay {
 
     /** Call after vanilla's sky pass has closed, with the frame's extracted sky state. */
     public static void render(SkyRenderState state) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            renderTimed(state);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SURFACE_SKY, perf);
+        }
+    }
+
+    private static void renderTimed(SkyRenderState state) {
         Minecraft mc = Minecraft.getInstance();
         PlanetAddress.Resolved r = resolved(mc);
         if (r == null) return;

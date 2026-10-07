@@ -135,6 +135,7 @@ public final class ExoticOverlay {
     private static final Map<Long, Entry> ENTRIES = new HashMap<>();
     private static final List<Sprite> SPRITES = new ArrayList<>();
     private static GpuBuffer vertices;
+    private static final dev.galactica.client.vfx.StreamingVertexBuffer VERTICES = new dev.galactica.client.vfx.StreamingVertexBuffer("Galactica exotic objects");
     private static int frame, generation;
     private static long uploadDeadline;
 
@@ -160,10 +161,7 @@ public final class ExoticOverlay {
         frame++;
         uploadDeadline = System.nanoTime() + UPLOAD_BUDGET_NANOS;
         SPRITES.clear();
-        if (vertices != null) {
-            vertices.close();
-            vertices = null;
-        }
+        vertices = null; // a view of VERTICES: rewritten in place by buildVertices
         if (eye == null) {
             evict();
             return;
@@ -171,8 +169,8 @@ public final class ExoticOverlay {
         Neighbourhood nb = SkyManager.get().neighbourhood();
         Map<Long, Star> wanted = new LinkedHashMap<>();
         double ex = eye.xPc(), ey = eye.yPc(), ez = eye.zPc();
-        for (Star s : nb.nearbyStars(eye)) {
-            if (drawn(s.kind()) && s.distanceTo(ex, ey, ez) <= LOCAL_RADIUS_PC) wanted.put(s.id(), s);
+        for (Star s : remnants(nb.nearbyStars(eye))) {
+            if (s.distanceTo(ex, ey, ez) <= LOCAL_RADIUS_PC) wanted.put(s.id(), s);
         }
         for (Star s : ExoticCatalog.namedRemnants()) {
             if (s.distanceTo(ex, ey, ez) <= NAMED_RADIUS_PC) wanted.put(s.id(), s);
@@ -206,6 +204,15 @@ public final class ExoticOverlay {
      * @param modelView {@code RenderSystem.getModelViewMatrixCopy()} as used for the other layers
      */
     public static void draw(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            drawTimed(pass, quads, modelView);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.EXOTIC, perf);
+        }
+    }
+
+    private static void drawTimed(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
         if (vertices == null || SPRITES.isEmpty()) return;
         GpuSampler clamp = SkyTextures.linearClamp();
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(modelView, new Vector4f(1, 1, 1, 1));
@@ -231,15 +238,30 @@ public final class ExoticOverlay {
         ENTRIES.clear();
         OBJECTS.clear();
         SPRITES.clear();
-        if (vertices != null) {
-            vertices.close();
-            vertices = null;
-        }
+        vertices = null;
+        VERTICES.close();
     }
 
     // ------------------------------------------------------------------ selection
 
     private record Placed(ExoticObject object, double[] forward, double distance) {}
+
+    /** The drawn kinds among the neighbourhood's stars, refiltered only when that (cached) list changes. */
+    private static List<Star> remnantSource, remnantList = List.of();
+
+    /**
+     * Scanning every neighbourhood star each frame (thousands in the bulge) was most of the overlay's cost; remnants
+     * are a few in a thousand, so the scan runs once per sector change instead.
+     */
+    private static List<Star> remnants(List<Star> all) {
+        if (all != remnantSource) {
+            List<Star> out = new ArrayList<>();
+            for (Star s : all) if (drawn(s.kind())) out.add(s);
+            remnantList = out;
+            remnantSource = all;
+        }
+        return remnantList;
+    }
 
     private static boolean drawn(StarKind k) {
         return k == StarKind.BLACK_HOLE || k == StarKind.NEUTRON_STAR;
@@ -444,7 +466,7 @@ public final class ExoticOverlay {
             BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
             for (Sprite s : SPRITES) spriteQuad(b, s.dx(), s.dy(), s.dz(), SHELL, s.halfAngle(), s.argb());
             try (MeshData mesh = b.buildOrThrow()) {
-                vertices = RenderSystem.getDevice().createBuffer(() -> "Galactica exotic objects", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+                vertices = VERTICES.upload(mesh.vertexBuffer());
             }
         }
     }

@@ -349,6 +349,15 @@ public final class SurfaceClipmap {
      * globe. Cheap when nothing moved; bakes run in the background.
      */
     public void request(double x, double z, int minLevel) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            requestTimed(x, z, minLevel);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.CLIPMAP, perf);
+        }
+    }
+
+    private void requestTimed(double x, double z, int minLevel) {
         if (!globePending && globeArgb == null) {
             globePending = true;
             BAKER.execute(this::bakeGlobe);
@@ -377,6 +386,15 @@ public final class SurfaceClipmap {
      * thread before any pass opens.
      */
     public void upload() {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            uploadTimed();
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.CLIPMAP, perf);
+        }
+    }
+
+    private void uploadTimed() {
         int budget = UPLOADS_PER_FRAME;
         if (!globeUploaded && globeArgb != null && cloudArgb != null) {
             globe = texture(globe, "galactica:clipmap/globe", globeW, globeH, globeArgb);

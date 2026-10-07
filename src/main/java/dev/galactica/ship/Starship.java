@@ -377,6 +377,16 @@ public class Starship extends VehicleEntity {
 
     @Override
     public void tick() {
+        // Server ticks only: the client's prediction is part of the frame, not of the server's tick budget.
+        long perf = level().isClientSide() ? 0L : dev.galactica.perf.Perf.t0();
+        try {
+            tickTimed();
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.STARSHIP_TICK, perf);
+        }
+    }
+
+    private void tickTimed() {
         if (getHurtTime() > 0) setHurtTime(getHurtTime() - 1);
         attitudeO.set(attitude);
         attitudeSync.apply(attitude, level().isClientSide() && !isLocalInstanceAuthoritative());
@@ -412,6 +422,21 @@ public class Starship extends VehicleEntity {
         // vanilla vehicle rules hand the accumulated fall distance to the crew on touchdown and kill them.
         resetFallDistance();
         for (Entity e : getPassengers()) e.resetFallDistance();
+    }
+
+    /**
+     * A ship with no player aboard is never recentred by the floating origin (only a player's craft is), so in space
+     * it is held within {@link dev.galactica.nav.FloatingOrigin#PARKED_LIMIT_Y} of block 0 vertically: a player
+     * climbing towards it always reaches it before their own forced recentre, and a ship saved above or below that in
+     * an older, taller space dimension comes back the first time it ticks.
+     */
+    private void keepParkedInReach() {
+        if (level().dimension() != Galactica.SPACE) return;
+        double limit = dev.galactica.nav.FloatingOrigin.PARKED_LIMIT_Y;
+        if (Math.abs(getY()) <= limit) return;
+        for (Entity e : getIndirectPassengers()) if (e instanceof Player) return;
+        setPos(getX(), Math.copySign(limit, getY()), getZ());
+        setDeltaMovement(getDeltaMovement().multiply(1.0, 0.0, 1.0));
     }
 
     // ---------------------------------------------------------------- hull beyond the box
@@ -653,6 +678,7 @@ public class Starship extends VehicleEntity {
 
     private void serverStep() {
         ServerPlayer pilot = getControllingPassenger() instanceof ServerPlayer sp ? sp : null;
+        keepParkedInReach();
         entityData.set(DATA_GRAVITY, computeGravity(pilot));
         if (pilot != null) {
             Input in = pilot.getLastClientInput();

@@ -87,6 +87,15 @@ public final class StarDiscRenderer {
      * @return false when the star cannot be drawn by the shader this frame (caller falls back)
      */
     public static boolean prepare(StarVisual visual, double angularRadiusRad, float intensity) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            return prepareTimed(visual, angularRadiusRad, intensity);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.STAR_DISC, perf);
+        }
+    }
+
+    private static boolean prepareTimed(StarVisual visual, double angularRadiusRad, float intensity) {
         if (visual == null || !visual.drawable() || !(angularRadiusRad > 0)) return false;
         if (VfxPipelines.compiledOrNull(PIPELINE) == null) return false;
         if (VfxUniformBuffer.inRenderPass(RenderSystem.getDevice().createCommandEncoder())) return false;

@@ -41,6 +41,10 @@ public final class OriginShiftAutoTest {
     private static int shipId = -1, shipLost, strictJumps, offSteps;
     private static Starship ship;
     private static double worstRatio;
+    private static boolean perfOwned;
+    private static long startNanos;
+    /** Accepted size of every recentre in this phase, blocks, and the sizes seen. */
+    private static double minShift, maxShift, smallestShift, largestShift;
     private static GalacticPos start, lastFrame;
     private static double lastFrameTime;
     private static Vec3 lastLocal;
@@ -49,6 +53,19 @@ public final class OriginShiftAutoTest {
 
     /** Starts a phase: {@code ship} (piloted ship) or {@code eva}; velocity in blocks per tick. */
     static void start(String name, Vec3 blocksPerTick) {
+        start(name, blocksPerTick, 0, Double.MAX_VALUE);
+    }
+
+    /**
+     * Same, and every recentre must move the craft by between {@code minShiftBlocks} and {@code maxShiftBlocks}:
+     * a vertical phase checks that the recentre happens near {@code FloatingOrigin.LIMIT_Y} when nothing is near,
+     * and only at {@code HARD_LIMIT_Y} when something is.
+     */
+    static void start(String name, Vec3 blocksPerTick, double minShiftBlocks, double maxShiftBlocks) {
+        minShift = minShiftBlocks;
+        maxShift = maxShiftBlocks;
+        smallestShift = Double.MAX_VALUE;
+        largestShift = 0;
         if (!installed) {
             installed = true;
             ClientTickEvents.END_CLIENT_TICK.register(OriginShiftAutoTest::tick);
@@ -71,6 +88,13 @@ public final class OriginShiftAutoTest {
         if (ship != null) ship.overrideVelocity(blocksPerTick);
         setServerVelocity(blocksPerTick);
         active = true;
+        // Where the frame time goes during the phase (the mod's own sections), unless a benchmark owns the counters.
+        perfOwned = !dev.galactica.perf.Perf.on;
+        if (perfOwned) {
+            dev.galactica.perf.Perf.reset();
+            dev.galactica.perf.Perf.on = true;
+        }
+        startNanos = System.nanoTime();
         SkyManager.frameProbe = OriginShiftAutoTest::frame;
         Galactica.LOG.info("[autotest] origin-recentre {}: start at {} with {} blocks/tick (ship id {})", name,
                 fmt(p.getRootVehicle().position()), fmt(blocksPerTick), shipId);
@@ -79,6 +103,7 @@ public final class OriginShiftAutoTest {
     /** Ends the phase, stops the craft and logs PASS/FAIL. */
     static void finish() {
         active = false;
+        logPerf();
         SkyManager.frameProbe = null;
         Starship.netProbe = null;
         LocalPlayer p = Minecraft.getInstance().player;
@@ -87,12 +112,14 @@ public final class OriginShiftAutoTest {
         setServerVelocity(Vec3.ZERO);
         int shifts = OriginShiftClient.applied - shiftsAtStart;
         boolean ok = recentres >= 3 && shifts >= 3 && frameFailures == 0 && backwardFailures == 0 && mountFailures == 0
-                && shipLost == 0 && frames > 100;
+                && shipLost == 0 && frames > 100 && smallestShift >= minShift && largestShift <= maxShift;
         Galactica.LOG.info(String.format(Locale.ROOT,
                 "[autotest] %s origin-recentre %s: recentres=%d shiftsApplied=%d ticks=%d frames=%d worstFrameJump=%.2f of allowed, "
-                        + "frameJumps=%d backwards=%d dismounts=%d shipRemoved=%d strictJumps=%d offSteps=%d echoesDropped=%d staleEchoes=%d corrections=%d",
+                        + "frameJumps=%d backwards=%d dismounts=%d shipRemoved=%d strictJumps=%d offSteps=%d echoesDropped=%d staleEchoes=%d corrections=%d "
+                        + "shiftBlocks=%.0f..%.0f (accepted %.0f..%s)",
                 ok ? "PASS" : "FAIL", phase, recentres, shifts, ticks, frames, worstRatio, frameFailures, backwardFailures, mountFailures, shipLost,
-                strictJumps, offSteps, PROBE.echoes, PROBE.stale, PROBE.corrections));
+                strictJumps, offSteps, PROBE.echoes, PROBE.stale, PROBE.corrections,
+                recentres == 0 ? 0 : smallestShift, largestShift, minShift, maxShift == Double.MAX_VALUE ? "any" : String.format(Locale.ROOT, "%.0f", maxShift)));
     }
 
     private static void tick(Minecraft mc) {
@@ -119,12 +146,16 @@ public final class OriginShiftAutoTest {
                 ticks, fmt(local), fmt(cam), gal[0], gal[1], gal[2], root.getDeltaMovement().length());
         // Diagnosis only: a tick step that is not the forced velocity means something else set the craft's
         // velocity or position between two ticks (a server echo, a correction).
-        if (lastLocal != null && local.distanceTo(lastLocal) <= 500 && local.subtract(lastLocal).distanceTo(velocity) > 1.0
+        // A recentre moves the craft by at least FloatingOrigin.LIMIT_Y (192) blocks in one tick; the craft itself at most 15.
+        if (lastLocal != null && local.distanceTo(lastLocal) <= 100 && local.subtract(lastLocal).distanceTo(velocity) > 1.0
                 && offSteps++ < 5)
             Galactica.LOG.info("[autotest] origin-recentre {}: tick {} craft stepped {} instead of {}", phase, ticks,
                     fmt(local.subtract(lastLocal)), fmt(velocity));
-        if (lastLocal != null && local.distanceTo(lastLocal) > 500) {
+        if (lastLocal != null && local.distanceTo(lastLocal) > 100) {
             recentres++;
+            double size = local.subtract(lastLocal).subtract(velocity).length();
+            smallestShift = Math.min(smallestShift, size);
+            largestShift = Math.max(largestShift, size);
             Galactica.LOG.info("[autotest] origin-recentre {} #{} (shift {})", phase, recentres, fmt(local.subtract(lastLocal)));
             for (String s : RECENT) Galactica.LOG.info("[autotest]   before: {}", s);
             logAfter = 4;
@@ -150,6 +181,25 @@ public final class OriginShiftAutoTest {
         if (d == null) return viewer;
         double[] r = viewer.metresFrom(d.pos());
         return Frames.SOL_POS.plusMetres(r[0], r[1], r[2]);
+    }
+
+    /** Mean frame time over the phase and the mod's three costliest sections per frame (diagnosis only). */
+    private static void logPerf() {
+        double seconds = (System.nanoTime() - startNanos) / 1e9;
+        StringBuilder top = new StringBuilder();
+        if (perfOwned) {
+            var sections = new java.util.ArrayList<>(java.util.List.of(dev.galactica.perf.Perf.sections()));
+            sections.sort((a, b) -> Long.compare(dev.galactica.perf.Perf.nanos(b), dev.galactica.perf.Perf.nanos(a)));
+            for (int i = 0; i < 3; i++) {
+                var s = sections.get(i);
+                top.append(String.format(Locale.ROOT, " %s=%.2fms/frame(%d calls)", s, dev.galactica.perf.Perf.nanos(s) / 1e6 / Math.max(1, frames),
+                        dev.galactica.perf.Perf.calls(s)));
+            }
+            dev.galactica.perf.Perf.on = false;
+            dev.galactica.perf.Perf.reset();
+        }
+        Galactica.LOG.info(String.format(Locale.ROOT, "[autotest] origin-recentre %s perf: %.1f s, %.1f probed frames/s,%s",
+                phase, seconds, frames / Math.max(1e-9, seconds), top));
     }
 
     /** Once per rendered frame with the camera's galactic position (SkyManager). */

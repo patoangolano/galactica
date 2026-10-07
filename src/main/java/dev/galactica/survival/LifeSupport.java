@@ -58,6 +58,15 @@ public final class LifeSupport {
     }
 
     private static void tickAll(MinecraftServer server) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            tickAllTimed(server);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.LIFE_SUPPORT, perf);
+        }
+    }
+
+    private static void tickAllTimed(MinecraftServer server) {
         for (ServerPlayer p : server.getPlayerList().getPlayers()) tick(p);
     }
 

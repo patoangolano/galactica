@@ -49,6 +49,11 @@ def verifiedMcpfabricJar() {
     return jar
 }
 
+configurations {
+    // Resolved on its own (transitive deps off: each jar bundles what it needs, Fabric API comes from the main runtime).
+    perfStack { transitive = false }
+}
+
 dependencies {
     minecraft("com.mojang:minecraft:${minecraft_version}")
     implementation("net.fabricmc:fabric-loader:${fabric_loader_version}")
@@ -64,6 +69,7 @@ dependencies {
     compileOnly("maven.modrinth:yacl:${yacl_version}")                // LGPL-3.0+; mod id yet_another_config_lib_v3
     compileOnly("maven.modrinth:distanthorizonsapi:${dh_api_version}") // DH API jar (sources inside); runtime mod id distanthorizons
     compileOnly("maven.modrinth:geckolib:${geckolib_version}")        // MIT; detection only for now (OptionalMods.geckolib)
+    compileOnly("maven.modrinth:entityculling:${perf_entityculling}") // tr7zw custom license; whitelist API only (compat/entityculling)
 
     // --- Dev runtime only (localRuntime: on the run classpath, never in the published POM/jar).
     localRuntime("maven.modrinth:modmenu:${modmenu_version}")
@@ -85,6 +91,17 @@ dependencies {
     if (project.findProperty('galactica.bobby') == 'true') {
         localRuntime("maven.modrinth:bobby:${bobby_version}")
     }
+
+    // Performance-mod stack for the playPerf and autotestPerfStack runs only (their own source set, below): never on
+    // the main classpath and never shipped. Pinned by Modrinth version id; the SHA-512s are checked by verifyPerfStack.
+    perfStack("maven.modrinth:sodium:${perf_sodium}")
+    perfStack("maven.modrinth:lithium:${perf_lithium}")
+    perfStack("maven.modrinth:ferrite-core:${perf_ferritecore}")
+    perfStack("maven.modrinth:immediatelyfast:${perf_immediatelyfast}")
+    perfStack("maven.modrinth:entityculling:${perf_entityculling}")
+    perfStack("maven.modrinth:c2me-fabric:${perf_c2me}")
+    perfStack("maven.modrinth:krypton:${perf_krypton}")
+    perfStack("maven.modrinth:modernfix-mvus:${perf_modernfix}") // ModernFix-mVUS: the 26.x fork; upstream ModernFix stops at 1.21
 
     testImplementation(platform('org.junit:junit-bom:5.13.4'))
     testImplementation('org.junit.jupiter:junit-jupiter')
@@ -126,6 +143,22 @@ loom {
             configName = 'Galactica Autotest'
             runDir 'runs/client'
             vmArgs '-Xmx4G', '-Dgalactica.autotest=true'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
+        // Full autotest followed by the performance benchmark (PerfBench: [perf] lines in the log).
+        autotestPerf {
+            client()
+            configName = 'Galactica Autotest + perf benchmark'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.perf=true'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
+        // The benchmark scenes alone.
+        autotestPerfOnly {
+            client()
+            configName = 'Galactica perf benchmark'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=perf'
             programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
         }
         autotestIris {
@@ -210,4 +243,62 @@ afterEvaluate {
         programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
         source bridge
     }
+}
+
+// Performance-mod stack (README "Desempenho"): Sodium, Lithium, FerriteCore, ImmediatelyFast, EntityCulling, C2ME,
+// Krypton and ModernFix-mVUS for 26.3, on a "perf" source set only, so every other run keeps its classpath.
+//   ./gradlew runPlayPerf               manual play in runs/play with the whole stack
+//   ./gradlew runAutotestPerfStack      full autotest + benchmark in runs/client-perf (its mods/ must not hold Sodium)
+def perfStackSha512 = [
+        'f3f260f204b8ce5e8777c2c73f537956755ec61f3817b0b78b5e5568e8aa40f14891f146475075109747665c7c88a45ca0ca9a8df3c68d79c58ecdaa8d8c4b93', // sodium 0.9.2+mc26.3
+        '4d7fee66132eedc71feab9390b92c95d7058edbdad0fecfac1d836a2950b97a7ca463afbede61c7ef361ce65e1f927ab9e89dde5bf2e0e0ce486afb5c5dbee40', // lithium 0.26.2+mc26.3
+        'd81fa97e11784c19d42f89c2f433831d007603dd7193cee45fa177e4a6a9c52b384b198586e04a0f7f63cd996fed713322578bde9a8db57e1188854ae5cbe584', // ferritecore 9.0.0
+        '8e139589fd995bce3d485a34d92a07243964212f7ed2e4fc2f6de5b9a74d0f59b03252e7ce40c64e006cf3e21bed5de27b830d33ef048b286e041f6178ad8428', // immediatelyfast 1.17.1+26.3
+        'c5d8947cb022f8baed4bf17e38ca598c56b8049871e7e47fb462bcecc9bc01e7eb75290494199fcb1aa73f5e37f93a296211ba78c9dd2a5bff30d5eed497ebcc', // entityculling 1.11.2
+        'b4fcf82bbe15bfa253e3ab6df4d6b64e800a2ccdb45d4ca2b8040da87f72033fed34f4f94016aac507596c78fddb18dba28c6642790181642cae46fae28b3a85', // c2me 0.4.2-alpha.0.89+26.3
+        'd1d57ebd41395b75b01f130cd9503eb8d208212424a399ff9f367f50be8fbc1c6472442b33c686e777c3148f6a609520e8fb732c755157c358cb207fd4d1123a', // krypton 0.3.2
+        'b586434056107aac4ef86e9351d66170dac65a45a1e5f8bd48fb931b3012ab2431b16476eb9c256773339e2b4c60f6f3e90a4709180f700b2aea59ff607f4243', // modernfix-mvus 5.27.20-build.2
+] as Set
+
+tasks.register('verifyPerfStack') {
+    description = 'Checks every performance-stack jar against its pinned Modrinth SHA-512.'
+    def stack = configurations.perfStack
+    inputs.files(stack)
+    doLast {
+        def files = stack.files
+        files.each { jar ->
+            def digest = java.security.MessageDigest.getInstance('SHA-512')
+            jar.withInputStream { input ->
+                byte[] buffer = new byte[65536]
+                int read
+                while ((read = input.read(buffer)) > 0) digest.update(buffer, 0, read)
+            }
+            def actual = digest.digest().encodeHex().toString()
+            if (!perfStackSha512.contains(actual)) throw new GradleException("perf stack: ${jar.name} has SHA-512 ${actual}, not a pinned Modrinth hash")
+            logger.lifecycle("perf stack: ${jar.name} OK")
+        }
+        if (files.size() != perfStackSha512.size()) throw new GradleException("perf stack: ${files.size()} jars, expected ${perfStackSha512.size()}")
+    }
+}
+
+afterEvaluate {
+    def perf = sourceSets.create('perf')
+    perf.compileClasspath = sourceSets.main.compileClasspath
+    perf.runtimeClasspath = sourceSets.main.runtimeClasspath + configurations.perfStack
+    loom.runs.create('playPerf') {
+        client()
+        configName = 'Galactica Play (performance stack)'
+        runDir 'runs/play'
+        vmArgs '-Xmx4G'
+        source perf
+    }
+    loom.runs.create('autotestPerfStack') {
+        client()
+        configName = 'Galactica Autotest + perf benchmark (performance stack)'
+        runDir 'runs/client-perf'
+        vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.perf=true', '-Dgalactica.autotest.tag=perfstack'
+        programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        source perf
+    }
+    tasks.matching { it.name in ['runPlayPerf', 'runAutotestPerfStack'] }.configureEach { dependsOn 'verifyPerfStack' }
 }

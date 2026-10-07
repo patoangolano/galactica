@@ -70,6 +70,8 @@ public final class SkyManager {
     private final AtomicReference<BakedSky> pendingSky = new AtomicReference<>();
     private final AtomicReference<BakedStars> pendingStars = new AtomicReference<>();
     private volatile boolean skyBusy, starsBusy;
+    /** Bake scratch, touched only by the worker thread. */
+    private float[] hdrScratch;
     private GalacticPos skyRequestedAt, starsRequestedAt;
     /** Width of the last bake requested; a different configured width forces a re-bake. */
     private int skyRequestedWidth;
@@ -128,13 +130,16 @@ public final class SkyManager {
             GalacticPos at = viewer;
             int w = width, h = dev.galactica.config.ConfigEffects.skyHeight(width);
             worker.execute(() -> {
+                long perf = dev.galactica.perf.Perf.t0();
                 try {
-                    float[] hdr = new float[w * h * 3];
+                    // The HDR scratch (25 MB at 2048 wide) is reused across bakes on this one worker thread.
+                    float[] hdr = hdrScratch != null && hdrScratch.length == w * h * 3 ? hdrScratch : (hdrScratch = new float[w * h * 3]);
                     baker.bakeEquirect(at.xPc(), at.yPc(), at.zPc(), w, h, hdr);
                     SkyTonemap tm = SkyTonemap.fit(hdr);
                     int[] argb = new int[w * h];
                     for (int i = 0; i < argb.length; i++) argb[i] = tm.toArgb(hdr[i * 3], hdr[i * 3 + 1], hdr[i * 3 + 2]);
                     pendingSky.set(new BakedSky(argb, at));
+                    dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SKY_BAKE, perf);
                 } catch (Throwable t) {
                     Galactica.LOG.error("Galaxy sky bake failed", t);
                 } finally {
@@ -147,11 +152,13 @@ public final class SkyManager {
             starsBusy = true;
             GalacticPos at = viewer;
             worker.execute(() -> {
+                long perf = dev.galactica.perf.Perf.t0();
                 try {
                     List<Starfield.VisibleStar> all = Starfield.compute(galaxy, at.xPc(), at.yPc(), at.zPc());
                     // Stars inside the near limit are drawn live by the renderer.
                     List<Starfield.VisibleStar> far = all.stream().filter(v -> v.distancePc() > NEAR_LIMIT_PC).toList();
                     pendingStars.set(new BakedStars(far, at));
+                    dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.STARFIELD, perf);
                 } catch (Throwable t) {
                     Galactica.LOG.error("Starfield computation failed", t);
                 } finally {

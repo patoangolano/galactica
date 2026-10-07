@@ -68,6 +68,15 @@ final class PlanetSprites {
 
     /** Returns the texture for this body, asking for a repaint if needed. {@code pixels} is the wanted on-screen size. */
     static DynamicTexture get(Body body, PlanetImager.View view, double pixels) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            return getTimed(body, view, pixels);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.PLANET_SPRITES, perf);
+        }
+    }
+
+    private static DynamicTexture getTimed(Body body, PlanetImager.View view, double pixels) {
         int size = dev.galactica.config.ConfigEffects.spriteSize(pixels, dev.galactica.config.GalacticaConfigs.get().planetTextureMax());
         Entry e = ENTRIES.computeIfAbsent(body.id(), id -> new Entry());
         e.lastSeen = frame;

@@ -140,6 +140,15 @@ public class GalaxyMapScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            extractRenderStateTimed(g, mouseX, mouseY, partialTick);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.MAP, perf);
+        }
+    }
+
+    private void extractRenderStateTimed(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(g, mouseX, mouseY, partialTick);
         MapView v = view();
         hits.clear();

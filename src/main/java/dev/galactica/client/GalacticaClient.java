@@ -22,6 +22,15 @@ public final class GalacticaClient implements ClientModInitializer {
         dev.galactica.client.vfx.star.StarDiscRenderer.initClient();
         dev.galactica.client.planet.TransferClient.initClient();
         dev.galactica.client.nav.OriginShiftClient.initClient();
+        if (dev.galactica.compat.OptionalMods.loaded(dev.galactica.compat.OptionalMods.ENTITY_CULLING)) {
+            dev.galactica.compat.entityculling.EntityCullingCompat.install();
+        }
+        StringBuilder perf = new StringBuilder();
+        for (String id : dev.galactica.compat.OptionalMods.PERFORMANCE) {
+            net.fabricmc.loader.api.FabricLoader.getInstance().getModContainer(id).ifPresent(m ->
+                    perf.append(' ').append(id).append(' ').append(m.getMetadata().getVersion().getFriendlyString()));
+        }
+        if (!perf.isEmpty()) Galactica.LOG.info("Performance mods present:{}", perf);
         dev.galactica.client.dev.AutoTest.install();
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("nav_hud"), NavHud::extract);
     }

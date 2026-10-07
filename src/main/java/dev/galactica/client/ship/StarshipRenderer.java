@@ -84,6 +84,15 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
 
     /** Everything the ship-specific layers need; shared with the GeckoLib renderer. */
     public static void extractShip(Starship ship, StarshipRenderState state, float partialTicks) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            extractShipTimed(ship, state, partialTicks);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SHIP_EXTRACT, perf);
+        }
+    }
+
+    private static void extractShipTimed(Starship ship, StarshipRenderState state, float partialTicks) {
         ship.getAttitude(partialTicks, state.attitude);
         state.hurtTime = Math.max(ship.getHurtTime() - partialTicks, 0F);
         state.hurtDir = ship.getHurtDir();
@@ -133,6 +142,15 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
 
     @Override
     public void submit(StarshipRenderState state, PoseStack pose, SubmitNodeCollector out, CameraRenderState camera) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            submitTimed(state, pose, out, camera);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SHIP_SUBMIT, perf);
+        }
+    }
+
+    private void submitTimed(StarshipRenderState state, PoseStack pose, SubmitNodeCollector out, CameraRenderState camera) {
         pose.pushPose();
         bodyPose(state, pose);
         pose.scale(-1F, -1F, 1F);
@@ -192,8 +210,8 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
                 model.setupAnim(state);
                 PoseStack local = LIT_POSE;
                 local.last().set(p);
-                model.root().render(local, new ShadedVertexConsumer(buf, state.toStar, state.direct, state.tint, floor),
-                        FULL_BRIGHT, overlay, -1);
+                model.renderBaked(local, new ShadedVertexConsumer(buf, state.toStar, state.direct, state.tint, floor),
+                        FULL_BRIGHT, overlay);
             });
         } else {
             out.submitModel(model, state, pose, TEXTURE, light, OverlayTexture.NO_OVERLAY, state.outlineColor);

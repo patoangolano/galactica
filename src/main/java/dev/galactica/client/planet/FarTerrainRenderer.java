@@ -87,6 +87,15 @@ public final class FarTerrainRenderer {
      * in camera-world axes; {@code renderChunks} vanilla's effective render distance.
      */
     public static void prepare(Body body, Vec3 cam, double[] sunMc, int renderChunks, AtmosphereGradient.AltitudeMap altitude) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            prepareTimed(body, cam, sunMc, renderChunks, altitude);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.FAR_TERRAIN, perf);
+        }
+    }
+
+    private static void prepareTimed(Body body, Vec3 cam, double[] sunMc, int renderChunks, AtmosphereGradient.AltitudeMap altitude) {
         if (cam.y < BAKE_Y || !body.type().solidSurface) {
             if (buffer != null) release();
             return;
@@ -122,6 +131,15 @@ public final class FarTerrainRenderer {
 
     /** Draws the skirt inside the open sky pass. */
     public static void draw(RenderPass pass, RenderSystem.AutoStorageIndexBuffer idx, Matrix4f modelView) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            drawTimed(pass, idx, modelView);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.FAR_TERRAIN, perf);
+        }
+    }
+
+    private static void drawTimed(RenderPass pass, RenderSystem.AutoStorageIndexBuffer idx, Matrix4f modelView) {
         if (buffer == null || PARTS.isEmpty()) return;
         GpuSampler clamp = SkyTextures.linearClamp();
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(modelView, new Vector4f(1, 1, 1, 1));

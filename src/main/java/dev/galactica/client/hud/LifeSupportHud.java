@@ -41,6 +41,15 @@ public final class LifeSupportHud {
     }
 
     public static void extract(GuiGraphicsExtractor g, DeltaTracker dt) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            extractTimed(g, dt);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.HUD, perf);
+        }
+    }
+
+    private static void extractTimed(GuiGraphicsExtractor g, DeltaTracker dt) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
         LifeSupportStatus s = mc.player.getAttached(LifeSupport.STATUS);

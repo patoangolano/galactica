@@ -1,0 +1,16 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "dev.galactica.mixin.perf",
+  "plugin": "dev.galactica.mixin.perf.PerfMixinPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "CommandEncoderCountMixin",
+    "FrameTimeMixin",
+    "GpuDeviceCountMixin",
+    "RenderPassCountMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

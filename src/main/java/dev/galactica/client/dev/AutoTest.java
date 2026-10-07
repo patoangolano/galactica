@@ -33,6 +33,8 @@ public final class AutoTest {
      * variable in the shell would silently replace the default and Iris runs.
      */
     private static final String MODE = System.getProperty("galactica.autotest.mode", "");
+    /** -Dgalactica.autotest.perf=true: the default run ends with the {@link PerfBench} scenes. */
+    private static final boolean PERF = Boolean.getBoolean("galactica.autotest.perf");
     private static int index, countdown = 200;
     private static Consumer<Minecraft> perTick = mc -> {};
     /** While set and false, the script waits (up to {@link #holdLeft} ticks) before counting down to the next step. */
@@ -42,6 +44,14 @@ public final class AutoTest {
     public static void install() {
         if (!Boolean.getBoolean("galactica.autotest")) return;
         Galactica.LOG.info("[autotest] enabled{}{}", TAG.isEmpty() ? "" : " (" + TAG + ")", MODE.isEmpty() ? "" : " mode " + MODE);
+        PerfBench.install();
+        if ("perf".equals(MODE)) {
+            cmd(0, "galactica kit");
+            perfScenes(false);
+            STEPS.add(new Step(40, () -> Minecraft.getInstance().stop()));
+            ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+            return;
+        }
         if ("m7".equals(MODE)) {
             // The test world persists between runs: empty the inventory so every run starts with one kit.
             cmd(0, "clear");
@@ -169,6 +179,20 @@ public final class AutoTest {
         // Floating origin on EVA: ~14 blocks/tick through at least 3 recentres, camera and sky continuous.
         STEPS.add(new Step(20, () -> OriginShiftAutoTest.start("eva", new net.minecraft.world.phys.Vec3(0, 0, 14))));
         STEPS.add(new Step(330, OriginShiftAutoTest::finish));
+        // Vertical floating origin on EVA, nothing near: recentred every ~LIMIT_Y (192) blocks of climb.
+        STEPS.add(new Step(20, () -> OriginShiftAutoTest.start("eva-vertical", new net.minecraft.world.phys.Vec3(0, 14, 0), 150, 300)));
+        STEPS.add(new Step(150, OriginShiftAutoTest::finish));
+        // A block 40 blocks away: a recentre now would make it jump ~192 blocks within sight, so the vertical
+        // recentre waits until HARD_LIMIT_Y (704) and every shift is that large.
+        server(20, "guard block 40 blocks east", sp -> {
+            guardBlock = sp.blockPosition().east(40);
+            sp.level().setBlockAndUpdate(guardBlock, net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        });
+        STEPS.add(new Step(20, () -> OriginShiftAutoTest.start("eva-vertical-guarded", new net.minecraft.world.phys.Vec3(0, -14, 0), 600, 800)));
+        STEPS.add(new Step(260, OriginShiftAutoTest::finish));
+        server(5, "remove guard block", sp -> {
+            if (guardBlock != null) sp.level().setBlockAndUpdate(guardBlock, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+        });
         cmd(40, "galactica ship");
         // The ship, not the pilot, sets the view while flying: turn the hull so the Sun is where each shot wants it
         // (azimuth toward port from the nose, elevation above the ship's horizon).
@@ -222,6 +246,9 @@ public final class AutoTest {
         STEPS.add(new Step(5, () -> OriginShiftAutoTest.start("ship", new net.minecraft.world.phys.Vec3(0, 0, 14))));
         shot(150, "18b_ship_recentre");
         STEPS.add(new Step(180, OriginShiftAutoTest::finish));
+        // The same ship climbing: vertical recentres every ~192 blocks, pilot aboard the same ship instance.
+        STEPS.add(new Step(5, () -> OriginShiftAutoTest.start("ship-vertical", new net.minecraft.world.phys.Vec3(0, 14, 0), 150, 300)));
+        STEPS.add(new Step(150, OriginShiftAutoTest::finish));
         cmd(20, "galactica where");
         cmd(20, "galactica nearest 3");
         STEPS.add(new Step(20, () -> Minecraft.getInstance().player.connection.sendCommand("galactica fuel 400 16")));
@@ -271,6 +298,7 @@ public final class AutoTest {
         STEPS.add(new Step(40, () -> Minecraft.getInstance().player.connection.sendCommand("galactica ground")));
         look(80, 30, 5);    shot(5, "24_venus_ground");
         soi();
+        if (PERF) perfScenes(true);
         STEPS.add(new Step(60, () -> Minecraft.getInstance().stop()));
         ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
     }
@@ -327,6 +355,94 @@ public final class AutoTest {
                 return SoiAutoTest.done();
             };
         }));
+    }
+
+    // ---------------------------------------------------------------- performance benchmark
+
+    /**
+     * The benchmark scenes, each held still for 10 s after it settles ({@link PerfBench}): the Overworld by day
+     * and by night under the real sky, space near Earth, warp, near Jupiter and Saturn, inside the bulge, a planet
+     * surface and fresh terrain being generated there, the ship's cockpit (parked, then accelerating through
+     * floating-origin recentres) and the galaxy map.
+     * {@code fromSpace}: the run starts wherever the autotest left the player and first lands on Earth.
+     */
+    private static void perfScenes(boolean fromSpace) {
+        STEPS.add(new Step(5, () -> PerfBench.unthrottle(Minecraft.getInstance())));
+        hud(5, true);
+        camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
+        clearChat(5);
+        // Creative: the EVA warp drive and the ship's burn are not limited by fuel, so every scene runs the same way.
+        cmd(5, "gamemode creative");
+        if (fromSpace) {
+            cmd(5, "galactica launch");
+            cmd(60, "galactica goto Sol");
+            STEPS.add(new Step(20, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Earth")));
+            cmd(60, "galactica ground");
+        }
+        cmd(20, "time set noon");
+        look(5, 90, -20);
+        measure(200, "overworld_day");
+        cmd(5, "time set midnight");
+        look(5, 0, -60);
+        measure(60, "overworld_night");
+        cmd(5, "galactica launch");
+        cmd(60, "galactica orbit Earth");
+        lookAtBody(80, "Earth");
+        measure(60, "space_near_earth");
+        cmd(5, "galactica goto Sol");
+        look(80, 90, 0);
+        warp(5, true);
+        measure(40, "warp");
+        warp(5, false);
+        cmd(60, "galactica goto Sol");
+        cmd(60, "galactica orbit Jupiter");
+        lookAtBody(80, "Jupiter");
+        measure(60, "near_jupiter");
+        cmd(5, "galactica orbit Saturn");
+        lookAtBody(80, "Saturn");
+        measure(60, "near_saturn");
+        cmd(5, "galactica coords 300 200 400");
+        look(200, 90, 40);
+        measure(40, "galaxy_bulge");
+        cmd(5, "galactica goto Sol");
+        STEPS.add(new Step(60, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Mars")));
+        cmd(60, "galactica ground");
+        look(100, 30, 8);
+        measure(60, "mars_surface");
+        // Fresh terrain: a spectator dropped over Martian ground no run has generated yet (a new offset every run),
+        // so the server generates, lights and sends the whole view area while it is measured (PLANET_CHUNK, mspt).
+        cmd(5, "gamemode spectator");
+        STEPS.add(new Step(5, () -> {
+            long offset = 40_000 + (System.currentTimeMillis() / 1000 % 500) * 2_000;
+            Minecraft.getInstance().player.connection.sendCommand("tp @s ~" + offset + " 300 ~");
+        }));
+        look(1, 30, 30);
+        measure(1, "planet_chunkgen");
+        cmd(5, "gamemode creative");
+        cmd(5, "galactica launch");
+        cmd(60, "galactica goto Sol");
+        cmd(60, "galactica ship");
+        camera(40, net.minecraft.client.CameraType.FIRST_PERSON);
+        clearChat(5);
+        orientShip(5, 30, 14);
+        measure(60, "ship_cockpit");
+        // Full thrust for 10 s: the hull speeds up past the floating-origin limit, so chunks around it keep loading.
+        key(5, "keyUp", true);
+        measure(5, "ship_cruise");
+        key(5, "keyUp", false);
+        STEPS.add(new Step(20, dev.galactica.client.map.GalaxyMapClient::open));
+        measure(60, "galaxy_map");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(null)));
+        STEPS.add(new Step(5, PerfBench::summary));
+    }
+
+    /** Waits {@code settle} ticks, then measures {@code name} for 200 ticks (10 s). */
+    private static void measure(int settle, String name) {
+        STEPS.add(new Step(settle, () -> {
+            Galactica.LOG.info("[perf] measuring {}", name);
+            PerfBench.begin(name);
+        }));
+        STEPS.add(new Step(200, PerfBench::end));
     }
 
     /** Empties the chat and the action-bar line, so earlier command output does not cover the next shot. */
@@ -621,6 +737,18 @@ public final class AutoTest {
         camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
     }
 
+    /** Holds the script (after {@code wait}) until the ridden ship moves under 0.5 m/s, for at most {@code maxTicks}. */
+    private static void awaitShipSettled(int wait, int maxTicks) {
+        STEPS.add(new Step(wait, () -> {
+            holdLeft = maxTicks;
+            hold = () -> {
+                var mc = Minecraft.getInstance();
+                return mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship s)
+                        || s.getDeltaMovement().length() * 20 < 0.5;
+            };
+        }));
+    }
+
     /**
      * Holds the script (after {@code wait}) until the ridden ship is on the ground, for at most {@code maxTicks}
      * (then logs FAIL). Meanwhile keeps the wings level and clears derelict ships from earlier runs around the landing
@@ -770,6 +898,9 @@ public final class AutoTest {
         }
         countdown = index < STEPS.size() ? Math.max(1, STEPS.get(index).waitTicks()) : 0;
     }
+
+    /** The block the guarded vertical recentre phase keeps in sight (server side). */
+    private static volatile net.minecraft.core.BlockPos guardBlock;
 
     private static void cmd(int wait, String command) {
         STEPS.add(new Step(wait, () -> {

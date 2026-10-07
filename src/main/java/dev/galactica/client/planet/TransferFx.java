@@ -153,6 +153,15 @@ public final class TransferFx {
     private static final int AZIMUTH = 32, RINGS = 14, WAKE_RINGS = 10;
 
     private static void collect(LevelRenderContext ctx) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            collectTimed(ctx);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.TRANSFER_FX, perf);
+        }
+    }
+
+    private static void collectTimed(LevelRenderContext ctx) {
         TransferClient.frame();
         double glow = TransferClient.glow();
         Minecraft mc = Minecraft.getInstance();
@@ -254,6 +263,15 @@ public final class TransferFx {
     }
 
     private static void endMain(LevelRenderContext ctx) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            endMainTimed(ctx);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.TRANSFER_FX, perf);
+        }
+    }
+
+    private static void endMainTimed(LevelRenderContext ctx) {
         RenderTarget main = ctx.gameRenderer().mainRenderTarget();
         if (main.getColorTexture() == null) return;
         CommandEncoder enc = RenderSystem.getDevice().createCommandEncoder();

@@ -20,6 +20,11 @@ public final class OptionalMods {
     public static final String GECKOLIB = "geckolib";
     public static final String SODIUM = "sodium";
     public static final String IRIS = "iris";
+    /** entityculling-fabric-1.11.2-mc26.3.jar. */
+    public static final String ENTITY_CULLING = "entityculling";
+    /** Performance mods checked for compatibility (README "Desempenho"); detection only, for the log. */
+    public static final String[] PERFORMANCE = {"sodium", "lithium", "ferritecore", "immediatelyfast", "entityculling", "c2me", "krypton",
+            "modernfix", "distanthorizons"};
 
     private OptionalMods() {
     }

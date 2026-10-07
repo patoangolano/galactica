@@ -73,6 +73,10 @@ public final class SpaceSkyRenderer {
     private static float[] starDir = new float[3];
     private static double starAng;
     private static GpuBuffer planets;
+    /** Rebuilt every frame (directions change as you fly), so rewritten in place rather than reallocated. */
+    private static final dev.galactica.client.vfx.StreamingVertexBuffer NEAR_VB =
+            new dev.galactica.client.vfx.StreamingVertexBuffer("Galactica near bodies"),
+            PLANETS_VB = new dev.galactica.client.vfx.StreamingVertexBuffer("Galactica planets");
     private static final List<Resolved> RESOLVED = new ArrayList<>();
     /** On-screen pixels per radian at the default 70° FOV on a 1080-line window. */
     private static final double PX_PER_RAD = 885.0;
@@ -99,22 +103,39 @@ public final class SpaceSkyRenderer {
     }
 
     public static void render() {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            renderSky();
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SPACE_SKY, perf);
+        }
+    }
+
+    private static void renderSky() {
         Minecraft mc = Minecraft.getInstance();
         SkyManager mgr = SkyManager.get();
+        long perf = dev.galactica.perf.Perf.t0();
         mgr.update(mc);
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SKY_MANAGER, perf);
         SkyManager.BakedSky sky = mgr.takeSky();
         if (sky != null) SkyTextures.uploadGalaxy(sky.argb());
         SkyManager.BakedStars st = mgr.takeStars();
         if (st != null) rebuildStars(st.stars());
         if (sphere == null) buildSphere();
+        perf = dev.galactica.perf.Perf.t0();
         PlanetSprites.beginFrame();
         NearPlanetRenderer.beginFrame();
         rebuildNear(mgr);
         rebuildPlanets();
         NearPlanetRenderer.endFrame();
         PlanetSprites.evict();
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SPACE_NEAR, perf);
+        perf = dev.galactica.perf.Perf.t0();
         dev.galactica.client.exotic.ExoticOverlay.prepare(mgr.viewer(), mgr.nav() != null ? mgr.nav().timeSeconds() : 0);
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.EXOTIC, perf);
+        perf = dev.galactica.perf.Perf.t0();
         dev.galactica.client.exotic.NebulaCloseUp.prepare(mgr.viewer());
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.NEBULA, perf);
 
         // Resolve every texture first: creating a DynamicTexture uploads it, and uploads are
         // commands that are illegal while a render pass is open.
@@ -126,6 +147,7 @@ public final class SpaceSkyRenderer {
         RenderTarget rt = mc.gameRenderer.mainRenderTarget();
         RenderSystem.AutoStorageIndexBuffer quads = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
         Matrix4f modelView = RenderSystem.getModelViewMatrixCopy();
+        perf = dev.galactica.perf.Perf.t0();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder()
                 .createRenderPass(() -> "Galactica space sky", rt.getColorTextureView(), Optional.empty(), rt.getDepthTextureView(), OptionalDouble.empty())) {
             RenderSystem.bindDefaultUniforms(pass);
@@ -159,6 +181,7 @@ public final class SpaceSkyRenderer {
             }
             NearPlanetRenderer.draw(pass, quads, modelView);
         }
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SPACE_DRAW, perf);
     }
 
     private static void draw(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView, GpuBuffer vb, int indexCount,
@@ -224,11 +247,8 @@ public final class SpaceSkyRenderer {
 
     /** The system's own star and its planets and moons, re-placed every frame. */
     private static void rebuildNear(SkyManager mgr) {
-        if (near != null) {
-            near.close();
-            near = null;
-            nearIndices = 0;
-        }
+        near = null;
+        nearIndices = 0;
         galaxyDim = 1f;
         starGpu = false;
         RESOLVED.clear();
@@ -297,7 +317,7 @@ public final class SpaceSkyRenderer {
             for (NearQuad q : quads) spriteQuad(b, q.dx(), q.dy(), q.dz(), R_NEAR, q.size(), q.argb());
             try (MeshData mesh = b.buildOrThrow()) {
                 nearIndices = mesh.drawState().indexCount();
-                near = RenderSystem.getDevice().createBuffer(() -> "Galactica near bodies", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+                near = NEAR_VB.upload(mesh.vertexBuffer());
             }
         }
     }
@@ -346,17 +366,14 @@ public final class SpaceSkyRenderer {
     }
 
     private static void rebuildPlanets() {
-        if (planets != null) {
-            planets.close();
-            planets = null;
-        }
+        planets = null;
         if (RESOLVED.isEmpty()) return;
         RESOLVED.sort((x, y) -> Double.compare(y.distance(), x.distance()));
         try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(RESOLVED.size() * 4 * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize())) {
             BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
             for (Resolved r : RESOLVED) spriteQuad(b, r.dx(), r.dy(), r.dz(), R_NEAR - 1f, r.halfAngle(), 0xFFFFFFFF);
             try (MeshData mesh = b.buildOrThrow()) {
-                planets = RenderSystem.getDevice().createBuffer(() -> "Galactica planets", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+                planets = PLANETS_VB.upload(mesh.vertexBuffer());
             }
         }
     }
