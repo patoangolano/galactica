@@ -38,7 +38,7 @@ class SpaceLitPreviewTest {
     }
 
     /** Renders the body from altitude {@code altM} at phase angle {@code phaseDeg}; returns linear-ish luma per pixel. */
-    private static double[] render(Body b, SurfaceClipmap clip, SurfaceClipmap.SpaceInputs globe, double altM, double phaseDeg,
+    private static double[] render(Body b, SurfaceClipmap clip, SurfaceClipmap.SpaceInputs globe, double altM, double phaseDeg, int W, int H,
                                    String file) throws IOException {
         double d = 1 + altM / b.radiusMetres();
         // Eye above (lat 10°, lon 30°), sun turned by the phase angle about the body's z axis.
@@ -81,8 +81,8 @@ class SpaceLitPreviewTest {
                 double t = -bq - Math.sqrt(disc);
                 double nx = e[0] + t * dir[0], ny = e[1] + t * dir[1], nz = e[2] + t * dir[2];
                 double lat = Math.asin(Math.max(-1, Math.min(1, nz))), lon = Math.atan2(ny, nx);
-                double[] c = sample(litGlobe, SurfaceClipmap.GLOBE_W, SurfaceClipmap.GLOBE_H,
-                        (lon + Math.PI) / (2 * Math.PI) * SurfaceClipmap.GLOBE_W - 0.5, (Math.PI / 2 - lat) / Math.PI * SurfaceClipmap.GLOBE_H - 0.5, true);
+                double[] c = sample(litGlobe, clip.globeW(), clip.globeH(),
+                        (lon + Math.PI) / (2 * Math.PI) * clip.globeW() - 0.5, (Math.PI / 2 - lat) / Math.PI * clip.globeH() - 0.5, true);
                 if (litLevel != null) {
                     double mx = grid.blockX(lon), mz = grid.blockZ(lat);
                     double fu = grid.wrapX(mx - cx) / span + 0.5, fv = (mz - cz) / span + 0.5;
@@ -141,9 +141,9 @@ class SpaceLitPreviewTest {
         SurfaceClipmap.SpaceInputs globe = clip.bakeGlobeNow();
         System.out.printf("Moon globe bake %.2f s%n", (System.nanoTime() - t0) / 1e9);
         assertNotNull(globe);
-        render(moon, clip, globe, 3.04e6, 28, "moon_3040km_phase28.png");
-        double[] quarter = render(moon, clip, globe, 3.04e6, 90, "moon_3040km_phase90.png");
-        render(moon, clip, globe, 3.04e6, 135, "moon_3040km_phase135.png");
+        render(moon, clip, globe, 3.04e6, 28, W, H, "moon_3040km_phase28.png");
+        double[] quarter = render(moon, clip, globe, 3.04e6, 90, W, H, "moon_3040km_phase90.png");
+        render(moon, clip, globe, 3.04e6, 135, W, H, "moon_3040km_phase135.png");
         // Quarter phase with the sun to the right (+r): the right half is lit, the left half is night.
         double left = 0, right = 0;
         int nl = 0, nr = 0;
@@ -179,7 +179,60 @@ class SpaceLitPreviewTest {
             SurfaceClipmap.SpaceInputs g = clip.bakeGlobeNow();
             assertNotNull(g, name);
             // The same apparent size as the Moon from 3 040 km: 2.75 radii from the centre.
-            render(b, clip, g, 1.75 * b.radiusMetres(), 70, name.toLowerCase() + "_phase70.png");
+            render(b, clip, g, 1.75 * b.radiusMetres(), 70, W, H, name.toLowerCase() + "_phase70.png");
         }
+    }
+
+    /** Bake costs for the record: the Moon's globe and levels (with sun-lit inputs) against Earth's. */
+    @Test
+    void bakeCosts() {
+        for (String name : new String[] {"Moon", "Earth"}) {
+            Body b = body(name);
+            SurfaceClipmap clip = SurfaceClipmap.detached(b);
+            clip.bakeGlobeNow(); // warm-up (class init, noise tables)
+            long t0 = System.nanoTime();
+            clip.bakeGlobeNow();
+            double globe = (System.nanoTime() - t0) / 1e6;
+            StringBuilder lv = new StringBuilder();
+            for (int k = 0; k < SurfaceClipmap.LEVELS; k++) {
+                if (!clip.usable(k)) continue;
+                t0 = System.nanoTime();
+                clip.bakeLevelNow(k, 0, 0);
+                lv.append(String.format(" L%d %.0f ms", k, (System.nanoTime() - t0) / 1e6));
+            }
+            System.out.printf("%s (%dx%d, lit %b): globe %.0f ms,%s%n", name, clip.globeW(), clip.globeH(), clip.spaceLit(), globe, lv);
+        }
+    }
+
+    /**
+     * The limb at the in-game screen scale (1080 rows, the disc ~430 px across from 3 040 km): the
+     * finest craters, foreshortened there below a pixel, must not alias into isolated dark pixels.
+     * Counts pixels in the outer 12 % of the lit disc darker than half their 8 neighbours' mean.
+     */
+    @Test
+    void moonLimbHasNoCraterSpeckle() throws IOException {
+        Body moon = body("Moon");
+        SurfaceClipmap clip = SurfaceClipmap.detached(moon);
+        SurfaceClipmap.SpaceInputs globe = clip.bakeGlobeNow();
+        int w = 1440, h = 1080;
+        double[] img = render(moon, clip, globe, 3.04e6, 28, w, h, "moon_3040km_phase28_1080p.png");
+        double d = 1 + 3.04e6 / moon.radiusMetres();
+        double rPx = Math.tan(Math.asin(1 / d)) / Math.tan(FOV / 2) * h / 2;
+        int speckle = 0, ring = 0;
+        for (int py = 1; py < h - 1; py++) {
+            for (int px = 1; px < w - 1; px++) {
+                double rr = Math.hypot(px + 0.5 - w / 2.0, py + 0.5 - h / 2.0) / rPx;
+                if (rr < 0.88 || rr > 0.985) continue;
+                double v = img[py * w + px], nb = 0;
+                for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) if (dx != 0 || dy != 0) nb += img[(py + dy) * w + px + dx];
+                nb /= 8;
+                if (nb < 20) continue; // night side or space
+                ring++;
+                if (v < 0.5 * nb) speckle++;
+            }
+        }
+        System.out.printf("limb ring: %d lit pixels, %d isolated dark ones%n", ring, speckle);
+        assertTrue(ring > 1000, "ring not found: " + ring);
+        assertTrue(speckle <= ring / 1000, "limb speckle: " + speckle + " of " + ring);
     }
 }

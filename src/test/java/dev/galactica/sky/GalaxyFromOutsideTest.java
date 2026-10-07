@@ -74,6 +74,51 @@ class GalaxyFromOutsideTest {
         assertTrue(white < 0.05 * lit, "burned out: " + white + " of " + lit);
     }
 
+    /**
+     * From the halo the bright disc must not sit on the highlight shoulder as a flat plateau: at the
+     * game's 2048 x 1024 bake (highlight compression and tonemap as in game) under 8 % of the
+     * galaxy's lit pixels reach 200 (p95 anchoring gave 17 %), none reach white. Writes the sky to
+     * build/galaxy-previews for eyeballing.
+     */
+    @Test
+    void discFromTheHaloIsNotAPlateau() throws Exception {
+        GalaxySkyBaker baker = new GalaxySkyBaker(Frames.GALAXY_SEED);
+        int w = 2048, h = 1024;
+        float[] hdr = new float[w * h * 3];
+        baker.bakeEquirect(OX, OY, OZ, w, h, hdr);
+        SkyTonemap tm = SkyTonemap.fit(hdr);
+        int lit = 0, bright = 0, white = 0;
+        java.awt.image.BufferedImage bi = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int p = 0; p < w * h; p++) {
+            int argb = tm.toArgb(hdr[p * 3], hdr[p * 3 + 1], hdr[p * 3 + 2]);
+            bi.setRGB(p % w, p / w, argb & 0xFFFFFF);
+            int g = argb >> 8 & 255;
+            if (g > 20) lit++;
+            if (g >= 200) bright++;
+            if (g >= 250) white++;
+        }
+        System.out.printf("from 45 kpc: %d lit, %d >= 200 (%.1f%%), %d white%n", lit, bright, 100.0 * bright / lit, white);
+        java.io.File dir = new java.io.File("build/galaxy-previews");
+        assertTrue(dir.isDirectory() || dir.mkdirs());
+        javax.imageio.ImageIO.write(bi, "png", new java.io.File(dir, "halo_45kpc.png"));
+        assertTrue(lit > 2000, "galaxy too small: " + lit);
+        assertTrue(bright < 0.08 * lit, "plateau: " + bright + " of " + lit + " at >= 200");
+        assertEquals(0, white);
+    }
+
+    /** From the Sun the galaxy fills the sky: the anchor is still the sky's own p99 (the view is unchanged). */
+    @Test
+    void anchorFromTheSunIsTheSkyP99() {
+        GalaxySkyBaker baker = new GalaxySkyBaker(Frames.GALAXY_SEED);
+        int w = 512, h = 256;
+        float[] hdr = new float[w * h * 3];
+        baker.bakeEquirectRadiance(-8178, 0, 20.8, w, h, hdr);
+        double[] lum = new double[w * h];
+        for (int p = 0; p < lum.length; p++) lum[p] = SkyTonemap.luminance(hdr[p * 3], hdr[p * 3 + 1], hdr[p * 3 + 2]);
+        java.util.Arrays.sort(lum);
+        assertEquals(lum[(int) (lum.length * 0.99)], SkyTonemap.anchor(lum, lum.length), 1e-12);
+    }
+
     /** Inside the disk the anchor is the sky's own p99, as before. */
     @Test
     void anchorFromInsideIsTheSkyP99() {

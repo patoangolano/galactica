@@ -87,14 +87,18 @@ public final class AutoTest {
         lookAtBody(60, "Earth");   shot(5, "04_earth_close");
         cmd(20, "galactica orbit Moon");
         lookAtBody(60, "Moon");    shot(5, "05_moon_close");
-        probeSpaceLit(1, "Moon");
+        probeSpaceLit(20, "Moon", "05_moon_close");
         // The same 3 040 km altitude at quarter phase: the terminator through the disc, crater relief along it.
         orbitAtPhase(20, "Moon", 90);
         lookAtBody(60, "Moon");    shot(5, "05b_moon_3040km_quarter");
-        probeSpaceLit(1, "Moon");
+        probeSpaceLit(20, "Moon", "05b_moon_3040km_quarter");
         cmd(20, "galactica orbit Mercury");
         lookAtBody(60, "Mercury"); shot(5, "05c_mercury_close");
-        probeSpaceLit(1, "Mercury");
+        probeSpaceLit(20, "Mercury", "05c_mercury_close");
+        // Mars counts as airless for the relief (6 mbar) but its dust still filters the sunlight.
+        cmd(20, "galactica orbit Mars");
+        lookAtBody(60, "Mars");    shot(5, "05d_mars_close");
+        probeSpaceLit(20, "Mars", "05d_mars_close");
         cmd(20, "galactica orbit Jupiter");
         lookAtBody(60, "Jupiter"); shot(5, "06_jupiter_close");
         cmd(20, "galactica orbit Saturn");
@@ -1055,51 +1059,116 @@ public final class AutoTest {
     }
 
     /**
-     * The airless body is drawn by the near renderer from its sun-lit images, and the phase angle
-     * (star–body–eye) it is lit at.
+     * The airless body is drawn by the near renderer from its sun-lit images, lit from the side the
+     * star is on. Reads the screenshot back and compares the disc's brightness 0.6 radii towards the
+     * star's projected direction (worked out here from the body and star positions and the
+     * player's view, independently of the renderer's body-fixed frame) with the point opposite.
+     * Past 60 deg of phase the far side is night: it must be under a third of the sunward side;
+     * nearer full phase both are lit and the sunward side must not be the darker one by more than
+     * 20 %. A sign error in the light's frame or in the relief puts the bright side opposite.
      */
-    private static void probeSpaceLit(int wait, String name) {
+    private static void probeSpaceLit(int wait, String name, String shotName) {
         STEPS.add(new Step(wait, () -> {
+            Minecraft mc = Minecraft.getInstance();
             String claimed = dev.galactica.client.sky.NearPlanetRenderer.claimedName();
             boolean lit = dev.galactica.client.sky.NearPlanetRenderer.claimedLit();
             SkyManager mgr = SkyManager.get();
             GalacticPos eye = mgr.viewer();
-            double phase = Double.NaN;
+            double phase = Double.NaN, sun = Double.NaN, anti = Double.NaN;
             Star star = eye == null ? null : mgr.neighbourhood().nearestStar(eye);
-            if (star != null && mgr.nav() != null) {
+            if (star != null && mgr.nav() != null && mc.player != null) {
                 for (Neighbourhood.Located l : mgr.neighbourhood().locateBodies(eye, mgr.nav().timeSeconds())) {
                     if (!l.body().name().equalsIgnoreCase(name)) continue;
                     double[] s = Neighbourhood.starPos(star).metresFrom(l.pos()), e = eye.metresFrom(l.pos());
-                    double c = (s[0] * e[0] + s[1] * e[1] + s[2] * e[2])
-                            / Math.sqrt((s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) * (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]));
+                    double c = dot(s, e) / Math.sqrt(dot(s, s) * dot(e, e));
                     phase = Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, c))));
+                    // Eye to centre, and the star's direction across the line of sight, in Minecraft axes.
+                    double[] toBody = Frames.galacticToMc(-e[0], -e[1], -e[2]), toStar = Frames.galacticToMc(s[0], s[1], s[2]);
+                    double dist = Math.sqrt(dot(toBody, toBody));
+                    double[] los = {toBody[0] / dist, toBody[1] / dist, toBody[2] / dist};
+                    double along = dot(toStar, los);
+                    double[] across = {toStar[0] - along * los[0], toStar[1] - along * los[1], toStar[2] - along * los[2]};
+                    double an = Math.sqrt(dot(across, across));
+                    if (!(an > 0)) break;
+                    double off = 0.6 * l.body().radiusMetres() / an;
+                    java.io.File f = new java.io.File(new java.io.File(mc.gameDirectory, "screenshots"),
+                            "galactica_" + shotName + (TAG.isEmpty() ? "" : "_" + TAG) + ".png");
+                    try {
+                        java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(f);
+                        double fov = Math.toRadians(mc.options.fov().get());
+                        float yaw = mc.player.getYRot(), pitch = mc.player.getXRot();
+                        sun = discLuma(img, fov, yaw, pitch, toBody, across, off);
+                        anti = discLuma(img, fov, yaw, pitch, toBody, across, -off);
+                    } catch (java.io.IOException | RuntimeException ex) {
+                        Galactica.LOG.warn("[autotest] cannot read {}: {}", f, ex.toString());
+                    }
                 }
             }
-            boolean ok = name.equalsIgnoreCase(claimed) && lit;
-            Galactica.LOG.info("[autotest] {} sun-lit relief on {}: drawn body {}, lit images {}, phase angle {} deg", ok ? "PASS" : "FAIL",
-                    name, claimed, lit, String.format(java.util.Locale.ROOT, "%.1f", phase));
+            boolean sided = phase > 60 ? sun > 25 && anti < sun / 3 : sun > 25 && sun >= 0.8 * anti;
+            boolean ok = name.equalsIgnoreCase(claimed) && lit && sided;
+            Galactica.LOG.info("[autotest] {} sun-lit relief on {}: drawn body {}, lit images {}, phase angle {} deg, "
+                            + "disc luma {} towards the star vs {} opposite", ok ? "PASS" : "FAIL", name, claimed, lit,
+                    String.format(java.util.Locale.ROOT, "%.1f", phase), String.format(java.util.Locale.ROOT, "%.0f", sun),
+                    String.format(java.util.Locale.ROOT, "%.0f", anti));
         }));
+    }
+
+    private static double dot(double[] a, double[] b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    }
+
+    /**
+     * Mean luma (0-255) over 9 x 9 screenshot pixels around the point {@code toBody + k * across}
+     * (Minecraft axes, metres from the eye), projected for the player's yaw/pitch and vertical FOV.
+     */
+    private static double discLuma(java.awt.image.BufferedImage img, double fov, float yaw, float pitch,
+                                   double[] toBody, double[] across, double k) {
+        double yr = Math.toRadians(yaw), pr = Math.toRadians(pitch);
+        double[] f = {-Math.sin(yr) * Math.cos(pr), -Math.sin(pr), Math.cos(yr) * Math.cos(pr)};
+        double[] r = {-f[2], 0, f[0]}; // f x (0, 1, 0)
+        double rn = Math.sqrt(dot(r, r));
+        for (int m = 0; m < 3; m++) r[m] /= rn;
+        double[] u = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};
+        double[] p = {toBody[0] + k * across[0], toBody[1] + k * across[1], toBody[2] + k * across[2]};
+        double z = dot(p, f), half = img.getHeight() / 2.0, t = Math.tan(fov / 2);
+        int cx = (int) Math.round(img.getWidth() / 2.0 + dot(p, r) / z / t * half);
+        int cy = (int) Math.round(half - dot(p, u) / z / t * half);
+        double sum = 0;
+        int n = 0;
+        for (int y = cy - 4; y <= cy + 4; y++) {
+            for (int x = cx - 4; x <= cx + 4; x++) {
+                if (x < 0 || y < 0 || x >= img.getWidth() || y >= img.getHeight()) continue;
+                int c = img.getRGB(x, y);
+                sum += 0.2126 * (c >> 16 & 255) + 0.7152 * (c >> 8 & 255) + 0.0722 * (c & 255);
+                n++;
+            }
+        }
+        return n > 0 ? sum / n : Double.NaN;
     }
 
     /**
      * The Milky Way seen from outside keeps its structure: of the sky texture's lit pixels (green
-     * channel > 20) fewer than 5 % are white (≥ 250). The old exposure, anchored to the empty sky's
-     * 99th percentile, burned the whole disc out.
+     * channel > 20) fewer than 5 % are white (≥ 250) and fewer than 10 % reach 200, where the
+     * highlight shoulder flattens the disc into a plateau. The old exposure, anchored to the empty
+     * sky's 99th percentile, burned the whole disc out; anchoring to the covered pixels' p95 still
+     * left the bulge and inner disc on the shoulder (17 % at 200 or more in the offline bake).
      */
     private static void probeGalaxyExposure(int wait, String where) {
         STEPS.add(new Step(wait, () -> {
             var snap = dev.galactica.client.sky.SkyTextures.galaxySnapshot();
-            int lit = 0, white = 0;
+            int lit = 0, white = 0, bright = 0;
             if (snap != null) {
                 for (int p : snap.argb()) {
                     int g = p >> 8 & 255;
                     if (g > 20) lit++;
+                    if (g >= 200) bright++;
                     if (g >= 250) white++;
                 }
             }
-            boolean ok = lit > 500 && white < 0.05 * lit;
-            Galactica.LOG.info("[autotest] {} galaxy exposure from {}: {} lit pixels, {} white ({}%)", ok ? "PASS" : "FAIL", where, lit, white,
-                    String.format(java.util.Locale.ROOT, "%.1f", lit > 0 ? 100.0 * white / lit : 0));
+            boolean ok = lit > 500 && white < 0.05 * lit && bright < 0.10 * lit;
+            Galactica.LOG.info("[autotest] {} galaxy exposure from {}: {} lit pixels, {} white ({}%), {} at >= 200 ({}%)", ok ? "PASS" : "FAIL",
+                    where, lit, white, String.format(java.util.Locale.ROOT, "%.1f", lit > 0 ? 100.0 * white / lit : 0), bright,
+                    String.format(java.util.Locale.ROOT, "%.1f", lit > 0 ? 100.0 * bright / lit : 0));
         }));
     }
 
