@@ -87,6 +87,10 @@ void main() {
     vec2 dir2 = len > 1e-6 ? quadUv / len : vec2(1.0, 0.0);
     bool smoothSurface = StarLimb.z > 0.5;
     vec4 flare = flareState(t, seed);
+    // starPlasmaQuality: 0 low skips supergranulation, faculae, spot filaments and all but two
+    // prominences; 2 high keeps granulation down to smaller on-screen cells. 1 is the reference look.
+    float quality = StarGeom.w;
+    bool lowQ = quality < 0.5;
 
     float cover = 1.0 - smoothstep(1.0 - pr, 1.0 + pr, r);
     vec3 disc = vec3(0.0);
@@ -109,7 +113,8 @@ void main() {
             // Granulation: Worley cells of the size set by the pressure scale height. Cells look
             // smaller toward the limb (foreshortening by mu), so they fade out there first.
             float cells = StarGran.x;
-            float lod = 1.0 - smoothstep(0.18, 0.45, cells * pr / max(mu, 0.15));
+            float lodScale = quality > 1.5 ? 0.6 : 1.0;
+            float lod = 1.0 - smoothstep(0.18, 0.45, lodScale * cells * pr / max(mu, 0.15));
             if (lod > 0.0 && StarGran.z > 0.0) {
                 float phase = StarPhase.z;                           // TAU t / lifetime, wrapped on the CPU
                 vec3 gp = qs * cells + 0.12 * vec3(gx_simplex3(qs * cells * 0.5 + vec3(0.0, 0.0, t * 0.01)));
@@ -124,7 +129,7 @@ void main() {
             // Supergranulation: the magnetic network outlines ~30-granule cells and brightens toward the limb.
             // A 3-7 % term, so the 8-tap cellular search is enough (gx_worley3_fast).
             float superLod = 1.0 - smoothstep(0.25, 0.6, StarGran.w * pr / max(mu, 0.15));
-            if (superLod > 0.0) {
+            if (superLod > 0.0 && !lowQ) {
                 vec3 sw = gx_worley3_fast(qs * StarGran.w + 31.0, StarPhase.w);
                 float network = 1.0 - smoothstep(0.0, 0.10, sw.y - sw.x);
                 bright *= 1.0 + superLod * (0.03 + 0.04 * min(StarActive.y, 2.0)) * network * (0.4 + 0.6 * x);
@@ -148,7 +153,7 @@ void main() {
                 vec3 e1 = normalize(cross(vec3(0.0, 1.0, 0.0), c) + vec3(1e-5, 0.0, 0.0));
                 vec3 e2 = cross(c, e1);
                 float az = atan(dot(n - c, e2), dot(n - c, e1));
-                float fil = 0.85 + 0.15 * gx_simplex3(vec3(cos(az) * 7.0, sin(az) * 7.0, d / sp.z * 1.5 + float(i) * 7.0 + t * 0.02));
+                float fil = lowQ ? 1.0 : 0.85 + 0.15 * gx_simplex3(vec3(cos(az) * 7.0, sin(az) * 7.0, d / sp.z * 1.5 + float(i) * 7.0 + t * 0.02));
                 float pen = 1.0 - smoothstep(sp.z * 0.9, sp.z * 1.05, d);
                 float umb = 1.0 - smoothstep(sp.z * sp.w * 0.85, sp.z * sp.w * 1.1, du);
                 float spotI = mix(mix(1.0, 0.72 * fil, pen), 0.18, umb);
@@ -160,7 +165,7 @@ void main() {
             // Faculae: bright plage around active regions and in the activity belts, almost invisible
             // at disc centre and up to ~20 % brighter close to the limb.
             // Skipped where they cannot show (no activity, or within mu > 0.97 where pow(x, 1.2) < 1 %).
-            if (StarActive.x > 0.0 && x > 0.03) {
+            if (StarActive.x > 0.0 && x > 0.03 && !lowQ) {
                 float belt = exp(-pow((abs(q.y) - 0.35) / 0.15, 2.0)) * smoothstep(0.55, 0.85, 0.5 + 0.5 * gx_fbm3(q * 6.0 + seed));
                 float plage = min(1.0, facula + 0.3 * min(StarActive.y, 2.0) * belt) * (0.5 + 0.5 * gx_fbm3(q * cells * 0.25 + 5.0));
                 bright *= 1.0 + 0.3 * StarActive.x * plage * pow(x, 1.2) * smoothstep(0.03, 0.08, x);
@@ -198,7 +203,7 @@ void main() {
         if (promLod > 0.0 && hp < 0.25) {
             float prom = 0.0;
             for (int k = 0; k < 4; k++) {
-                if (float(k) >= StarChromo.w) break;
+                if (float(k) >= StarChromo.w || (lowQ && k >= 2)) break;
                 vec3 hk = gx_hash33(vec3(float(k) * 13.1, seed, 5.0));
                 float halfW = 0.05 + 0.08 * hk.y;
                 float height = 0.04 + 0.10 * hk.z;

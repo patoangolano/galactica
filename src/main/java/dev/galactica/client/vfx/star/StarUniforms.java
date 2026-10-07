@@ -81,6 +81,17 @@ public final class StarUniforms {
      * @param elapsedSeconds unwrapped animation clock, s ({@link VfxClock#elapsedSeconds()})
      */
     public static Vec4Block pack(StarVisual v, double angularRadius, float intensity, double elapsedSeconds, Vec4Block out) {
+        return pack(v, angularRadius, intensity, elapsedSeconds,
+                dev.galactica.config.GalacticaConfigs.get().starPlasmaQuality(), out);
+    }
+
+    /**
+     * As above with an explicit detail level ({@code starPlasmaQuality}), sent in {@code StarGeom.w}
+     * as {@link dev.galactica.config.ConfigEffects#starQualityLevel}: the shader skips its costliest
+     * terms at LOW and keeps granulation at smaller on-screen sizes at HIGH.
+     */
+    public static Vec4Block pack(StarVisual v, double angularRadius, float intensity, double elapsedSeconds,
+                                 dev.galactica.config.GalacticaConfig.Quality quality, Vec4Block out) {
         if (out.vec4Count() != VEC4_COUNT) throw new IllegalArgumentException("block must have " + VEC4_COUNT + " vec4");
         double tanHalf = Math.tan(quadHalfAngle(angularRadius));
         // Seed folded to [0, 1000): large enough to decorrelate stars, small enough for float noise precision.
@@ -91,7 +102,7 @@ public final class StarUniforms {
         out.put(ACTIVE, v.faculae(), v.activity(), v.flareRate(), seedF);
         out.put(CHROMO, v.chromosphere(), v.chromosphere(), v.prominence(), v.prominences());
         out.put(CORONA, v.corona(), v.coronaIndex(), v.streamers(), 1.0);
-        out.put(GEOM, angularRadius, tanHalf, VfxClock.wrapSeconds(elapsedSeconds), v.rotationRate());
+        out.put(GEOM, angularRadius, tanHalf, VfxClock.wrapSeconds(elapsedSeconds), dev.galactica.config.ConfigEffects.starQualityLevel(quality));
         out.put(PHASE, equatorialPhase(v.rotationRate(), elapsedSeconds), shearPhase(v.rotationRate(), elapsedSeconds),
                 cyclePhase(v.lifetimeS(), elapsedSeconds), cyclePhase(v.lifetimeS() * SUPERGRANULE_LIFETIMES, elapsedSeconds));
         for (int i = 0; i < MAX_SPOTS; i++) {

@@ -268,10 +268,12 @@ public class GalaxyMapScreen extends Screen {
             rows.add(Row.text(Component.translatable("map.galactica.position",
                     String.format("%.3f", Math.sqrt(px * px + py * py) / 1000), String.format("%+.1f", pz)), TEXT));
         }
-        rows.add(Row.GAP);
-        rows.add(Row.text(Component.translatable("map.galactica.legend"), DIM));
-        for (int i = 0; i < ArmLegend.ARM_COUNT; i++) {
-            rows.add(new Row(Component.translatable(ArmLegend.KEYS[i]), TEXT, ArmLegend.COLOURS[i], 11));
+        if (dev.galactica.config.GalacticaConfigs.get().showLegend()) {
+            rows.add(Row.GAP);
+            rows.add(Row.text(Component.translatable("map.galactica.legend"), DIM));
+            for (int i = 0; i < ArmLegend.ARM_COUNT; i++) {
+                rows.add(new Row(Component.translatable(ArmLegend.KEYS[i]), TEXT, ArmLegend.COLOURS[i], 11));
+            }
         }
         rows.add(Row.GAP);
         int exotic = exoticCarried();

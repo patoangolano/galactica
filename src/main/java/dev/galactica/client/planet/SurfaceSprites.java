@@ -41,8 +41,7 @@ final class SurfaceSprites {
     }
 
     static DynamicTexture get(Body body, PlanetImager.View view, double pixels) {
-        int size = Integer.highestOneBit((int) Math.max(64, Math.min(512, pixels * 1.2)) * 2 - 1);
-        size = Math.max(64, Math.min(512, size));
+        int size = dev.galactica.config.ConfigEffects.spriteSize(pixels, dev.galactica.config.GalacticaConfigs.get().planetTextureMax());
         Entry e = ENTRIES.computeIfAbsent(body.id(), id -> new Entry());
         e.lastSeen = frame;
         boolean resized = e.texture == null || e.size != size;

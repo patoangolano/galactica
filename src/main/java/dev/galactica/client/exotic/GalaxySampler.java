@@ -14,7 +14,8 @@ import dev.galactica.science.Blackbody;
  *
  * <p>Construct on the render thread (it may create the galaxy texture); {@link #sample} is then
  * called from the exotic imager's worker thread. That is safe because the galaxy
- * {@link NativeImage} is created once and never closed, and re-bakes overwrite it in place: a paint
+ * {@link NativeImage} is only closed 30 s after a sky-quality change replaced it (see
+ * {@code SkyTextures.uploadGalaxy}), and re-bakes overwrite it in place: a paint
  * racing a re-bake at worst mixes old and new sky for one image, which the 3 s halo refresh replaces.
  */
 final class GalaxySampler implements ExoticImager.SkySampler {
@@ -32,8 +33,8 @@ final class GalaxySampler implements ExoticImager.SkySampler {
 
     GalaxySampler() {
         img = SkyTextures.galaxy().getPixels();
-        w = img != null ? img.getWidth() : SkyManager.SKY_WIDTH;
-        h = img != null ? img.getHeight() : SkyManager.SKY_HEIGHT;
+        w = img != null ? img.getWidth() : SkyManager.skyWidth();
+        h = img != null ? img.getHeight() : SkyManager.skyHeight();
     }
 
     @Override

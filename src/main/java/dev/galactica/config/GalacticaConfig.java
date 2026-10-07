@@ -390,7 +390,7 @@ public final class GalacticaConfig {
 
     /** Mutable staging copy used by the config screens; {@link #build} validates. */
     public static final class Builder {
-        /** Default 2048: the bake width the sky shipped with in M1–M6 ({@code SkyManager.SKY_WIDTH}). */
+        /** Default 2048: the bake width the sky shipped with in M1–M6 ({@code SkyManager.skyWidth()} reads it). */
         public int skyBakeWidth = 2048;
         public int planetTextureMax = 512;
         public boolean starPlasma = true;

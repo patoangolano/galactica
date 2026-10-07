@@ -63,9 +63,17 @@ public final class NavHud {
             }
         }
         lines.add(new Line("Warp " + NavServer.formatSpeed(nav.speed()), nav.speed() > 0 ? WARP : DIM));
-        lines.add(new Line("[Sprint] warp   [Sneak] brake   /galactica", DIM));
+        if (HudScale.legend()) lines.add(new Line("[Sprint] warp   [Sneak] brake   /galactica", DIM));
 
-        Font font = mc.font;
+        HudScale.push(g);
+        try {
+            draw(g, mc.font, lines, nav);
+        } finally {
+            HudScale.pop(g);
+        }
+    }
+
+    private static void draw(GuiGraphicsExtractor g, Font font, List<Line> lines, NavState nav) {
         int w = 0;
         for (Line l : lines) w = Math.max(w, font.width(l.text));
         int h = lines.size() * 11 + 6;

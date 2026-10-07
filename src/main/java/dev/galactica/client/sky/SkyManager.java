@@ -30,7 +30,19 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@link SpaceSkyRenderer} places them every frame because their directions change as you fly.
  */
 public final class SkyManager {
-    public static final int SKY_WIDTH = 2048, SKY_HEIGHT = 1024;
+    /**
+     * Panorama size from the {@code skyQuality} setting (1024/2048/4096 wide, 2:1). Read at each bake
+     * request; a change re-bakes on the next frame in space or on a surface, and
+     * {@link SkyTextures#uploadGalaxy} resizes the texture to match.
+     */
+    public static int skyWidth() {
+        return dev.galactica.config.GalacticaConfigs.get().skyBakeWidth();
+    }
+
+    public static int skyHeight() {
+        return dev.galactica.config.ConfigEffects.skyHeight(skyWidth());
+    }
+
     public static final double NEAR_LIMIT_PC = 0.05;
 
     public record BakedSky(int[] argb, GalacticPos at) {}
@@ -56,6 +68,8 @@ public final class SkyManager {
     private final AtomicReference<BakedStars> pendingStars = new AtomicReference<>();
     private volatile boolean skyBusy, starsBusy;
     private GalacticPos skyRequestedAt, starsRequestedAt;
+    /** Width of the last bake requested; a different configured width forces a re-bake. */
+    private int skyRequestedWidth;
     private GalacticPos viewer;
     private NavState nav;
 
@@ -94,16 +108,20 @@ public final class SkyManager {
         Vec3 cam = mc.gameRenderer.mainCamera().position();
         viewer = Frames.playerPos(nav, cam.x, cam.y, cam.z);
 
-        if (!skyBusy && (skyRequestedAt == null || viewer.distanceMetres(skyRequestedAt) > skyRebakeDistance(viewer))) {
+        int width = skyWidth();
+        if (!skyBusy && (skyRequestedAt == null || width != skyRequestedWidth
+                || viewer.distanceMetres(skyRequestedAt) > skyRebakeDistance(viewer))) {
             skyRequestedAt = viewer;
+            skyRequestedWidth = width;
             skyBusy = true;
             GalacticPos at = viewer;
+            int w = width, h = dev.galactica.config.ConfigEffects.skyHeight(width);
             worker.execute(() -> {
                 try {
-                    float[] hdr = new float[SKY_WIDTH * SKY_HEIGHT * 3];
-                    baker.bakeEquirect(at.xPc(), at.yPc(), at.zPc(), SKY_WIDTH, SKY_HEIGHT, hdr);
+                    float[] hdr = new float[w * h * 3];
+                    baker.bakeEquirect(at.xPc(), at.yPc(), at.zPc(), w, h, hdr);
                     SkyTonemap tm = SkyTonemap.fit(hdr);
-                    int[] argb = new int[SKY_WIDTH * SKY_HEIGHT];
+                    int[] argb = new int[w * h];
                     for (int i = 0; i < argb.length; i++) argb[i] = tm.toArgb(hdr[i * 3], hdr[i * 3 + 1], hdr[i * 3 + 2]);
                     pendingSky.set(new BakedSky(argb, at));
                 } catch (Throwable t) {
