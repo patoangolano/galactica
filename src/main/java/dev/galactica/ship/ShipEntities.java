@@ -13,7 +13,7 @@ import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.Item;
 
-/** Registration for the ship area: entity type, beacon item, serverbound payloads and their handlers. */
+/** Registration for the ship area: entity type, beacon item, serverbound payloads and their handlers, the pilot's correction payload. */
 public final class ShipEntities {
     private ShipEntities() {}
 
@@ -31,9 +31,10 @@ public final class ShipEntities {
     public static void init() {
         PayloadTypeRegistry.serverboundPlay().register(ShipControlPayload.TYPE, ShipControlPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(HyperjumpPayload.TYPE, HyperjumpPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(ShipCorrectionPayload.TYPE, ShipCorrectionPayload.CODEC);
         ServerPlayNetworking.registerGlobalReceiver(ShipControlPayload.TYPE, (msg, ctx) -> {
             if (ctx.player().level().getEntity(msg.entityId()) instanceof Starship ship && ship.getControllingPassenger() == ctx.player()) {
-                ship.acceptPilotReport(ctx.player(), msg.attitude(), msg.velocity(), msg.coupled());
+                ship.acceptPilotReport(ctx.player(), msg.seq(), msg.attitude(), msg.velocity(), msg.coupled());
             }
         });
         ServerPlayNetworking.registerGlobalReceiver(HyperjumpPayload.TYPE, (msg, ctx) -> {

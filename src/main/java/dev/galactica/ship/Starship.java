@@ -6,6 +6,7 @@ import dev.galactica.nav.GalacticPos;
 import dev.galactica.nav.NavServer;
 import dev.galactica.nav.NavState;
 import dev.galactica.science.Units;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.EntityDataAccessor;
@@ -101,6 +102,8 @@ public class Starship extends VehicleEntity {
     // Server-side bookkeeping.
     private @Nullable JumpTargetInfo pendingJump;
     private int lastReportTick, lastMainBurnTick = Integer.MIN_VALUE / 2;
+    // Pilot's client: reports awaiting a possible server clamp.
+    private final PilotReconciler reconciler = new PilotReconciler();
     // Client-side visual state (gear, canopy, gimbal), ticked for every ship the client sees.
     private float gear = 1F, gearO = 1F, canopy, canopyO, gimbalYaw, gimbalYawO, gimbalPitch, gimbalPitchO;
     private boolean gearDown = true;
@@ -162,6 +165,67 @@ public class Starship extends VehicleEntity {
         if (DATA_ATTITUDE.equals(key)) attitudeSync.receive(entityData.get(DATA_ATTITUDE), attitude, attitudeO);
         else if (DATA_COUPLED.equals(key)) coupled = entityData.get(DATA_COUPLED);
     }
+
+    /**
+     * The server's entity tracker broadcasts this ship's velocity to every tracking player, the pilot included.
+     * On the pilot's client that velocity is only an echo of an earlier report, at least a tick old and clamped by
+     * {@link #acceptPilotReport}: applying it would overwrite the prediction, so the ship would keep coasting on
+     * a stale heading after a turn or a stop and lose part of every burn. The pilot's client owns the velocity,
+     * as it owns the position (vanilla already drops position packets for a locally authoritative vehicle).
+     * When the server does refuse part of a report, it says so with a {@link ShipCorrectionPayload}.
+     */
+    @Override
+    public void lerpMotion(Vec3 movement) {
+        if (level().isClientSide() && isLocalInstanceAuthoritative()) {
+            NetProbe probe = netProbe;
+            if (probe != null) probe.droppedEcho(this, movement);
+            return;
+        }
+        super.lerpMotion(movement);
+    }
+
+    /**
+     * Pilot's client: numbers the velocity (blocks/tick) about to be reported, so a later
+     * {@link ShipCorrectionPayload} can say which report the server clamped.
+     */
+    public int recordReport(Vec3 perTick) {
+        return reconciler.record(toMetres(perTick));
+    }
+
+    /**
+     * Pilot's client: the server accepted {@code accepted} (m/s) for report {@code seq} instead of what was
+     * reported. The refused part is removed from the current prediction; everything predicted since stays.
+     */
+    public void applyCorrection(int seq, Vector3fc accepted) {
+        if (!level().isClientSide() || !isLocalInstanceAuthoritative()) return;
+        Vector3d excess = reconciler.correct(seq, new Vector3d(accepted.x(), accepted.y(), accepted.z()));
+        if (excess == null) return;
+        Vec3 removed = new Vec3(excess.x * ShipFlightModel.TICK, excess.y * ShipFlightModel.TICK, excess.z * ShipFlightModel.TICK);
+        setDeltaMovement(getDeltaMovement().subtract(removed));
+        NetProbe probe = netProbe;
+        if (probe != null) probe.corrected(this, removed);
+    }
+
+    /**
+     * Replaces the velocity (blocks/tick) outside the flight model, e.g. from a dev test. On the pilot's client,
+     * corrections still on their way for earlier reports are dropped: they were computed against a velocity that
+     * no longer exists.
+     */
+    public void overrideVelocity(Vec3 perTick) {
+        setDeltaMovement(perTick);
+        if (level().isClientSide()) reconciler.reset();
+    }
+
+    /** Dev diagnostics (autotest): what the pilot's client does with the server's velocity messages. */
+    public interface NetProbe {
+        /** A vanilla velocity broadcast for the locally piloted ship, ignored; blocks/tick. */
+        void droppedEcho(Starship ship, Vec3 echo);
+
+        /** A server clamp applied to the prediction; the velocity removed, blocks/tick. */
+        void corrected(Starship ship, Vec3 removed);
+    }
+
+    public static volatile @Nullable NetProbe netProbe;
 
     public float hydrogen() { return entityData.get(DATA_HYDROGEN); }
     public int exotic() { return entityData.get(DATA_EXOTIC); }
@@ -388,7 +452,7 @@ public class Starship extends VehicleEntity {
      * server keeps the velocity so vanilla's "moved too quickly" check compares the reported move against the
      * ship's real speed, not against zero.
      */
-    void acceptPilotReport(ServerPlayer pilot, Quaternionfc q, Vector3fc velocity, boolean assist) {
+    void acceptPilotReport(ServerPlayer pilot, int seq, Quaternionfc q, Vector3fc velocity, boolean assist) {
         if (!q.isFinite() || !velocity.isFinite() || q.lengthSquared() < 1e-6) return;
         int now = tickCount;
         int ticks = Math.clamp(now - lastReportTick, 1, 20);
@@ -396,11 +460,17 @@ public class Starship extends VehicleEntity {
 
         Vector3d v = new Vector3d(velocity.x(), velocity.y(), velocity.z());
         Vector3d prev = toMetres(getDeltaMovement());
-        boolean mainBurning = hydrogen() > 0 && tickCount - lastMainBurnTick <= ticks + 1;
+        // W/S held right now counts too: the input packet arrives before this report, but serverStep (which stamps
+        // lastMainBurnTick) only runs in the next entity tick, so the first tick of every burn would be clamped.
+        Input in = pilot.getLastClientInput();
+        boolean mainBurning = hydrogen() > 0 && (in.forward() || in.backward() || tickCount - lastMainBurnTick <= ticks + 1);
         double maxDv = ShipFlightModel.maxDeltaVPerTick(mainBurning, gravity().length()) * ticks * 1.1 + 0.5;
         Vector3d dv = new Vector3d(v).sub(prev);
         if (dv.length() > maxDv) v.set(prev).fma(maxDv / dv.length(), dv);
         if (v.length() > ShipFlightModel.MAX_SPEED) v.mul(ShipFlightModel.MAX_SPEED / v.length());
+        // The pilot ignores the tracker's velocity echo, so a clamp has to be told explicitly.
+        if (v.distance(velocity.x(), velocity.y(), velocity.z()) >= PilotReconciler.EPSILON)
+            ServerPlayNetworking.send(pilot, new ShipCorrectionPayload(getId(), seq, new Vector3f((float) v.x, (float) v.y, (float) v.z)));
 
         Quaterniond turned = ShipFlightModel.clampAttitude(new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w),
                 new Quaterniond(q.x(), q.y(), q.z(), q.w()), ticks);
