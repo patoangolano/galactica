@@ -15,12 +15,26 @@ class TerrainSamplerTest {
     }
 
     @Test
-    void reliefScalesInverselyWithGravityWithinClamp() {
-        assertEquals(60, TerrainSampler.reliefFor(1.0), 1e-9);
-        assertEquals(60 / 0.3794, of("Mars").amplitude(), 1.5);
-        assertEquals(TerrainSampler.MAX_RELIEF, of("Moon").amplitude(), 1e-9);
-        assertEquals(TerrainSampler.MIN_RELIEF, TerrainSampler.reliefFor(5.0), 1e-9);
-        assertTrue(of("Mars").amplitude() > of("Earth").amplitude());
+    void reliefFollowsSupportableHeightAndCompressesOnlyPastTheBudget() {
+        // σ/(ρg): Everest at 1 g, capped at Olympus Mons and at 8.5 % of the radius.
+        assertEquals(8848, TerrainSampler.reliefPeakMetres(1.0, 6.4e6), 1e-9);
+        assertEquals(TerrainSampler.OLYMPUS_M, TerrainSampler.reliefPeakMetres(0.1, 6.4e6), 1e-9);
+        assertEquals(0.085 * 11e3, TerrainSampler.reliefPeakMetres(0.0006, 11e3), 1e-9);
+        // An Earth-size 1 g world fits the budget: true scale (885 blocks at 10 m/block).
+        TerrainSampler terran = new TerrainSampler(BodyType.TERRAN, 1, 1.0, SurfaceGrid.of(6.371e6), false, false);
+        assertEquals(1.0, terran.verticalScale(), 1e-9);
+        assertEquals(8848 / SurfaceGrid.of(6.371e6).metresPerBlock(), terran.peakBlocks(), 1e-6);
+        // Mars and the Moon exceed it and are compressed by one factor, honestly reported.
+        TerrainSampler mars = of("Mars"), moon = of("Moon");
+        assertEquals(TerrainSampler.PEAK_BUDGET, mars.peakBlocks(), 1e-9);
+        assertEquals(TerrainSampler.PEAK_BUDGET / (21_900 / mars.grid().metresPerBlock()), mars.verticalScale(), 1e-9);
+        assertTrue(moon.verticalScale() < 0.15 && mars.verticalScale() < 0.3, moon.verticalScale() + " " + mars.verticalScale());
+        // Heavier worlds stay lower; mountain ranges widen with their height.
+        TerrainSampler heavy = new TerrainSampler(BodyType.TERRAN, 1, 3.0, SurfaceGrid.of(9e6), false, false);
+        assertTrue(heavy.peakBlocks() < terran.peakBlocks());
+        assertTrue(heavy.featureScale() < terran.featureScale());
+        assertEquals(TerrainSampler.PEAK_CAP, TerrainSampler.softCap(1e9, TerrainSampler.PEAK_KNEE, TerrainSampler.PEAK_CAP), 1e-6);
+        assertEquals(500, TerrainSampler.softCap(500, TerrainSampler.PEAK_KNEE, TerrainSampler.PEAK_CAP), 1e-12);
     }
 
     @Test
@@ -31,6 +45,7 @@ class TerrainSamplerTest {
             int h = a.height(x, z);
             assertEquals(h, b.height(x, z));
             assertTrue(h > TerrainSampler.MIN_Y && h < TerrainSampler.MAX_Y, "h=" + h);
+            assertTrue(h <= TerrainSampler.SEA_LEVEL + TerrainSampler.PEAK_CAP && h >= TerrainSampler.SEA_LEVEL - TerrainSampler.DEPTH_CAP - 1, "h=" + h);
         }
     }
 

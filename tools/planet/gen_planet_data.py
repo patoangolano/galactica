@@ -85,6 +85,8 @@ for t in TYPES:
             "temperature": TEMPERATURE.get(t, 0.8),
         })
 
+# Y -512..1279 (112 sections). Must match TerrainSampler.MIN_Y/MAX_Y; the top stays below the entry rows
+# (TransferAltitude.ENTRY_Y 1500 minus the 64-block arrival band and the 100-block touchdown margin).
 write(os.path.join(DATA, "dimension_type/surface.json"), {
     "ambient_light": 0.0,
     "attributes": {
@@ -101,10 +103,10 @@ write(os.path.join(DATA, "dimension_type/surface.json"), {
     "has_ceiling": False,
     "has_ender_dragon_fight": False,
     "has_skylight": True,
-    "height": 768,
+    "height": 1792,
     "infiniburn": "#minecraft:infiniburn_overworld",
-    "logical_height": 768,
-    "min_y": -256,
+    "logical_height": 1792,
+    "min_y": -512,
     "monster_spawn_block_light_limit": 0,
     "monster_spawn_light_level": 0,
     "skybox": "overworld",

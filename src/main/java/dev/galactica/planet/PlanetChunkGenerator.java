@@ -18,6 +18,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.PalettedContainer;
+import net.minecraft.world.level.chunk.Strategy;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.blending.Blender;
@@ -116,6 +119,9 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
         }
     }
 
+    /** Block-state strategy for whole sections built as one value (the deep crust): no per-block writes. */
+    private static final Strategy<BlockState> BLOCK_STRATEGY = Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY);
+
     private static ChunkAccess fillTimed(ChunkAccess chunk, TerrainSampler t) {
         int bx = chunk.getPos().getMinBlockX(), bz = chunk.getPos().getMinBlockZ();
         // Heights with a one-column border, for slopes across chunk edges. Inner columns keep their
@@ -135,22 +141,70 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
             }
         }
 
+        // Columns first (layering and the 3D cliff band), so the deep crust every column shares can be
+        // written as whole single-valued sections.
+        TerrainSampler.Column[] cols = new TerrainSampler.Column[256];
+        int crustTop = Integer.MAX_VALUE; // every column is plain `under` material at and below this Y
+        TerrainSampler.Material under = null;
+        boolean sameUnder = true;
+        for (int z = 0; z < 16; z++) {
+            for (int x = 0; x < 16; x++) {
+                int i = (z + 1) * 18 + (x + 1), hc = h[i];
+                int slope = Math.max(Math.max(Math.abs(hc - h[i - 1]), Math.abs(hc - h[i + 1])),
+                        Math.max(Math.abs(hc - h[i - 18]), Math.abs(hc - h[i + 18])));
+                TerrainSampler.Column c = new TerrainSampler.Column();
+                t.column(bx + x, bz + z, hc, slope, c, macro[z * 16 + x]);
+                t.carve(bx + x, bz + z, c);
+                cols[z * 16 + x] = c;
+                int surface = c.bandLen > 0 ? Math.min(hc, c.bandLo) : hc;
+                crustTop = Math.min(crustTop, surface - c.topDepth - c.fillerDepth - 1);
+                if (under == null) under = c.under;
+                else if (under != c.under) sameUnder = false;
+            }
+        }
+
         Heightmap oceanFloor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR_WG);
         Heightmap surface = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE_WG);
         int minY = Math.max(chunk.getMinY(), TerrainSampler.MIN_Y), maxY = chunk.getMaxY();
+        // Whole sections of deep crust: above the thickest bedrock floor (3 blocks) and wholly at or below
+        // crustTop. Built as single-value containers: no per-block writes and almost no storage or network.
+        int solidFrom = Integer.MAX_VALUE, solidTo = Integer.MIN_VALUE; // inclusive Y range written whole
+        if (sameUnder && under != null) {
+            int firstSec = Math.floorDiv(minY + 4 + 15, 16), lastSec = Math.floorDiv(crustTop + 1, 16) - 1;
+            LevelChunkSection[] sections = chunk.getSections();
+            BlockState fill = state(under);
+            for (int sy = firstSec; sy <= lastSec; sy++) {
+                int si = chunk.getSectionIndexFromSectionY(sy);
+                if (si < 0 || si >= sections.length) continue;
+                LevelChunkSection old = sections[si];
+                LevelChunkSection whole = new LevelChunkSection(new PalettedContainer<>(fill, BLOCK_STRATEGY), old.getBiomes());
+                sections[si] = whole;
+                if (chunk.getSection(si) != whole) { // a chunk that hands out a copy: fall back to block writes
+                    sections[si] = old;
+                    break;
+                }
+                if (solidFrom == Integer.MAX_VALUE) solidFrom = sy * 16;
+                solidTo = sy * 16 + 15;
+            }
+        }
+
         LevelChunkSection[] acquired = new LevelChunkSection[chunk.getSectionsCount()];
-        TerrainSampler.Column c = new TerrainSampler.Column();
         try {
             for (int z = 0; z < 16; z++) {
                 for (int x = 0; x < 16; x++) {
-                    int i = (z + 1) * 18 + (x + 1), hc = h[i];
-                    int slope = Math.max(Math.max(Math.abs(hc - h[i - 1]), Math.abs(hc - h[i + 1])),
-                            Math.max(Math.abs(hc - h[i - 18]), Math.abs(hc - h[i + 18])));
+                    TerrainSampler.Column c = cols[z * 16 + x];
                     int wx = bx + x, wz = bz + z;
-                    t.column(wx, wz, hc, slope, c, macro[z * 16 + x]);
-                    int top = Math.min(maxY, Math.max(hc, c.fluid != TerrainSampler.Material.AIR ? c.fluidTop : hc));
-                    BlockState topSolid = null, topAny = null;
+                    int fluidTop = c.fluid != TerrainSampler.Material.AIR ? c.fluidTop : c.height;
+                    int top = Math.min(maxY, Math.max(Math.max(c.solidTop, c.height), fluidTop));
+                    int groundY = Integer.MIN_VALUE, anyY = Integer.MIN_VALUE;
+                    BlockState groundState = null, anyState = null;
                     for (int y = minY; y <= top; y++) {
+                        if (y == solidFrom) {
+                            y = solidTo; // whole crust sections, already written
+                            groundY = solidTo;
+                            groundState = state(c.under);
+                            continue;
+                        }
                         TerrainSampler.Material m = t.materialAt(c, y, wx, wz);
                         if (m == TerrainSampler.Material.AIR) continue;
                         BlockState s = state(m);
@@ -162,15 +216,19 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
                             acquired[si] = sec;
                         }
                         sec.setBlockState(x, y & 15, z, s, false);
-                        if (y == Math.min(hc, maxY)) topSolid = s;
-                        topAny = s;
+                        if (y <= c.solidTop) {
+                            groundY = y;
+                            groundState = s;
+                        }
+                        anyY = y;
+                        anyState = s;
                     }
                     // Heightmaps only ever rise, so updating with the topmost blocks is enough.
-                    if (topSolid != null) {
-                        oceanFloor.update(x, Math.min(hc, maxY), z, topSolid);
-                        surface.update(x, Math.min(hc, maxY), z, topSolid);
+                    if (groundState != null) {
+                        oceanFloor.update(x, groundY, z, groundState);
+                        surface.update(x, groundY, z, groundState);
                     }
-                    if (topAny != null && top > hc) surface.update(x, top, z, topAny);
+                    if (anyState != null && anyY > groundY) surface.update(x, anyY, z, anyState);
                 }
             }
         } finally {
@@ -182,7 +240,7 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
     @Override
     public int getBaseHeight(int x, int z, Heightmap.Types type, LevelHeightAccessor level, RandomState randomState) {
         TerrainSampler t = PlanetSlots.terrain(slot);
-        int h = t.height(x, z);
+        int h = t.solidTop(x, z);
         boolean fluidCounts = type != Heightmap.Types.OCEAN_FLOOR && type != Heightmap.Types.OCEAN_FLOOR_WG;
         if (fluidCounts && t.hasSea()) h = Math.max(h, TerrainSampler.SEA_LEVEL);
         return Math.min(h, level.getMaxY()) + 1; // first free Y above the column, as FlatLevelSource answers
@@ -193,6 +251,7 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
         TerrainSampler t = PlanetSlots.terrain(slot);
         TerrainSampler.Column c = new TerrainSampler.Column();
         t.column(x, z, t.height(x, z), 0, c);
+        t.carve(x, z, c);
         BlockState[] col = new BlockState[level.getHeight()];
         for (int i = 0; i < col.length; i++) col[i] = state(t.materialAt(c, level.getMinY() + i, x, z));
         return new NoiseColumn(level.getMinY(), col);
@@ -219,7 +278,7 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
 
     @Override
     public int getSpawnHeight(LevelHeightAccessor level) {
-        return Math.max(PlanetSlots.terrain(slot).height(0, 0), TerrainSampler.SEA_LEVEL) + 1;
+        return Math.max(PlanetSlots.terrain(slot).solidTop(0, 0), TerrainSampler.SEA_LEVEL) + 1;
     }
 
     @Override

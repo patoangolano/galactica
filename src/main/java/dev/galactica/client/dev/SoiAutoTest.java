@@ -293,7 +293,7 @@ public final class SoiAutoTest {
                     return true;
                 }
                 stopShip(mc, ship);
-                moveShip(mc, ship, dev.galactica.planet.PlanetEntry.EXIT_Y - 10);
+                moveShip(mc, ship, dev.galactica.planet.PlanetEntry.exitY(mc.level) - 10);
                 setAttitude(mc, ship, new Quaternionf().rotationX((float) Math.toRadians(-90)));
                 Galactica.LOG.info("[autotest] take-off: nose up at y={}", String.format(Locale.ROOT, "%.0f", ship.getY()));
             }

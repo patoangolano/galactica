@@ -60,7 +60,7 @@ public final class FarTerrainRenderer {
     static final double BAKE_Y = 300;
     private static final int RINGS = 24, SEGMENTS = 96;
     /** Highest relief that can show over the horizon, blocks. */
-    private static final double TALLEST = 250;
+    private static final double TALLEST = TerrainSampler.PEAK_CAP;
     /** Fastest rebuild rate while moving: 10 per second. */
     static final long MIN_REBUILD_NANOS = 100_000_000L;
 
@@ -205,7 +205,7 @@ public final class FarTerrainRenderer {
             outer[k] = Math.min(rMax, edge - 0.5 * fadeBand);
             if (outer[k] > inner[k]) {
                 use[k] = true;
-                quadsTotal += RINGS * SEGMENTS;
+                quadsTotal += 2 * RINGS * SEGMENTS; // each ground quad goes out as two triangles (emitTriangles)
                 covered = Math.max(covered, outer[k]);
             }
             prevOpaque = Math.max(prevOpaque, edge - fadeBand);
@@ -222,36 +222,62 @@ public final class FarTerrainRenderer {
             float[][] q = new float[4][5];
             int[] qc = new int[4];
             double[] in = new double[3], tr = new double[3];
+            double[] lattice = new double[(RINGS + 1) * SEGMENTS * 5];
+            float[] uv = new float[(RINGS + 1) * SEGMENTS];
             // Ground, coarse to fine.
             for (int k = SurfaceClipmap.LEVELS - 1; k >= 0; k--) {
                 if (!use[k]) continue;
                 SurfaceClipmap.Level l = clip.level(k);
                 int emitted = 0;
+                // Directions on a (RINGS + 1) × SEGMENTS lattice, the elevation angle clamped to its running maximum
+                // outward along each azimuth: ground hidden behind a nearer ridge folds into it instead of turning
+                // the quad over (with 1 000-block mountains, folded quads left triangular holes in the skirt).
+                for (int ri = 0; ri <= RINGS; ri++) {
+                    double r = ring(inner[k], outer[k], ri);
+                    for (int si = 0; si < SEGMENTS; si++) {
+                        int o = (ri * SEGMENTS + si) * 5;
+                        double phi = 2 * Math.PI * si / SEGMENTS;
+                        double dx = r * Math.cos(phi), dz = r * Math.sin(phi);
+                        double lx = l.centreX() + grid.wrapX(cam.x + dx - l.centreX()), lz = cam.z + dz;
+                        double h = l.height(lx, lz);
+                        if (Double.isNaN(h)) {
+                            lattice[o] = Double.NaN;
+                            continue;
+                        }
+                        double y = h + 1 - curvatureDrop(r, rb) - cam.y;
+                        double slope = y / r; // tan(elevation)
+                        if (ri > 0) {
+                            double prev = lattice[((ri - 1) * SEGMENTS + si) * 5 + 4];
+                            if (!Double.isNaN(prev) && slope < prev) slope = prev;
+                        }
+                        double n = Math.sqrt(1 + slope * slope);
+                        lattice[o] = Math.cos(phi) / n;
+                        lattice[o + 1] = slope / n;
+                        lattice[o + 2] = Math.sin(phi) / n;
+                        lattice[o + 3] = l.u(lx);
+                        lattice[o + 4] = slope;
+                        uv[ri * SEGMENTS + si] = (float) l.v(lz);
+                    }
+                }
                 for (int ri = 0; ri < RINGS; ri++) {
-                    double ra = ring(inner[k], outer[k], ri), rc = ring(inner[k], outer[k], ri + 1);
                     for (int si = 0; si < SEGMENTS; si++) {
                         boolean ok = true;
                         for (int c = 0; c < 4 && ok; c++) {
-                            double r = (c == 0 || c == 3) ? ra : rc;
-                            double phi = 2 * Math.PI * (si + ((c == 2 || c == 3) ? 1 : 0)) / SEGMENTS;
-                            double dx = r * Math.cos(phi), dz = r * Math.sin(phi);
-                            double lx = l.centreX() + grid.wrapX(cam.x + dx - l.centreX()), lz = cam.z + dz;
-                            double h = l.height(lx, lz);
-                            if (Double.isNaN(h)) { ok = false; break; }
-                            double y = h + 1 - curvatureDrop(r, rb) - cam.y;
-                            double n = Math.sqrt(dx * dx + y * y + dz * dz);
-                            double vx = dx / n, vy = y / n, vz = dz / n;
-                            q[c][0] = (float) (vx * R_SHELL);
-                            q[c][1] = (float) (vy * R_SHELL);
-                            q[c][2] = (float) (vz * R_SHELL);
-                            q[c][3] = (float) l.u(lx);
-                            q[c][4] = (float) l.v(lz);
+                            int rr = (c == 0 || c == 3) ? ri : ri + 1;
+                            int ss = (si + ((c == 2 || c == 3) ? 1 : 0)) % SEGMENTS;
+                            int o = (rr * SEGMENTS + ss) * 5;
+                            if (Double.isNaN(lattice[o])) { ok = false; break; }
+                            q[c][0] = (float) (lattice[o] * R_SHELL);
+                            q[c][1] = (float) (lattice[o + 1] * R_SHELL);
+                            q[c][2] = (float) (lattice[o + 2] * R_SHELL);
+                            q[c][3] = (float) lattice[o + 3];
+                            q[c][4] = uv[rr * SEGMENTS + ss];
                             // Lit but unattenuated: the airlight layer over it applies the path's transmittance.
                             qc[c] = argb(enc(sunT[0] * lambert), enc(sunT[1] * lambert), enc(sunT[2] * lambert), alpha);
                         }
                         if (!ok) continue;
-                        emitInward(b, q, qc);
-                        emitted++;
+                        emitTriangles(b, q, qc);
+                        emitted += 2;
                     }
                 }
                 if (emitted > 0) PARTS.add(new Part(vertex, emitted, l.texture()));
@@ -325,6 +351,27 @@ public final class FarTerrainRenderer {
     }
 
     /** END_SKY culls back faces and the camera sits at every shell's centre: wind each quad inward. */
+    private static final float[][] TRI = new float[4][];
+    private static final int[] TRI_ARGB = new int[4];
+
+    /**
+     * A ground quad as two triangles (each a quad with its last vertex repeated), each turned to face the camera on
+     * its own: a quad of tall terrain can be concave on screen, and one winding for the whole quad then culled one
+     * of its triangles (the triangular holes in the skirt). Render thread only.
+     */
+    static void emitTriangles(BufferBuilder b, float[][] v, int[] argb) {
+        int[][] tris = {{0, 1, 2}, {0, 2, 3}};
+        for (int[] t : tris) {
+            for (int k = 0; k < 3; k++) {
+                TRI[k] = v[t[k]];
+                TRI_ARGB[k] = argb[t[k]];
+            }
+            TRI[3] = v[t[2]];
+            TRI_ARGB[3] = argb[t[2]];
+            emitInward(b, TRI, TRI_ARGB);
+        }
+    }
+
     static void emitInward(BufferBuilder b, float[][] v, int[] argb) {
         float ax = v[1][0] - v[0][0], ay = v[1][1] - v[0][1], az = v[1][2] - v[0][2];
         float bx = v[2][0] - v[0][0], by = v[2][1] - v[0][1], bz = v[2][2] - v[0][2];

@@ -62,7 +62,8 @@ public final class PlanetSlots extends SavedData {
     }
 
     public static final Codec<PlanetSlots> CODEC = RecordCodecBuilder.create(i -> i.group(
-            Entry.CODEC.listOf().fieldOf("slots").forGetter(d -> d.entries)
+            Entry.CODEC.listOf().fieldOf("slots").forGetter(d -> d.entries),
+            Codec.INT.optionalFieldOf("terrain_version", 1).forGetter(d -> d.terrainVersion)
     ).apply(i, PlanetSlots::new));
 
     // A non-null DataFixTypes is required: SavedDataStorage.readTagFromDisk calls update() on it.
@@ -73,15 +74,19 @@ public final class PlanetSlots extends SavedData {
     private static final TerrainSampler PLACEHOLDER = TerrainSampler.placeholder();
 
     private final List<Entry> entries;
+    /** {@link TerrainSampler#GENERATION} the slots' saved chunks were generated with. */
+    private int terrainVersion;
 
     public PlanetSlots() {
         entries = new ArrayList<>(COUNT);
         for (int k = 0; k < COUNT; k++) entries.add(Entry.FREE);
+        terrainVersion = TerrainSampler.GENERATION;
     }
 
-    private PlanetSlots(List<Entry> loaded) {
+    private PlanetSlots(List<Entry> loaded, int terrainVersion) {
         this();
         for (int k = 0; k < Math.min(COUNT, loaded.size()); k++) entries.set(k, loaded.get(k));
+        this.terrainVersion = terrainVersion;
     }
 
     public static PlanetSlots get(MinecraftServer server) {
@@ -160,6 +165,14 @@ public final class PlanetSlots extends SavedData {
         for (int k = 0; k < COUNT; k++) RUNTIME.set(k, null);
         PlanetSlots data = get(server);
         Path root = server.getWorldPath(LevelResource.ROOT);
+        if (data.terrainVersion != TerrainSampler.GENERATION) {
+            // Chunks saved by another generator (the old 768-block slots) would show the old terrain over a void
+            // and seams against new chunks: drop every slot's chunks, keep which body owns which slot.
+            for (int k = 0; k < COUNT; k++) deleteTree(DimensionType.getStorageFolder(key(k), root));
+            Galactica.LOG.info("Planet terrain generation {} -> {}: regenerating every landing slot", data.terrainVersion, TerrainSampler.GENERATION);
+            data.terrainVersion = TerrainSampler.GENERATION;
+            data.setDirty();
+        }
         for (int k : SlotPolicy.evictionPlan(data.entries, COUNT / 2, s -> false)) {
             deleteTree(DimensionType.getStorageFolder(key(k), root));
             data.entries.set(k, Entry.FREE);
