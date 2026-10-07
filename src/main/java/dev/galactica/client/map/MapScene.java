@@ -39,7 +39,7 @@ final class MapScene {
     /** The system around the focus is drawn when the camera is closer than this to the focus (pc). */
     static final double SYSTEM_VIEW_PC = 0.06;
     /** Points per orbit line. */
-    private static final int ORBIT_POINTS = 128;
+    private static final int ORBIT_POINTS = 129; // odd: the middle sample is the body itself
 
     /** One object on screen this frame. */
     record Drawn(MapObject object, double x, double y, double depth, double radiusPx) {}
@@ -221,8 +221,8 @@ final class MapScene {
 
     /**
      * The orbit of {@code b} about {@code centre}, from its elements, projected; skipped while smaller than a few pixels.
-     * Sampled from the body's current position round one period, so the line always runs through the body (a fixed
-     * sampling cut corners next to it at close zoom).
+     * Sampled round one period from the body's current position, densest next to it, so the line runs through the
+     * body (a fixed sampling cut corners there at close zoom).
      */
     private void orbitLine(MapCamera cam, Star s, GalacticPos centre, Body b, double time, int argb) {
         if (b.orbit().apoapsis() * cam.pixelsPerMetreAtFocus() < 4) return;
@@ -230,7 +230,10 @@ final class MapScene {
         double[] buf = new double[3], g = new double[3];
         double period = b.orbit().periodSeconds();
         for (int i = 0; i < ORBIT_POINTS; i++) {
-            b.orbit().positionAt(time + period * i / (ORBIT_POINTS - 1), buf);
+            // Half a period either side of the body, spaced quadratically: dense where the body is (a chord there would
+            // visibly miss it at close zoom), sparse on the far side; the two ends meet opposite it.
+            double x = -1 + 2.0 * i / (ORBIT_POINTS - 1);
+            b.orbit().positionAt(time + period * 0.5 * Math.signum(x) * x * x, buf);
             SystemFrame.toGalactic(s, buf[0], buf[1], buf[2], g);
             pts[i * 3] = g[0];
             pts[i * 3 + 1] = g[1];
