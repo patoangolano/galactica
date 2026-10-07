@@ -36,6 +36,36 @@ class ShipLightingTest {
     }
 
     @Test
+    void exposedHullReadsAgainstSpace() {
+        double panel = 75 / 255.0, black = 30 / 255.0; // the hull's main grey panel and its black panels
+        double sunlit = exposedGrey(panel, shade(1, 1)), night = exposedGrey(panel, shade(-1, 1));
+        assertTrue(sunlit > 0.65 && sunlit < 0.8, "sunlit side is bright but not clipped: " + sunlit);
+        assertTrue(night > 0.1 && night < 0.2, "night side is dark grey, still a silhouette: " + night);
+        assertTrue(exposedGrey(black, shade(1, 1)) > 0.25, "black panels still read in sunlight");
+        assertTrue(exposedGrey(1, 1) < 1, "the shoulder never clips white");
+        for (double m = 0; m < 3; m += 0.01) {
+            assertTrue(exposedGrey(1, m + 0.01) > exposedGrey(1, m), "exposure is monotonic at " + m);
+        }
+        assertTrue(shade(1, 1) <= 1 && shade(1, 0) <= 1, "the vertex colour carries shade, which fits in 8 bits");
+    }
+
+    @Test
+    void hullShaderMatchesTheJavaConstants() throws java.io.IOException {
+        String fsh;
+        try (var in = ShipLightingTest.class.getResourceAsStream("/assets/galactica/shaders/core/ship_hull.fsh")) {
+            assertNotNull(in, "ship_hull.fsh on the classpath");
+            fsh = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        // The #ifndef fallback is only for the offline shader checker; it must never drift from the injected define.
+        var gain = java.util.regex.Pattern.compile("#define\\s+HULL_GAIN\\s+([0-9.]+)").matcher(fsh);
+        assertTrue(gain.find(), "fallback HULL_GAIN define");
+        assertEquals(HULL_GAIN, Float.parseFloat(gain.group(1)), 1e-6);
+        var shoulder = java.util.regex.Pattern.compile("const\\s+float\\s+SHOULDER\\s*=\\s*([0-9.]+)").matcher(fsh);
+        assertTrue(shoulder.find(), "SHOULDER constant");
+        assertEquals(SHOULDER, Double.parseDouble(shoulder.group(1)), 1e-9);
+    }
+
+    @Test
     void tintIsNormalisedAndHalfWayToWhite() {
         float[] out = new float[3];
         tint(new float[] {1F, 0.5F, 0.2F}, out);

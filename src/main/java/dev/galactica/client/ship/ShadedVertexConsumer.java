@@ -8,7 +8,9 @@ import org.joml.Vector3fc;
  * Wraps the hull's vertex sink and replaces each vertex colour with the face's brightness under the host star:
  * {@link ShipLighting#shade} of the world-frame normal (ModelPart transforms normals by the pose, and entity poses
  * are world-oriented with the view rotation kept in the model-view matrix) against the direction to the star,
- * times the star's tint. Paired with {@link ShipRenderTypes#HULL_LIT}, whose shader leaves the colour untouched.
+ * times the star's tint (0 … 1, so it fits the 8-bit vertex colour). Paired with
+ * {@link ShipRenderTypes#HULL_LIT}, whose shader multiplies the gain back in (with a highlight shoulder) and uses no
+ * other light.
  */
 final class ShadedVertexConsumer implements VertexConsumer {
     private final VertexConsumer out;

@@ -72,11 +72,8 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
         state.gimbalPitch = ship.gimbalPitch(partialTicks);
         state.rcs = ship.rcsMask();
         ShipEnvironment.sample(ship, state);
-        if (state.starLit) {
-            // For the lightmap routes (shader pack, GeckoLib): bright inside a system, dim but visible far from stars.
-            int level = Math.round(5F + 10F * state.direct);
-            state.lightCoords = level << 20 | level << 4;
-        }
+        // For the lightmap routes (shader pack, GeckoLib): never the zero lightmap of space.
+        if (state.starLit) state.lightCoords = ShipEnvironment.lightCoords(state.direct);
     }
 
     @Override

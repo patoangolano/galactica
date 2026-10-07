@@ -20,12 +20,36 @@ package dev.galactica.ship;
  *       term falls from {@value #MIN_DIRECT} to 0, and the direct term itself fades out over the outer fifth of the
  *       system radius ({@link #systemFade}), so crossing into interstellar space never steps the brightness.</li>
  *   <li><b>Colour.</b> The star's blackbody colour, half-way to white (the eye adapts to the illuminant).</li>
+ *   <li><b>Exposure.</b> The hull shader multiplies {@link #shade} by {@link #HULL_GAIN} and rolls highlights off
+ *       with a soft shoulder, metering on the sunlit side as a camera would.</li>
  * </ul>
  */
 public final class ShipLighting {
     private ShipLighting() {}
 
-    public static final double AMBIENT = 0.16;
+    public static final double AMBIENT = 0.18;
+    /**
+     * Exposure gain the hull shader ({@code core/ship_hull.fsh}, define {@code HULL_GAIN}) applies on top of
+     * {@link #shade}: the camera meters on the sunlit side, so a face square to the star shows its painted albedo
+     * (a dark grey, about 0.3) brightened to about 70 % of white, and the night side at the ambient floor
+     * stays a readable dark grey against black space. The vertex colour carries {@link #shade} itself (at most 1,
+     * so it fits in 8 bits); the gain is applied per fragment.
+     */
+    public static final float HULL_GAIN = 2.4F;
+    /** Where the hull shader's highlight shoulder starts (its {@code SHOULDER}), on the brightest channel. */
+    public static final double SHOULDER = 0.8;
+
+    /**
+     * Reference for the hull fragment shader: one channel of painted {@code albedo} lit by {@code shade} (the vertex
+     * colour), exposed by {@link #HULL_GAIN} and rolled off above {@link #SHOULDER}. A grey channel is its own
+     * brightest, so the shader's per-colour scaling reduces to this for greys.
+     */
+    public static double exposedGrey(double albedo, double shade) {
+        double m = albedo * HULL_GAIN * shade;
+        if (m <= SHOULDER) return m;
+        double k = 1.0 - SHOULDER;
+        return SHOULDER + k * (1.0 - Math.exp(-(m - SHOULDER) / k));
+    }
     public static final double INTERSTELLAR_AMBIENT = 0.30;
     public static final double MIN_DIRECT = 0.25;
     public static final double STOPS_PER_DECADE = 1.0;

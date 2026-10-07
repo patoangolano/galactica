@@ -1,5 +1,7 @@
 package dev.galactica.mixin.client.ship;
 
+import dev.galactica.client.ship.ShipCamera;
+import dev.galactica.client.ship.StarshipRenderer;
 import dev.galactica.ship.Starship;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -20,8 +22,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Gives the pilot's camera the ship's full attitude, roll included. Vanilla's {@code setRotation} hard-codes
  * roll to 0; this runs at the tail of {@code alignWithEntity}, inside {@code Camera.update} and before
  * {@code prepareCullFrustum}, so the view matrix, frustum and first-person hand all see the same rotation.
- * In third person the camera chases from behind and above the hull (or looks back at the nose in the
- * mirrored view); in first person the eye rides the rotated seat, so it stays in the canopy when rolled.
+ * In third person the camera chases from behind and above the hull, tilted down onto it (or looks back at the
+ * nose in the mirrored view, with the same tilt and lift in the camera's own frame, so both views look down onto the
+ * hull), framed by {@link ShipCamera}; in first person the eye rides the rotated seat, so it stays in the canopy when rolled.
  */
 @Mixin(Camera.class)
 public abstract class CameraShipMixin {
@@ -44,19 +47,25 @@ public abstract class CameraShipMixin {
 
     @Inject(method = "alignWithEntity(F)V", at = @At("TAIL"))
     private void galactica$shipAttitude(float partialTicks, CallbackInfo ci) {
-        if (this.entity == null || !(this.entity.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != this.entity) return;
+        if (this.entity == null || !(this.entity.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != this.entity) {
+            ShipCamera.clearOrbit(); // a screenshot orbit never outlives the flight it was set for
+            return;
+        }
+        if (!this.detached) ShipCamera.clearOrbit();
         boolean mirrored = this.detached && Minecraft.getInstance().options.getCameraType().isMirrored();
         // Ship forward is +Z, the camera looks down −Z: append the same half-turn vanilla folds into "π − yRot".
         // The mirrored (front) view skips it and looks back at the nose, as vanilla turns that view by 180°.
         ship.getAttitude(partialTicks, this.rotation);
         if (!mirrored) this.rotation.rotateY((float) Math.PI);
+        if (this.detached) ShipCamera.aim(this.rotation);
         FORWARDS.rotate(this.rotation, this.forwards);
         UP.rotate(this.rotation, this.up);
         LEFT.rotate(this.rotation, this.left);
         this.matrixPropertiesDirty |= 3;
         if (this.detached) {
-            this.setPosition(ship.getPosition(partialTicks).add(0.0, 0.75, 0.0));
-            this.move(-9.0F, 2.0F, 0.0F);
+            // Aimed at the hull centre (StarshipRenderer.PIVOT_BLOCKS above the entity origin), framed by ShipCamera.
+            this.setPosition(ship.getPosition(partialTicks).add(0.0, StarshipRenderer.PIVOT_BLOCKS, 0.0));
+            this.move(-ShipCamera.distance(), ShipCamera.lift(), 0.0F);
         } else {
             this.setPosition(ship.pilotEyePosition(this.entity, partialTicks, Mth.lerp(partialTicks, this.eyeHeightOld, this.eyeHeight)));
         }
