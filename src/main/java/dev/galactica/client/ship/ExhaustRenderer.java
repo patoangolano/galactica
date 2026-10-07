@@ -23,14 +23,18 @@ import org.joml.Vector3f;
 final class ExhaustRenderer {
     private ExhaustRenderer() {}
 
-    private static final float PX = 1F / 16F;
+    /** Blocks per design unit of gen_starship.py's part table. */
+    private static final float PX = dev.galactica.ship.ShipDimensions.PX;
+    private static final float SCALE = dev.galactica.ship.ShipDimensions.SCALE;
     /** Nozzle throat pivots (gimbal points) and exit plane, from the part table of gen_starship.py. */
     private static final float POD_X = 14F * PX, POD_Y = -0.5F * PX, THROAT_Z = -35F * PX, EXIT_FROM_THROAT = 6.8F * PX;
-    /** Nozzle exit radius: the core plate's apothem, 4.4 px. */
+    /** Nozzle exit radius: the core plate's apothem, 4.4 design units. */
     static final float EXIT_RADIUS = 4.4F * PX;
     /** Largest end-on disc, blocks: the integrated column is brightest within a few nozzle radii of the axis. */
-    private static final float MAX_DISC_HALF = 1.5F;
-    private static final float RCS_RADIUS = 0.06F, RCS_LENGTH = 0.7F, RCS_HALF_ANGLE_TAN = 0.32F;
+    private static final float MAX_DISC_HALF = 1.5F * SCALE;
+    /** RCS puff: jet radius and visible length grow with the hull (the thruster blocks are SCALE times larger). */
+    static final float RCS_RADIUS = 0.06F * SCALE, RCS_LENGTH = 0.7F * SCALE;
+    private static final float RCS_HALF_ANGLE_TAN = 0.32F;
     /** Render-thread scratch (the custom-geometry callbacks run one at a time on it). */
     private static final Matrix3f GIMBAL = new Matrix3f();
     private static final float[] WEIGHTS = new float[3];

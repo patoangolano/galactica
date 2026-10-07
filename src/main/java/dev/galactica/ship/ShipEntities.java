@@ -18,10 +18,10 @@ public final class ShipEntities {
     private ShipEntities() {}
 
     public static final ResourceKey<EntityType<?>> SHIP_KEY = ResourceKey.create(Registries.ENTITY_TYPE, Galactica.id("ship"));
-    /** 3 × 2 block box (spec 3 × 2 × 5; vanilla boxes are square in XZ, so the 5-block length only shows in the model). */
+    /** Square collision box around fuselage and pods ({@link ShipDimensions#BOX_WIDTH}; the wings and length only show in the model). */
     public static final EntityType<Starship> SHIP = Registry.register(BuiltInRegistries.ENTITY_TYPE, SHIP_KEY,
             EntityType.Builder.<Starship>of(Starship::new, MobCategory.MISC)
-                    .noLootTable().sized(3.0F, 2.0F).eyeHeight(0.75F).clientTrackingRange(10).build(SHIP_KEY));
+                    .noLootTable().sized(ShipDimensions.BOX_WIDTH, ShipDimensions.BOX_HEIGHT).eyeHeight(ShipDimensions.PIVOT).clientTrackingRange(10).build(SHIP_KEY));
 
     public static final ResourceKey<Item> SHIP_BEACON_KEY = ResourceKey.create(Registries.ITEM, Galactica.id("ship_beacon"));
     public static final Item SHIP_BEACON = Registry.register(BuiltInRegistries.ITEM, SHIP_BEACON_KEY,

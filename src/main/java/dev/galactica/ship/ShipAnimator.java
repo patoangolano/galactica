@@ -18,7 +18,7 @@ public final class ShipAnimator {
     /** Full travel times, seconds (gear: typical light-jet retraction, 1–2 s). */
     public static final float GEAR_SECONDS = 1.5F, CANOPY_SECONDS = 1.2F;
     /** Gear comes down below this height above ground (blocks) and goes up above {@link #GEAR_UP_HEIGHT}. */
-    public static final double GEAR_DOWN_HEIGHT = 6.0, GEAR_UP_HEIGHT = 9.0;
+    public static final double GEAR_DOWN_HEIGHT = 8.0, GEAR_UP_HEIGHT = 12.0;
     /**
      * Main-engine gimbal range. Real gimballed engines swing ±5–8.5° (RS-25: ±10.5° pitch, ±8.5° yaw; Merlin 1D:
      * ±5°); the pods use ±8°.
@@ -104,7 +104,8 @@ public final class ShipAnimator {
      */
     public record RcsJet(int command, float x, float y, float z, float dx, float dy, float dz) {}
 
-    private static final float PX = 1F / 16F;
+    /** Blocks per design unit of the part table (the model is exported at {@link ShipDimensions#SCALE}). */
+    private static final float PX = ShipDimensions.PX;
 
     private static RcsJet jet(int command, float xPx, float yPx, float zPx, float dx, float dy, float dz) {
         return new RcsJet(command, xPx * PX, yPx * PX, zPx * PX, dx, dy, dz);

@@ -54,3 +54,9 @@ Loader API (Fabric) + Mixins pontuais no render do céu. O núcleo científico (
 ## Como testar
 - `./gradlew runAutotest`: abre o mundo `runs/client/saves/galactica_test`, executa o roteiro em `client/dev/AutoTest.java` e salva screenshots em `runs/client/screenshots/galactica_*.png`. Não usa mouse nem teclado.
 - `./gradlew test`: testes científicos.
+
+## Nave v4 (2026-10-06)
+- Kestrel em escala 2,5× (13,6 m de comprimento, 12,2 m de envergadura): o piloto senta dentro do cockpit, capacete no vidro. `ShipDimensions` concentra escala, pivô, assentos (tandem) e caixa 6 × 3,2; o atlas cresceu para 1024² (1 texel = 1/16 de bloco).
+- Interior do cockpit em primeira pessoa: painel, consoles, manche lateral, manete, vidro interno e display ao vivo (ADI, velocidade, corpo/altitude, H2, exótica, casco, modo), pintado na CPU e enviado no fim do tick.
+- Tripulantes giram com a atitude do casco; o olho do piloto gira junto com o assento (corrige a câmera fora do cockpit com a nave invertida).
+- Revisão: tripulação sentada num poço oco na fuselagem (quadril em SEAT_Y, capacete 0,13 bloco abaixo do vidro, espinhas do canopy por fora); sondas de colisão do casco além da caixa (`ShipHullProbes`, geradas); desembarque com `DismountHelper`; câmera de perseguição puxada pelo terreno; display com pipeline próprio sem neblina, bola ADI por frame, repintura só quando muda, acima da hotbar; `ShipHud` some no cockpit.

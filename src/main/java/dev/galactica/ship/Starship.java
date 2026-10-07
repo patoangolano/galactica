@@ -6,6 +6,7 @@ import dev.galactica.nav.GalacticPos;
 import dev.galactica.nav.NavServer;
 import dev.galactica.nav.NavState;
 import dev.galactica.science.Units;
+import net.minecraft.core.BlockPos;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -15,6 +16,7 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.util.ExtraCodecs;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
@@ -24,16 +26,21 @@ import net.minecraft.world.entity.InterpolationHandler;
 import net.minecraft.world.entity.LinearInterpolationHandler;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.vehicle.DismountHelper;
 import net.minecraft.world.entity.vehicle.VehicleEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.joml.Quaterniond;
 import org.joml.Quaternionf;
 import org.joml.Quaternionfc;
@@ -78,9 +85,9 @@ public class Starship extends VehicleEntity {
     /** Hull points per point of incoming damage: a ship survives ~20 unarmed punches, a creeper twice. */
     private static final float HULL_PER_DAMAGE = 5F;
     private static final float HULL_PER_IRON = 10F;
-    /** Seats in the body frame, blocks from the model pivot (0.75 above the entity origin). */
-    private static final Vector3fc PILOT_SEAT = new Vector3f(0F, -0.45F, 0.75F), PASSENGER_SEAT = new Vector3f(0F, -0.45F, -0.55F);
-    private static final double PIVOT = 0.75;
+    /** Seats in the body frame, blocks from the model pivot ({@link ShipDimensions}: tandem, both under the canopy). */
+    private static final Vector3fc PILOT_SEAT = ShipDimensions.PILOT_SEAT, PASSENGER_SEAT = ShipDimensions.PASSENGER_SEAT;
+    private static final double PIVOT = ShipDimensions.PIVOT;
     /** Dev autotest run: crew changes are logged. */
     private static final boolean AUTOTEST = Boolean.getBoolean("galactica.autotest");
 
@@ -275,7 +282,7 @@ public class Starship extends VehicleEntity {
         canopyO = canopy;
         gimbalYawO = gimbalYaw;
         gimbalPitchO = gimbalPitch;
-        gearDown = ShipAnimator.gearDown(gearDown, onGround(), heightAboveGround(12));
+        gearDown = ShipAnimator.gearDown(gearDown, onGround(), heightAboveGround(16));
         gear = ShipAnimator.approach(gear, gearDown ? 1F : 0F, (float) ShipFlightModel.TICK, ShipAnimator.GEAR_SECONDS);
         boolean open = ShipAnimator.canopyOpen(getPassengers().size());
         canopy = ShipAnimator.approach(canopy, open ? 1F : 0F, (float) ShipFlightModel.TICK, ShipAnimator.CANOPY_SECONDS);
@@ -343,7 +350,9 @@ public class Starship extends VehicleEntity {
         if (isLocalInstanceAuthoritative()) {
             if (level().isClientSide()) pilotStep();
             else coastStep();
+            Vec3 start = position();
             move(MoverType.SELF, getDeltaMovement());
+            resolveHullContact(start);
             if (onGround()) setDeltaMovement(getDeltaMovement().multiply(0.7, 1.0, 0.7)); // landing-skid friction
         }
         if (!level().isClientSide()) serverStep();
@@ -352,6 +361,93 @@ public class Starship extends VehicleEntity {
         // vanilla vehicle rules hand the accumulated fall distance to the crew on touchdown and kill them.
         resetFallDistance();
         for (Entity e : getPassengers()) e.resetFallDistance();
+    }
+
+    // ---------------------------------------------------------------- hull beyond the box
+
+    /**
+     * True if none of the hull's outer probe points ({@link ShipHullProbes}), at entity origin {@code origin} and
+     * attitude {@code q}, lies inside a block's collision shape. The vanilla box covers the fuselage and pods; the
+     * nose, wings, fins and tail reach up to 7 blocks out and are only held out of terrain by this test.
+     */
+    public static boolean hullClear(Level level, Vec3 origin, Quaternionfc q) {
+        Vector3f v = new Vector3f();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (float[] p : ShipHullProbes.POINTS) {
+            q.transform(v.set(p[0], p[1], p[2]));
+            double x = origin.x + v.x, y = origin.y + PIVOT + v.y, z = origin.z + v.z;
+            pos.set(Mth.floor(x), Mth.floor(y), Mth.floor(z));
+            BlockState state = level.getBlockState(pos);
+            if (state.isAir()) continue;
+            VoxelShape shape = state.getCollisionShape(level, pos);
+            if (shape.isEmpty()) continue;
+            double lx = x - pos.getX(), ly = y - pos.getY(), lz = z - pos.getZ();
+            for (AABB b : shape.toAabbs()) {
+                if (lx >= b.minX && lx < b.maxX && ly >= b.minY && ly < b.maxY && lz >= b.minZ && lz < b.maxZ) return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * After the box move, keeps the hull beyond the box out of terrain. If the probes ended up inside a block, the
+     * move is redone from {@code start} one axis at a time (vertical first, as vanilla resolves the box), keeping
+     * each axis that leaves the probes clear and zeroing the velocity along the others; a probe stopping a descent,
+     * or holding the hull sideways while it settles, counts as touching down (the ship rests on its wing or nose like
+     * on its gear). If the turn this tick is what
+     * pushed the hull into the ground, the turn is undone first; if even that does not free it (a block placed into
+     * a wing), the ship steps up by up to two blocks, and is otherwise left to the box alone so it never wedges.
+     */
+    private void resolveHullContact(Vec3 start) {
+        Level level = level();
+        Vec3 end = position();
+        if (hullClear(level, end, attitude)) return;
+        Vec3 base = start;
+        if (!hullClear(level, base, attitude)) {
+            if (hullClear(level, base, attitudeO)) {
+                attitude.set(attitudeO);
+                syncRotationFields();
+            } else {
+                Vec3 freed = null;
+                for (int i = 1; i <= 8 && freed == null; i++) {
+                    Vec3 c = base.add(0, 0.25 * i, 0);
+                    if (hullClear(level, c, attitude) && level.noCollision(this, getBoundingBox().move(c.subtract(end)))) freed = c;
+                }
+                if (freed == null) return;
+                base = freed;
+            }
+        }
+        Vec3 d = end.subtract(start), v = getDeltaMovement();
+        double vx = v.x, vy = v.y, vz = v.z;
+        boolean touchdown = false, scraped = false;
+        Vec3 p = base, t = p.add(0, d.y, 0);
+        if (hullClear(level, t, attitude)) p = t;
+        else {
+            touchdown = d.y < 0;
+            vy = 0;
+        }
+        t = p.add(d.x, 0, 0);
+        if (hullClear(level, t, attitude)) p = t;
+        else {
+            vx = 0;
+            scraped = true;
+        }
+        t = p.add(0, 0, d.z);
+        if (hullClear(level, t, attitude)) p = t;
+        else {
+            vz = 0;
+            scraped = true;
+        }
+        // A hull held sideways by a slope while settling (not climbing) rests on it too, so skid friction applies
+        // and it comes to rest instead of creeping down the face.
+        if (scraped && d.y <= 0) touchdown = true;
+        if (!level.noCollision(this, getBoundingBox().move(p.subtract(end)))) p = base;
+        setPos(p);
+        setDeltaMovement(vx, vy, vz);
+        if (touchdown) {
+            verticalCollision = true;
+            setOnGround(true);
+        }
     }
 
     @Override
@@ -556,11 +652,34 @@ public class Starship extends VehicleEntity {
         }
     }
 
+    /**
+     * Where a rider steps out, on the ship's level heading whatever its roll or pitch (a ship landed on its back still
+     * lets the crew out beside it, not under it), in order: port and starboard beside the cockpit (ahead of the wing
+     * roots, clear of the box), ahead of the nose, behind the tail. On a planet each spot must have a floor
+     * ({@link DismountHelper}, a block up or down); in space just room for the rider. Otherwise on top of the hull.
+     */
     @Override
     public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
-        // Step out beside the hull (port side), not into the cockpit glass.
-        Vector3f side = attitude.transform(new Vector3f(2.2F, 0F, 0F));
-        return new Vec3(getX() + side.x, getY() + Math.max(0, side.y), getZ() + side.z);
+        double yaw = Math.toRadians(getYRot());
+        double fx = -Math.sin(yaw), fz = Math.cos(yaw);
+        double side = ShipDimensions.BOX_WIDTH / 2.0 + 0.8, nose = ShipDimensions.HULL_REACH + 1.0;
+        double[][] spots = {{side, 1.0}, {-side, 1.0}, {0, nose}, {0, -nose}};
+        boolean space = level().dimension() == Galactica.SPACE;
+        for (double[] s : spots) {
+            // Body +X (port) is up × nose = (fz, 0, -fx) on the level heading.
+            double x = getX() + s[0] * fz + s[1] * fx, z = getZ() - s[0] * fx + s[1] * fz;
+            if (space) {
+                Vec3 at = new Vec3(x, getY(), z);
+                if (DismountHelper.canDismountTo(level(), at, passenger, Pose.STANDING)) return at;
+                continue;
+            }
+            BlockPos base = BlockPos.containing(x, getY(), z);
+            for (int dy : new int[] {0, 1, -1, 2, -2}) {
+                Vec3 at = DismountHelper.findSafeDismountLocation(passenger.getType(), level(), base.above(dy), true);
+                if (at != null) return at;
+            }
+        }
+        return super.getDismountLocationForPassenger(passenger);
     }
 
     @Override
@@ -649,13 +768,20 @@ public class Starship extends VehicleEntity {
     }
 
     /**
-     * The pilot's eye in world space: seat and eye height both rotate with the hull, so a rolled or inverted
-     * ship keeps the first-person view inside the canopy.
+     * A rider's eye in world space: the seat, and the eye's height above it (eye height less the attachment
+     * height), both rotate with the hull, so a rolled or inverted ship keeps the first-person view inside the canopy
+     * (the renderer turns the rider's body about the seat the same way).
      */
+    public Vec3 riderEyePosition(Entity rider, float partialTick, float eyeHeight) {
+        Vec3 attach = rider.getVehicleAttachmentPoint(this);
+        Vector3f seat = new Vector3f(getFirstPassenger() == rider ? PILOT_SEAT : PASSENGER_SEAT);
+        Vector3f eye = getAttitude(partialTick, new Quaternionf()).transform(seat.add((float) -attach.x, eyeHeight - (float) attach.y, (float) -attach.z));
+        return getPosition(partialTick).add(eye.x, PIVOT + eye.y, eye.z);
+    }
+
+    /** The pilot's eye in world space ({@link #riderEyePosition}). */
     public Vec3 pilotEyePosition(Entity pilot, float partialTick, float eyeHeight) {
-        Vector3f eye = getAttitude(partialTick, new Quaternionf()).transform(new Vector3f(PILOT_SEAT).add(0F, eyeHeight, 0F));
-        Vec3 attach = pilot.getVehicleAttachmentPoint(this);
-        return getPosition(partialTick).add(eye.x - attach.x, PIVOT + eye.y - attach.y, eye.z - attach.z);
+        return riderEyePosition(pilot, partialTick, eyeHeight);
     }
 
     // ---------------------------------------------------------------- damage

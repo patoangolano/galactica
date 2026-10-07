@@ -8,7 +8,7 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.network.chat.Component;
 
-/** Ship readout on the right edge for anyone aboard: mode, fuel, exotic range, hull, speed, spool. */
+/** Ship readout on the right edge for anyone aboard, outside the cockpit view: mode, fuel, exotic range, hull, speed, spool. */
 public final class ShipHud {
     private ShipHud() {}
 
@@ -17,6 +17,8 @@ public final class ShipHud {
     public static void extract(GuiGraphicsExtractor g, DeltaTracker dt) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || !(mc.player.getVehicle() instanceof Starship ship)) return;
+        // In the cockpit the panel display shows all of this (and more); the overlay would only cover the console.
+        if (mc.options.getCameraType().isFirstPerson() && CockpitDisplay.ready()) return;
         Font font = mc.font;
 
         // Displacement over the last tick works for pilot and passenger alike (a passenger's copy only interpolates).

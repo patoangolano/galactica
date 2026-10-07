@@ -51,6 +51,9 @@ public final class ShipClient {
         ModelLayerRegistry.registerModelLayer(StarshipModel.HULL_LAYER, StarshipModel::createHullLayer);
         ModelLayerRegistry.registerModelLayer(StarshipModel.LIGHTS_LAYER, StarshipModel::createLightsLayer);
         ModelLayerRegistry.registerModelLayer(StarshipModel.CORES_LAYER, StarshipModel::createCoresLayer);
+        ModelLayerRegistry.registerModelLayer(StarshipModel.GLASS_LAYER, StarshipModel::createGlassLayer);
+        ModelLayerRegistry.registerModelLayer(StarshipModel.COCKPIT_LAYER, StarshipModel::createCockpitLayer);
+        ModelLayerRegistry.registerModelLayer(StarshipModel.COCKPIT_LIGHTS_LAYER, StarshipModel::createCockpitLightsLayer);
         ShipRenderTypes.init();
         // GeckoLib is optional: its classes are only loaded through GeckoShipRendering, and only for the API line
         // this mod was compiled against.
@@ -64,6 +67,8 @@ public final class ShipClient {
         });
         ClientTickEvents.START_CLIENT_TICK.register(ShipClient::beforeTick);
         ClientTickEvents.END_CLIENT_TICK.register(ShipClient::afterTick);
+        // The cockpit display repaints and uploads here, between frames, never while a render pass is open.
+        ClientTickEvents.END_CLIENT_TICK.register(CockpitDisplay::tick);
     }
 
     /** GeckoLib versions whose API {@code GeckoShipRendering} was compiled against (5.5.7, MC 26.3). */

@@ -14,9 +14,14 @@ import org.joml.Vector3fc;
  */
 final class ShadedVertexConsumer implements VertexConsumer {
     private final VertexConsumer out;
-    private final float lx, ly, lz, direct, tr, tg, tb;
+    private final float lx, ly, lz, direct, tr, tg, tb, floor;
 
     ShadedVertexConsumer(VertexConsumer out, Vector3fc toStar, float direct, float[] tint) {
+        this(out, toStar, direct, tint, 0F);
+    }
+
+    /** {@code floor}: least brightness of any face (the cockpit's instrument glow), before the tint. */
+    ShadedVertexConsumer(VertexConsumer out, Vector3fc toStar, float direct, float[] tint, float floor) {
         this.out = out;
         this.lx = toStar.x();
         this.ly = toStar.y();
@@ -25,12 +30,13 @@ final class ShadedVertexConsumer implements VertexConsumer {
         this.tr = tint[0];
         this.tg = tint[1];
         this.tb = tint[2];
+        this.floor = floor;
     }
 
     @Override
     public void addVertex(float x, float y, float z, int color, float u, float v, int overlayCoords, int lightCoords,
                           float nx, float ny, float nz) {
-        float k = (float) ShipLighting.shade(nx * lx + ny * ly + nz * lz, direct);
+        float k = Math.max(floor, (float) ShipLighting.shade(nx * lx + ny * ly + nz * lz, direct));
         int a = color >>> 24, r = color >> 16 & 0xFF, g = color >> 8 & 0xFF, b = color & 0xFF;
         int lit = a << 24 | channel(r, k * tr) << 16 | channel(g, k * tg) << 8 | channel(b, k * tb);
         out.addVertex(x, y, z, lit, u, v, overlayCoords, lightCoords, nx, ny, nz);

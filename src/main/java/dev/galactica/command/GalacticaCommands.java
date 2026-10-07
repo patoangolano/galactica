@@ -264,12 +264,12 @@ public final class GalacticaCommands {
         return 0;
     }
 
-    /** Deploys a fuelled starship 6 blocks ahead of the player. */
+    /** Deploys a fuelled starship 8 blocks ahead of the player (clear of its 6-block box). */
     private static int ship(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
         ServerPlayer p = c.getSource().getPlayerOrException();
         var ship = dev.galactica.ship.ShipEntities.SHIP.create(p.level(), net.minecraft.world.entity.EntitySpawnReason.COMMAND);
         if (ship == null) return 0;
-        net.minecraft.world.phys.Vec3 at = p.getEyePosition().add(p.getLookAngle().scale(6));
+        net.minecraft.world.phys.Vec3 at = p.getEyePosition().add(p.getLookAngle().scale(8));
         ship.setPos(at.x, at.y - 1, at.z);
         ship.setYRot(p.getYRot());
         ship.setHydrogen(dev.galactica.ship.Starship.MAX_HYDROGEN);

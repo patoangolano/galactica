@@ -4,6 +4,7 @@
 #
 #   python assets-src/ship/preview_starship.py out.png          gear down, canopy shut, nozzles centred
 #   python assets-src/ship/preview_starship.py out.png flight   gear up, canopy open, nozzles gimballed 8 degrees
+#   python assets-src/ship/preview_starship.py out.png crew     canopy glass left out, seated crew as grey blocks
 import importlib.util
 import math
 import sys
@@ -39,13 +40,16 @@ if POSE == "flight":
 def triangles():
     uv = gen.place_uvs()
     out = []
-    for p in gen.PARTS:
+    parts = list(gen.PARTS)
+    if POSE == "crew":
+        parts = [p for p in parts if p["mat"] != "glass"] + crew()
+    for p in parts:
         x0, y0, z0, w, h, d = p["x0"], p["y0"], p["z0"], p["w"], p["h"], p["d"]
         piv = np.array(p["pivot"] or gen.GROUPS[p["group"]], float)
         rot = rmat(*(p["rot"] or (0, 0, 0)))
         gp = np.array(gen.GROUPS[p["group"]], float)
         grot = rmat(*GROUP_ROT.get(p["group"], (0, 0, 0)))
-        u, v = uv[p["name"]]
+        u, v = uv.get(p["name"], (0, 104 * gen.UV_K))
         cw, ch, cd = math.ceil(w), math.ceil(h), math.ceil(d)
         x1, y1, z1 = x0 + w, y0 + h, z0 + d
         faces = [  # corners counter-clockwise from outside, and the box-UV rectangle of that face
@@ -56,7 +60,7 @@ def triangles():
             ([(x0, y0, z1), (x0, y1, z1), (x0, y1, z0), (x0, y0, z0)], (u + cd + cw, v + cd, cd, ch)),
             ([(x1, y0, z1), (x1, y1, z1), (x0, y1, z1), (x0, y0, z1)], (u + 2 * cd + cw, v + cd, cw, ch)),
         ]
-        emissive = gen.MATERIALS[p["mat"]][1] != "hull"
+        emissive = gen.MATERIALS[p["mat"]][1] not in ("hull", "glass")
         for corners, (fu, fv, fw, fh) in faces:
             c = np.array(corners, float)
             c = (c - piv) @ rot.T + piv
@@ -71,11 +75,26 @@ def triangles():
     return out
 
 
+def crew():
+    """Seated player models (feet 0.6 block under the hip, head top 1.875 above the feet), model pixels."""
+    out = []
+    for i, z in enumerate((gen.PILOT_Z, gen.PASSENGER_Z)):
+        hip = gen.SEAT_Y * gen.SCALE
+        feet = hip - 0.6 * 16
+        zc = z * gen.SCALE
+        for name, (w, y0, y1, d) in {"torso": (7.5, feet + 11.25, feet + 22.5, 3.75), "head": (7.5, feet + 22.5, feet + 30, 7.5),
+                                     "legs": (7.5, hip - 2, hip + 2, 11.25)}.items():
+            dz = 0 if name != "legs" else d / 2
+            out.append(dict(name=f"crew_{i}_{name}", group="body", x0=-w / 2, y0=y0, z0=zc - d / 2 + dz, w=w, h=y1 - y0, d=d,
+                            mat="metal", pivot=None, rot=None))
+    return out
+
+
 LIGHT = np.array([0.4, 0.8, 0.45])
 LIGHT /= np.linalg.norm(LIGHT)
 
 
-def render(tris, yaw, pitch, size=520, scale=5.4):
+def render(tris, yaw, pitch, size=520, scale=5.4 / gen.SCALE):
     img = np.zeros((size, size, 3), np.float32) + np.array([0.10, 0.11, 0.14])
     zb = np.full((size, size), -1e9)
     view = rmat(pitch, 0, 0) @ rmat(0, yaw, 0)
@@ -105,7 +124,7 @@ def render(tris, yaw, pitch, size=520, scale=5.4):
             continue
         uu = l1 * tuv[0, 0] + l2 * tuv[1, 0] + l3 * tuv[2, 0]
         vv = l1 * tuv[0, 1] + l2 * tuv[1, 1] + l3 * tuv[2, 1]
-        col = tex[np.clip(vv.astype(int), 0, 255), np.clip(uu.astype(int), 0, 255), :3] * lit
+        col = tex[np.clip(vv.astype(int), 0, gen.TEX - 1), np.clip(uu.astype(int), 0, gen.TEX - 1), :3] * lit
         sub[m] = z[m]
         block = img[ymin:ymax + 1, xmin:xmax + 1]
         block[m] = col[m]
