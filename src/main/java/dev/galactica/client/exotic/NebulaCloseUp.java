@@ -187,6 +187,11 @@ public final class NebulaCloseUp {
         }
     }
 
+    /** Close-up patches drawn in the last frame (autotest probe). */
+    public static int drawnCount() {
+        return DRAWN.size();
+    }
+
     /** Frees every texture and drops the paints in flight. Render thread only. */
     public static void clear() {
         generation++;
