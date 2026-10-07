@@ -44,8 +44,20 @@ import java.util.UUID;
 public final class FloatingOrigin {
     private FloatingOrigin() {}
 
-    /** Recentre when the craft is farther than this from block 0 on any axis. */
+    /** Recentre when the craft is farther than this from block 0 horizontally. */
     public static final double LIMIT = 1024.0;
+    /**
+     * Recentre when the craft is farther than this from block 0 vertically. A vertical shift lands in the same chunk
+     * columns, which are already loaded, so it never waits and can be small; that is what lets galactica:space be only
+     * 1 536 blocks tall (96 sections per column instead of 254), at most 15 blocks per tick past this between shifts.
+     */
+    public static final double LIMIT_Y = 192.0;
+    /**
+     * Chunk view distance in galactica:space ({@code SpaceViewDistanceMixin}): a ship is tracked within 10 chunks, and
+     * empty space beyond that costs chunk generation, saving and meshing every time the origin moves.
+     * {@code -Dgalactica.spaceViewDistance} overrides it (2–32).
+     */
+    public static final int SPACE_VIEW_DISTANCE = Math.clamp(Integer.getInteger("galactica.spaceViewDistance", 10), 2, 32);
     /** A shift the client never acknowledged (mod missing, connection stalled) stops translating after this. */
     private static final int ACK_TIMEOUT_TICKS = 100;
     /** Start holding the landing chunks when the craft's current motion takes it past the limit within this. */
@@ -85,12 +97,15 @@ public final class FloatingOrigin {
             LAST_POS.remove(handler.player.getUUID());
             LAST_STEP.remove(handler.player.getUUID());
             DEFER_SINCE.remove(handler.player.getUUID());
+            SENT_RADIUS.remove(handler.player.getUUID());
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(s -> {
             PENDING.clear();
             LAST_POS.clear();
             LAST_STEP.clear();
             DEFER_SINCE.clear();
+            SENT_RADIUS.clear();
+            TICKETED.clear();
         });
     }
 
@@ -129,8 +144,31 @@ public final class FloatingOrigin {
             if (c.pack() == last) continue;
             last = c.pack();
             // Radius 2: the centre chunk is entity-ticking (ticket level 31), its neighbours fully loaded.
-            level.getChunkSource().addTicketAndLoadWithRadius(type, c, 2);
+            hold(level, type, c, 2);
         }
+    }
+
+    /** When each (ticket type, chunk) was last ticketed, server ticks. */
+    private static final Map<TicketType, it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap> TICKETED = new HashMap<>();
+    /** A ticket lives 40 ticks; renewing it every 20 keeps it alive without re-adding it every tick. */
+    private static final int RENEW_TICKS = 20;
+
+    /**
+     * Adds a ticket unless the same one was added in the last {@link #RENEW_TICKS} ticks. A craft holds ~11 chunks
+     * ahead of it, and every add re-propagates chunk levels on the server thread: at cruise that was most of the
+     * floating origin's cost per tick.
+     */
+    private static void hold(ServerLevel level, TicketType type, ChunkPos c, int radius) {
+        int now = level.getServer().getTickCount();
+        var seen = TICKETED.computeIfAbsent(type, t -> new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap());
+        long key = c.pack();
+        if (seen.containsKey(key)) {
+            int age = now - seen.get(key);
+            if (age >= 0 && age < RENEW_TICKS) return;
+        }
+        seen.put(key, now);
+        if (seen.size() > 1024) seen.long2IntEntrySet().removeIf(e -> now - e.getIntValue() >= RENEW_TICKS || now < e.getIntValue());
+        level.getChunkSource().addTicketAndLoadWithRadius(type, c, radius);
     }
 
     /** True when every point of that path is in an entity-ticking chunk. */
@@ -175,10 +213,12 @@ public final class FloatingOrigin {
         Entity root = p.getRootVehicle();
         double far = maxNorm(root.position());
         Vec3 step = LAST_STEP.getOrDefault(p.getUUID(), Vec3.ZERO);
+        // Only vertical: the same chunk columns, already loaded, so it needs no preload and never waits.
+        Vec3 vertical = Math.abs(root.getY()) > LIMIT_Y ? new Vec3(0, -Math.round(root.getY()), 0) : null;
         // Only a craft actually heading past the limit soon preloads: a parked or slow craft holds nothing extra.
         if (far <= LIMIT && maxNorm(root.position().add(step.scale(PRELOAD_TICKS))) <= LIMIT) {
             DEFER_SINCE.remove(p.getUUID());
-            return null;
+            return vertical != null && canShift(root) ? vertical : null;
         }
         // The craft always lands next to block 0: keep those chunks loaded and entity-ticking from a little before
         // the limit. A vehicle moved into a chunk that is not loaded yet stops being tracked at all (vanilla removes
@@ -189,18 +229,17 @@ public final class FloatingOrigin {
         // landing is known in advance: radius 3 around block 0 (a landing at -0.4 sits in chunk -1) plus the chunks
         // the craft crosses in its first LOOK_AHEAD_TICKS ticks there, where the follow ticket takes over.
         Vec3 landing = root.position().add(d);
-        level.getChunkSource().addTicketAndLoadWithRadius(LANDING, ChunkPos.ZERO, 3);
+        hold(level, LANDING, ChunkPos.ZERO, 3);
         if (step.length() >= 0.5) holdPath(level, LANDING, landing, step);
-        if (far <= LIMIT) return null;
-        for (ServerPlayer rider : riders(root)) {
-            if (PENDING.containsKey(rider.getUUID()) || ((OriginShiftable) rider.connection).galactica$awaitingTeleport()) return null;
-        }
+        if (!canShift(root)) return null;
+        if (far <= LIMIT) return vertical;
         int now = level.getServer().getTickCount();
         int since = DEFER_SINCE.computeIfAbsent(p.getUUID(), u -> now);
         if (now - since < MAX_DEFER_TICKS) {
-            if (!pathTicking(level, landing, step)) return null;
+            // While the landing chunks load, the craft may still climb or sink: recentre that axis alone meanwhile.
+            if (!pathTicking(level, landing, step)) return vertical;
             for (Entity e : root.getIndirectPassengers()) {
-                if (!level.isPositionEntityTicking(BlockPos.containing(e.position().add(d)))) return null;
+                if (!level.isPositionEntityTicking(BlockPos.containing(e.position().add(d)))) return vertical;
             }
         } else {
             Galactica.LOG.debug("Origin shift for {} forced after {} ticks waiting for chunks", p.getName().getString(), now - since);
@@ -209,8 +248,35 @@ public final class FloatingOrigin {
         return d;
     }
 
+    /** Horizontal distance from block 0 (max of |x|, |z|): the vertical axis has its own, smaller limit. */
     private static double maxNorm(Vec3 v) {
-        return Math.max(Math.abs(v.x), Math.max(Math.abs(v.y), Math.abs(v.z)));
+        return Math.max(Math.abs(v.x), Math.abs(v.z));
+    }
+
+    /** No shift while one is in flight for anyone aboard, or while a vanilla teleport is. */
+    private static boolean canShift(Entity root) {
+        for (ServerPlayer rider : riders(root)) {
+            if (PENDING.containsKey(rider.getUUID()) || ((OriginShiftable) rider.connection).galactica$awaitingTeleport()) return false;
+        }
+        return true;
+    }
+
+    private static final Map<UUID, Integer> SENT_RADIUS = new HashMap<>();
+
+    /**
+     * Tells a player's client the chunk radius of the level they are in: {@link #SPACE_VIEW_DISTANCE} in space, the
+     * server's everywhere else. Vanilla only sends the global value, so the client would keep a render area (and its
+     * per-section bookkeeping) far wider than the chunks space actually sends. Call every tick.
+     */
+    public static void syncViewRadius(ServerPlayer p) {
+        int global = p.level().getServer().getPlayerList().getViewDistance();
+        int radius = p.level().dimension() == Galactica.SPACE ? Math.min(global, SPACE_VIEW_DISTANCE) : global;
+        // Keyed with the global value too: vanilla re-broadcasts the global radius whenever it changes.
+        int key = radius * 1000 + global;
+        Integer sent = SENT_RADIUS.get(p.getUUID());
+        if (sent == null ? radius == global : sent == key) return;
+        SENT_RADIUS.put(p.getUUID(), key);
+        p.connection.send(new net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket(radius));
     }
 
     /** The galactic origin after folding in a block shift {@code d} (the origin moves opposite to the blocks). */

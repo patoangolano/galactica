@@ -60,18 +60,47 @@ public final class Neighbourhood {
         return cachedStars;
     }
 
+    /**
+     * The last {@link #nearestStar} scan: where it was made, its answer, and how far the point may move (pc) while the
+     * answer provably stands, half the gap between the nearest and the second-nearest star (triangle inequality).
+     * The renderer, the HUD, the cockpit and the ship's gravity ask every frame or tick from almost the same point,
+     * and in the bulge a scan covers thousands of stars.
+     */
+    private double nearestX = Double.NaN, nearestY, nearestZ, nearestValidPc;
+    private SectorKey nearestSector;
+    private Star nearestAnswer;
+    /** The last {@link #locateBodies} query and answer (same eye, same time), shared the same way. */
+    private GalacticPos locatedAt;
+    private double locatedT = Double.NaN;
+    private List<Located> locatedAnswer = List.of();
+
     public Star nearestStar(GalacticPos p) {
-        Star best = null;
-        double bestD = Double.MAX_VALUE;
         double x = p.xPc(), y = p.yPc(), z = p.zPc();
+        SectorKey k = p.sector();
+        if (k.equals(nearestSector) && k.equals(cachedSector)) {
+            double dx = x - nearestX, dy = y - nearestY, dz = z - nearestZ;
+            if (dx * dx + dy * dy + dz * dz < nearestValidPc * nearestValidPc) return nearestAnswer;
+        }
+        Star best = null;
+        double bestD = Double.MAX_VALUE, secondD = Double.MAX_VALUE;
         for (Star s : nearbyStars(p)) {
             if (s.kind() == dev.galactica.star.StarKind.BLACK_HOLE && s.mass() > 1e5) continue; // Sgr A* handled by its own region
             double d = s.distanceTo(x, y, z);
             if (d < bestD) {
+                secondD = bestD;
                 bestD = d;
                 best = s;
+            } else if (d < secondD) {
+                secondD = d;
             }
         }
+        nearestX = x;
+        nearestY = y;
+        nearestZ = z;
+        nearestSector = k;
+        // A hair under half the gap, so rounding can never flip a tie; no second star: valid anywhere in the sector.
+        nearestValidPc = best == null ? 0 : secondD == Double.MAX_VALUE ? Double.MAX_VALUE : 0.4999 * (secondD - bestD);
+        nearestAnswer = best;
         return best;
     }
 
@@ -97,6 +126,15 @@ public final class Neighbourhood {
 
     /** Every planet and moon of the current system at time t, as galactic positions, through the system's {@link SystemFrame}. */
     public List<Located> locateBodies(GalacticPos p, double t) {
+        if (t == locatedT && p.equals(locatedAt)) return locatedAnswer;
+        List<Located> out = locate(p, t);
+        locatedAt = p;
+        locatedT = t;
+        locatedAnswer = out;
+        return out;
+    }
+
+    private List<Located> locate(GalacticPos p, double t) {
         Star s = systemStar(p);
         if (s == null) return List.of();
         GalacticPos sp = starPos(s);
@@ -114,7 +152,7 @@ public final class Neighbourhood {
                 out.add(new Located(moon, planet, pp.plusMetres(g[0], g[1], g[2])));
             }
         }
-        return out;
+        return java.util.Collections.unmodifiableList(out);
     }
 
     /**

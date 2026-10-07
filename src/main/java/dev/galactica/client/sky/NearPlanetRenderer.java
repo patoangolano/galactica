@@ -80,7 +80,6 @@ public final class NearPlanetRenderer {
     private static final int CAP_RINGS = 32, CAP_SEGMENTS = 80, LEVEL_GRID = 32, DOME_LAT = 16, DOME_LON = 32;
     private static final double PX_PER_RAD = 885.0;
     /** Largest view shift (radians) that keeps the last mesh: a quarter pixel. */
-    private static final double SHIFT_EPS = 0.25 / PX_PER_RAD;
 
     private record Part(int firstVertex, int quads, DynamicTexture texture, boolean wrapU) {}
 
@@ -93,12 +92,36 @@ public final class NearPlanetRenderer {
     private static GpuBuffer buffer;
     private static final List<Part> SKY_PARTS = new ArrayList<>(), PARTS = new ArrayList<>();
     private static boolean active;
-    private static final Ctx CTX = new Ctx();
     // What the current mesh was built from.
     private static long builtBody = Long.MIN_VALUE;
     private static int builtGeneration = -1, builtMinLevel = -1;
     private static final double[] builtRel = new double[3], builtToStar = new double[3];
-    private static double builtSpin;
+    private static double builtSpin, builtScale, builtAltitude;
+    private static final org.joml.Vector3f builtPoleMc = new org.joml.Vector3f();
+    /**
+     * Carries the mesh from where it was built to where the body is now (a rigid move: the eye-relative
+     * translation and the spin about the pole), so the mesh is exact between rebuilds; see {@link #transform}.
+     */
+    private static final Matrix4f MESH_TO_NOW = new Matrix4f();
+
+    /**
+     * Rebuild thresholds. The mesh is moved rigidly every frame, so these only bound how stale the per-vertex
+     * shading may get: the view angles change by about the eye shift over the altitude (1 % ≈ 0.6°), the
+     * terminator by the spin and star-direction change (1 mrad ≈ 0.06°). The old quarter-pixel tolerance
+     * rebuilt the whole ~15 k-quad mesh on every tick in orbit, as the body moved 30 km/s past the eye.
+     */
+    private static final double REBUILD_SHIFT = 0.01, REBUILD_ANGLE = 1e-3;
+
+    /** Off-thread rebuilds for a moving eye; rebuilds after a clipmap upload stay synchronous (textures changed). */
+    private static final java.util.concurrent.ExecutorService MESHER = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "Galactica near-planet mesher");
+        t.setDaemon(true);
+        t.setPriority(Thread.NORM_PRIORITY - 1);
+        return t;
+    });
+    private static java.util.concurrent.CompletableFuture<Built> job;
+    /** Jobs dropped while running: their native buffers are freed once they finish. */
+    private static final List<java.util.concurrent.CompletableFuture<Built>> ABANDONED = new ArrayList<>();
 
     /** Bodies the near renderer can draw: solid, and not hidden under a global cloud or haze deck. */
     static boolean eligible(Body b) {
@@ -161,6 +184,7 @@ public final class NearPlanetRenderer {
     private static void endFrameTimed() {
         Candidate target = claimed != null ? claimed : largest;
         winnerId = largest != null ? largest.body().id() : Long.MIN_VALUE;
+        reapAbandoned();
         if (claimed == null) freeMesh();
         if (target == null) {
             if (active) {
@@ -171,7 +195,8 @@ public final class NearPlanetRenderer {
             return;
         }
         active = true;
-        Ctx x = CTX;
+        // A fresh context per frame: an off-thread rebuild keeps the one it was given.
+        Ctx x = new Ctx();
         if (!x.setup(target)) {
             freeMesh();
             return;
@@ -181,9 +206,106 @@ public final class NearPlanetRenderer {
         clip.request(x.subX, x.subZ, minLevel);
         clip.upload();
         if (claimed == null) return;
-        if (!changed(x, clip, minLevel)) return;
-        freeMesh();
-        build(x, clip, minLevel);
+        pollJob(clip, minLevel);
+        switch (rebuild(x, clip, minLevel)) {
+            case SYNC -> {
+                abandonJob();
+                Built built = build(plan(x, clip, minLevel));
+                install(built);
+            }
+            case ASYNC -> {
+                if (job == null) {
+                    Plan plan = plan(x, clip, minLevel);
+                    job = java.util.concurrent.CompletableFuture.supplyAsync(() -> buildQuietly(plan), MESHER);
+                }
+            }
+            case NONE -> { }
+        }
+        transform(x);
+    }
+
+    private enum Rebuild { NONE, ASYNC, SYNC }
+
+    /**
+     * SYNC when there is no mesh or its textures changed (another body, a clipmap upload, a finer level): the old
+     * mesh would sample the new textures at the old places. ASYNC when only the shading has grown stale.
+     */
+    private static Rebuild rebuild(Ctx x, SurfaceClipmap clip, int minLevel) {
+        if (buffer == null || builtBody != x.body.id() || builtGeneration != clip.generation() || builtMinLevel != minLevel) {
+            return Rebuild.SYNC;
+        }
+        double dr = 0, ds = 0;
+        for (int k = 0; k < 3; k++) {
+            dr += (x.rel[k] - builtRel[k]) * (x.rel[k] - builtRel[k]);
+            ds += (x.toStar[k] - builtToStar[k]) * (x.toStar[k] - builtToStar[k]);
+        }
+        double tol = REBUILD_SHIFT * Math.min(x.altitude, builtAltitude);
+        boolean stale = dr > tol * tol || Math.sqrt(ds) > REBUILD_ANGLE || Math.abs(x.spin - builtSpin) > REBUILD_ANGLE;
+        return stale ? Rebuild.ASYNC : Rebuild.NONE;
+    }
+
+    /** Installs a finished off-thread mesh, unless the textures it was made for have changed since. */
+    private static void pollJob(SurfaceClipmap clip, int minLevel) {
+        if (job == null || !job.isDone()) return;
+        Built built = job.getNow(null);
+        job = null;
+        if (built == null) return;
+        if (built.body != builtBody || built.generation != clip.generation() || built.minLevel != minLevel) {
+            built.close();
+            return;
+        }
+        install(built);
+    }
+
+    private static void abandonJob() {
+        if (job != null) ABANDONED.add(job);
+        job = null;
+    }
+
+    private static void reapAbandoned() {
+        ABANDONED.removeIf(f -> {
+            if (!f.isDone()) return false;
+            Built b = f.getNow(null);
+            if (b != null) b.close();
+            return true;
+        });
+    }
+
+    /** Uploads a mesh (render thread, no pass open) and makes it current. */
+    private static void install(Built b) {
+        try {
+            if (buffer != null) buffer.close();
+            buffer = b.mesh == null ? null
+                    : RenderSystem.getDevice().createBuffer(() -> "Galactica near planet", GpuBuffer.USAGE_VERTEX, b.mesh.vertexBuffer());
+        } finally {
+            b.close();
+        }
+        PARTS.clear();
+        PARTS.addAll(b.parts);
+        SKY_PARTS.clear();
+        SKY_PARTS.addAll(b.sky);
+        Ctx x = b.plan.x;
+        builtBody = x.body.id();
+        builtGeneration = b.generation;
+        builtMinLevel = b.minLevel;
+        System.arraycopy(x.rel, 0, builtRel, 0, 3);
+        System.arraycopy(x.toStar, 0, builtToStar, 0, 3);
+        builtSpin = x.spin;
+        builtScale = x.scale;
+        builtAltitude = x.altitude;
+        builtPoleMc.set((float) x.pole[0], (float) x.pole[2], (float) -x.pole[1]).normalize();
+    }
+
+    /**
+     * The rigid move from the built mesh to now, in the mesh's scaled eye-relative Minecraft axes: about the
+     * body centre as built, turn by the spin since, then put the centre where it is now.
+     */
+    private static void transform(Ctx x) {
+        if (buffer == null) return;
+        float s = (float) builtScale;
+        MESH_TO_NOW.translation((float) x.rel[0] * s, (float) x.rel[2] * s, (float) -x.rel[1] * s)
+                .rotate((float) (x.spin - builtSpin), builtPoleMc)
+                .translate((float) -builtRel[0] * s, (float) -builtRel[2] * s, (float) builtRel[1] * s);
     }
 
     /**
@@ -214,7 +336,7 @@ public final class NearPlanetRenderer {
     }
 
     private static void drawTimed(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
-        drawParts(pass, quads, modelView, PARTS);
+        drawParts(pass, quads, new Matrix4f(modelView).mul(MESH_TO_NOW), PARTS);
     }
 
     private static void drawParts(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView, List<Part> parts) {
@@ -234,6 +356,7 @@ public final class NearPlanetRenderer {
     }
 
     private static void freeMesh() {
+        abandonJob();
         if (buffer != null) buffer.close();
         buffer = null;
         PARTS.clear();
@@ -248,6 +371,8 @@ public final class NearPlanetRenderer {
         Body body;
         final double[] rel = new double[3]; // eye → centre
         double d, radius, altitude, subX, subZ;
+        /** Shell units per metre: the mesh is the true eye-relative geometry scaled so the centre sits at {@link #R_SHELL}. */
+        double scale;
         double[] pole, e1, e2;
         final double[] toStar = new double[3], up = new double[3];
         double spin;
@@ -268,6 +393,7 @@ public final class NearPlanetRenderer {
             d = Math.sqrt(dot(rel, rel));
             radius = b.radiusMetres();
             altitude = d - radius;
+            scale = R_SHELL / d;
             if (altitude <= 0) return false;
             for (int k = 0; k < 3; k++) up[k] = -rel[k] / d;
             pole = BodyFrame.pole(cand.star(), b);
@@ -309,62 +435,97 @@ public final class NearPlanetRenderer {
         return SurfaceClipmap.LEVELS;
     }
 
-    /** True when the last mesh no longer matches what the eye sees (quarter-pixel tolerances). */
-    private static boolean changed(Ctx x, SurfaceClipmap clip, int minLevel) {
-        boolean same = buffer != null && builtBody == x.body.id() && builtGeneration == clip.generation() && builtMinLevel == minLevel;
-        if (same) {
-            double dr = 0, ds = 0;
-            for (int k = 0; k < 3; k++) {
-                dr += (x.rel[k] - builtRel[k]) * (x.rel[k] - builtRel[k]);
-                ds += (x.toStar[k] - builtToStar[k]) * (x.toStar[k] - builtToStar[k]);
-            }
-            double tol = SHIFT_EPS * x.altitude; // eye shift seen at the nearest ground
-            same = dr < tol * tol && Math.sqrt(ds) < 4 * SHIFT_EPS && x.radius * Math.abs(x.spin - builtSpin) < tol;
+    /** A clipmap level as it was when a rebuild was planned: the mesher thread never reads the live clipmap. */
+    private record LevelSnap(double centreX, double centreZ, double span, DynamicTexture texture) {}
+
+    /** Everything a rebuild reads, captured on the render thread. */
+    private record Plan(Ctx x, long body, int generation, int minLevel, DynamicTexture globe, DynamicTexture clouds,
+                        DynamicTexture white, List<LevelSnap> levels) {}
+
+    /** A built mesh still in native memory, with its draw parts. Closed after upload or when dropped. */
+    private static final class Built implements AutoCloseable {
+        final Plan plan;
+        final long body;
+        final int generation, minLevel;
+        final List<Part> parts = new ArrayList<>(), sky = new ArrayList<>();
+        ByteBufferBuilder bytes;
+        MeshData mesh;
+
+        Built(Plan plan) {
+            this.plan = plan;
+            this.body = plan.body();
+            this.generation = plan.generation();
+            this.minLevel = plan.minLevel();
         }
-        if (same) return false;
-        builtBody = x.body.id();
-        builtGeneration = clip.generation();
-        builtMinLevel = minLevel;
-        System.arraycopy(x.rel, 0, builtRel, 0, 3);
-        System.arraycopy(x.toStar, 0, builtToStar, 0, 3);
-        builtSpin = x.spin;
-        return true;
+
+        @Override
+        public void close() {
+            if (mesh != null) mesh.close();
+            if (bytes != null) bytes.close();
+            mesh = null;
+            bytes = null;
+        }
     }
 
-    private static void build(Ctx x, SurfaceClipmap clip, int minLevel) {
-        Body b = x.body;
+    private static Plan plan(Ctx x, SurfaceClipmap clip, int minLevel) {
+        List<LevelSnap> levels = new ArrayList<>();
+        for (int k = clip.coarsestUsable(); k >= Math.min(minLevel, SurfaceClipmap.LEVELS - 1); k--) {
+            SurfaceClipmap.Level l = clip.level(k);
+            if (l.ready()) levels.add(new LevelSnap(l.centreX(), l.centreZ(), l.span(), l.texture()));
+        }
+        BodyType type = x.body.type();
+        DynamicTexture clouds = type == BodyType.TERRAN || type == BodyType.OCEAN ? clip.clouds() : null;
+        // white() may create (and upload) its texture: only here, on the render thread.
+        return new Plan(x, x.body.id(), clip.generation(), minLevel, clip.globe(), clouds, SurfaceClipmap.white(), levels);
+    }
+
+    /** The mesher's task: never throws (a failed rebuild keeps the current mesh). */
+    private static Built buildQuietly(Plan plan) {
+        try {
+            return build(plan);
+        } catch (Throwable t) {
+            dev.galactica.Galactica.LOG.error("Near-planet mesh rebuild failed", t);
+            return null;
+        }
+    }
+
+    /** Builds the mesh of a plan; safe off the render thread (no GPU calls, no live clipmap reads). */
+    private static Built build(Plan plan) {
+        Ctx x = plan.x();
+        Built out = new Built(plan);
         int stride = DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize();
         int maxQuads = DOME_LAT * DOME_LON + 3 * CAP_RINGS * CAP_SEGMENTS + SurfaceClipmap.LEVELS * LEVEL_GRID * LEVEL_GRID + CAP_SEGMENTS * 4;
-        try (ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(maxQuads * 4 * stride)) {
+        ByteBufferBuilder bb = ByteBufferBuilder.exactlySized(maxQuads * 4 * stride);
+        try {
             BufferBuilder buf = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
             int[] vertex = {0};
             // Inside the entry shell's neighbourhood only: the take-off point sits at 1.5× its altitude.
-            if (!x.atm.vacuum() && x.altitude < 1.5 * PlanetEntry.entryAltitude(b)) {
-                addPart(SKY_PARTS, vertex, dome(buf, x), SurfaceClipmap.white(), false);
+            if (!x.atm.vacuum() && x.altitude < 1.5 * PlanetEntry.entryAltitude(x.body)) {
+                addPart(out.sky, vertex, dome(buf, x), plan.white(), false);
             }
-            DynamicTexture globe = clip.globe();
             double horizon = Math.acos(Math.min(1, x.radius / x.d)) * 0.9995;
-            if (globe != null) addPart(PARTS, vertex, cap(buf, x, horizon, 0), globe, true);
+            if (plan.globe() != null) addPart(out.parts, vertex, cap(buf, x, horizon, 0), plan.globe(), true);
             // Each level fades into whatever is drawn under it; the bottom one only when the globe cap is there.
-            boolean under = globe != null;
-            for (int k = clip.coarsestUsable(); k >= Math.min(minLevel, SurfaceClipmap.LEVELS - 1); k--) {
-                SurfaceClipmap.Level l = clip.level(k);
-                if (!l.ready()) continue;
-                addPart(PARTS, vertex, level(buf, x, l, under), l.texture(), false);
+            boolean under = plan.globe() != null;
+            for (LevelSnap l : plan.levels()) {
+                addPart(out.parts, vertex, level(buf, x, l, under), l.texture(), false);
                 under = true;
             }
-            DynamicTexture clouds = clip.clouds();
-            if (clouds != null && (b.type() == BodyType.TERRAN || b.type() == BodyType.OCEAN)) {
-                addPart(PARTS, vertex, cap(buf, x, horizon, 1), clouds, true);
-            }
+            if (plan.clouds() != null) addPart(out.parts, vertex, cap(buf, x, horizon, 1), plan.clouds(), true);
             if (!x.atm.vacuum()) {
-                addPart(PARTS, vertex, cap(buf, x, horizon, 2), SurfaceClipmap.white(), false);
-                if (x.altitude > 0.5 * x.atm.scaleHeight()) addPart(PARTS, vertex, limb(buf, x), SurfaceClipmap.white(), false);
+                addPart(out.parts, vertex, cap(buf, x, horizon, 2), plan.white(), false);
+                if (x.altitude > 0.5 * x.atm.scaleHeight()) addPart(out.parts, vertex, limb(buf, x), plan.white(), false);
             }
-            if (PARTS.isEmpty() && SKY_PARTS.isEmpty()) return;
-            try (MeshData mesh = buf.buildOrThrow()) {
-                buffer = RenderSystem.getDevice().createBuffer(() -> "Galactica near planet", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+            if (out.parts.isEmpty() && out.sky.isEmpty()) {
+                bb.close();
+                return out;
             }
+            out.mesh = buf.buildOrThrow();
+            out.bytes = bb;
+            return out;
+        } catch (Throwable t) {
+            bb.close();
+            throw t;
         }
     }
 
@@ -405,26 +566,39 @@ public final class NearPlanetRenderer {
     /**
      * The visible cap around the sub-camera point. mode 0: ground from the globe (lit, path
      * transmittance); 1: clouds (lit white, alpha from the texture); 2: airlight veil (untextured).
+     * Each grid node is shaded once and shared by its four quads.
      */
     private static int cap(BufferBuilder buf, Ctx x, double horizon, int mode) {
         double[] t1 = perpendicular(x.up), t2 = cross(x.up, t1);
+        int rings = CAP_RINGS + 1, segs = CAP_SEGMENTS + 1;
+        float[][] node = new float[rings * segs][5];
+        int[] colour = new int[rings * segs];
+        double[] u = new double[rings * segs];
+        double[] nrm = new double[3];
+        for (int rr = 0; rr < rings; rr++) {
+            double th = horizon * Math.pow(rr / (double) CAP_RINGS, 0.8), ct = Math.cos(th), st = Math.sin(th);
+            for (int ss = 0; ss < segs; ss++) {
+                double ph = 2 * Math.PI * ss / CAP_SEGMENTS, cp = Math.cos(ph), sp = Math.sin(ph);
+                for (int m = 0; m < 3; m++) nrm[m] = ct * x.up[m] + st * (cp * t1[m] + sp * t2[m]);
+                double lat = Math.asin(clamp(dot(nrm, x.pole), -1, 1));
+                double lon = BodyFrameWrap.wrap(Math.atan2(dot(nrm, x.e2), dot(nrm, x.e1)) - x.spin);
+                int i = rr * segs + ss;
+                u[i] = (lon + Math.PI) / (2 * Math.PI);
+                node[i][4] = (float) ((Math.PI / 2 - lat) / Math.PI);
+                colour[i] = surfaceVertex(x, nrm, node[i], mode, mode == 1 ? 0.15 : 0);
+            }
+        }
         float[][] q = new float[4][5];
         int[] c = new int[4];
-        double[] nrm = new double[3];
         double[] us = new double[4];
         int n = 0;
         for (int ri = 0; ri < CAP_RINGS; ri++) {
             for (int si = 0; si < CAP_SEGMENTS; si++) {
                 for (int k = 0; k < 4; k++) {
-                    int rr = ri + (k == 1 || k == 2 ? 1 : 0), ss = si + (k >= 2 ? 1 : 0);
-                    double th = horizon * Math.pow(rr / (double) CAP_RINGS, 0.8), ph = 2 * Math.PI * ss / CAP_SEGMENTS;
-                    double ct = Math.cos(th), st = Math.sin(th), cp = Math.cos(ph), sp = Math.sin(ph);
-                    for (int m = 0; m < 3; m++) nrm[m] = ct * x.up[m] + st * (cp * t1[m] + sp * t2[m]);
-                    double lat = Math.asin(clamp(dot(nrm, x.pole), -1, 1));
-                    double lon = BodyFrameWrap.wrap(Math.atan2(dot(nrm, x.e2), dot(nrm, x.e1)) - x.spin);
-                    us[k] = (lon + Math.PI) / (2 * Math.PI);
-                    q[k][4] = (float) ((Math.PI / 2 - lat) / Math.PI);
-                    c[k] = surfaceVertex(x, nrm, q[k], mode, mode == 1 ? 0.15 : 0);
+                    int rr = ri + (k == 1 || k == 2 ? 1 : 0), ss = si + (k >= 2 ? 1 : 0), i = rr * segs + ss;
+                    System.arraycopy(node[i], 0, q[k], 0, 5);
+                    us[k] = u[i];
+                    c[k] = colour[i];
                 }
                 // Longitude seam: keep the quad's u contiguous; the sampler repeats in u.
                 double lo = Math.min(Math.min(us[0], us[1]), Math.min(us[2], us[3])), hi = Math.max(Math.max(us[0], us[1]), Math.max(us[2], us[3]));
@@ -438,35 +612,48 @@ public final class NearPlanetRenderer {
 
     /**
      * One clipmap level as a patch of the sphere; quads behind the horizon are skipped. {@code fade}
-     * feathers its rim, for a level drawn over something (a coarser level or the globe cap).
+     * feathers its rim, for a level drawn over something (a coarser level or the globe cap). Each grid node
+     * is shaded once and shared by its four quads.
      */
-    private static int level(BufferBuilder buf, Ctx x, SurfaceClipmap.Level l, boolean fade) {
-        float[][] q = new float[4][5];
-        int[] c = new int[4];
+    private static int level(BufferBuilder buf, Ctx x, LevelSnap l, boolean fade) {
+        int side = LEVEL_GRID + 1;
+        float[][] node = new float[side * side][5];
+        int[] colour = new int[side * side];
+        boolean[] front = new boolean[side * side];
         double[] nrm = new double[3];
         double span = l.span();
+        for (int jj = 0; jj < side; jj++) {
+            for (int ii = 0; ii < side; ii++) {
+                double fu = ii / (double) LEVEL_GRID, fv = jj / (double) LEVEL_GRID;
+                double mx = l.centreX() + (fu - 0.5) * span, mz = l.centreZ() + (fv - 0.5) * span;
+                double[] over = x.grid.overPole(mx, mz);
+                if (over != null) {
+                    mx = over[0];
+                    mz = over[1];
+                }
+                x.normal(x.grid.latitude(mz), x.grid.longitude(mx), nrm);
+                // Front-facing only: the eye must be above this point's horizon plane.
+                double facing = 0;
+                for (int m = 0; m < 3; m++) facing += (x.rel[m] + x.radius * nrm[m]) * nrm[m];
+                int i = jj * side + ii;
+                front[i] = facing < -1e-6 * x.d;
+                node[i][3] = (float) fu;
+                node[i][4] = (float) fv;
+                int col = surfaceVertex(x, nrm, node[i], 0, 0);
+                colour[i] = fade ? feather(col, fu, fv) : col;
+            }
+        }
+        float[][] q = new float[4][5];
+        int[] c = new int[4];
         int n = 0;
         for (int j = 0; j < LEVEL_GRID; j++) {
             for (int i = 0; i < LEVEL_GRID; i++) {
                 boolean visible = true;
-                for (int k = 0; k < 4 && visible; k++) {
-                    int ii = i + (k == 1 || k == 2 ? 1 : 0), jj = j + (k >= 2 ? 1 : 0);
-                    double fu = ii / (double) LEVEL_GRID, fv = jj / (double) LEVEL_GRID;
-                    double mx = l.centreX() + (fu - 0.5) * span, mz = l.centreZ() + (fv - 0.5) * span;
-                    double[] over = x.grid.overPole(mx, mz);
-                    if (over != null) {
-                        mx = over[0];
-                        mz = over[1];
-                    }
-                    x.normal(x.grid.latitude(mz), x.grid.longitude(mx), nrm);
-                    // Front-facing only: the eye must be above this point's horizon plane.
-                    double facing = 0;
-                    for (int m = 0; m < 3; m++) facing += (x.rel[m] + x.radius * nrm[m]) * nrm[m];
-                    if (facing >= -1e-6 * x.d) visible = false;
-                    q[k][3] = (float) fu;
-                    q[k][4] = (float) fv;
-                    int col = surfaceVertex(x, nrm, q[k], 0, 0);
-                    c[k] = fade ? feather(col, fu, fv) : col;
+                for (int k = 0; k < 4; k++) {
+                    int idx = (j + (k >= 2 ? 1 : 0)) * side + i + (k == 1 || k == 2 ? 1 : 0);
+                    visible &= front[idx];
+                    System.arraycopy(node[idx], 0, q[k], 0, 5);
+                    c[k] = colour[idx];
                 }
                 if (!visible) continue;
                 emitInward(buf, q, c);
@@ -519,7 +706,11 @@ public final class NearPlanetRenderer {
                     double fall = Math.exp(-(radii[b2] - x.radius) / h);
                     for (int m = 0; m < 3; m++) rgb[m] *= fall;
                     scale(rgb, x);
-                    set(q[k], dir, 0.5, 0.5, R_SHELL);
+                    // The ray's tangent point, scaled like the ground, so the glow moves with the body.
+                    for (int m = 0; m < 3; m++) x.p[m] = dir[m] * along;
+                    point(q[k], x.p, x.scale);
+                    q[k][3] = 0.5f;
+                    q[k][4] = 0.5f;
                     c[k] = additive(rgb);
                 }
                 emitInward(buf, q, c);
@@ -539,7 +730,9 @@ public final class NearPlanetRenderer {
         for (int m = 0; m < 3; m++) p[m] = x.rel[m] + lift * nrm[m];
         double len = Math.sqrt(dot(p, p));
         for (int m = 0; m < 3; m++) v[m] = p[m] / len;
-        set(q, v, q[3], q[4], R_SHELL - mode * 0.2f);
+        // The true point, scaled: a rigid move of the body is then one matrix (see transform). Layers that share
+        // a point (ground, veil) stack by draw order; the sky pipeline does not depth-test.
+        point(q, p, x.scale);
         double mu0 = dot(nrm, x.toStar), mu = Math.max(1e-3, -dot(v, nrm)), cosScatter = dot(v, x.toStar);
         if (mode == 2) {
             // The view path as one over-blend: alpha 1 − T̄, colour inscatter/(1 − T̄) (Koschmieder's form).
@@ -569,6 +762,14 @@ public final class NearPlanetRenderer {
         rgb[0] *= x.starR * x.brightness;
         rgb[1] *= x.starG * x.brightness;
         rgb[2] *= x.starB * x.brightness;
+    }
+
+    /** Galactic eye-relative point (metres) to a mesh vertex in Minecraft axes, scaled; keeps q[3..4]. */
+    private static void point(float[] q, double[] galactic, double scale) {
+        // Frames.galacticToMc without the allocation: (gx, gy, gz) → (gx, gz, −gy).
+        q[0] = (float) (galactic[0] * scale);
+        q[1] = (float) (galactic[2] * scale);
+        q[2] = (float) (-galactic[1] * scale);
     }
 
     /** Galactic direction to a shell vertex in Minecraft axes. */

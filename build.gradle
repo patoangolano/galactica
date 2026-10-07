@@ -69,6 +69,7 @@ dependencies {
     compileOnly("maven.modrinth:yacl:${yacl_version}")                // LGPL-3.0+; mod id yet_another_config_lib_v3
     compileOnly("maven.modrinth:distanthorizonsapi:${dh_api_version}") // DH API jar (sources inside); runtime mod id distanthorizons
     compileOnly("maven.modrinth:geckolib:${geckolib_version}")        // MIT; detection only for now (OptionalMods.geckolib)
+    compileOnly("maven.modrinth:entityculling:${perf_entityculling}") // tr7zw custom license; whitelist API only (compat/entityculling)
 
     // --- Dev runtime only (localRuntime: on the run classpath, never in the published POM/jar).
     localRuntime("maven.modrinth:modmenu:${modmenu_version}")

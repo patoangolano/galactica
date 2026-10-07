@@ -60,6 +60,7 @@ public final class NavServer {
             boolean inSpace = p.level().dimension() == Galactica.SPACE;
             applyZeroG(p, inSpace);
             FloatingOrigin.tick(p);
+            FloatingOrigin.syncViewRadius(p);
             dev.galactica.planet.PlanetEntry.tickSurface(p);
             if (inSpace) {
                 tickInSpace(p);

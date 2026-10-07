@@ -135,6 +135,7 @@ public final class ExoticOverlay {
     private static final Map<Long, Entry> ENTRIES = new HashMap<>();
     private static final List<Sprite> SPRITES = new ArrayList<>();
     private static GpuBuffer vertices;
+    private static final dev.galactica.client.vfx.StreamingVertexBuffer VERTICES = new dev.galactica.client.vfx.StreamingVertexBuffer("Galactica exotic objects");
     private static int frame, generation;
     private static long uploadDeadline;
 
@@ -160,10 +161,7 @@ public final class ExoticOverlay {
         frame++;
         uploadDeadline = System.nanoTime() + UPLOAD_BUDGET_NANOS;
         SPRITES.clear();
-        if (vertices != null) {
-            vertices.close();
-            vertices = null;
-        }
+        vertices = null; // a view of VERTICES: rewritten in place by buildVertices
         if (eye == null) {
             evict();
             return;
@@ -240,10 +238,8 @@ public final class ExoticOverlay {
         ENTRIES.clear();
         OBJECTS.clear();
         SPRITES.clear();
-        if (vertices != null) {
-            vertices.close();
-            vertices = null;
-        }
+        vertices = null;
+        VERTICES.close();
     }
 
     // ------------------------------------------------------------------ selection
@@ -453,7 +449,7 @@ public final class ExoticOverlay {
             BufferBuilder b = new BufferBuilder(bb, PrimitiveTopology.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
             for (Sprite s : SPRITES) spriteQuad(b, s.dx(), s.dy(), s.dz(), SHELL, s.halfAngle(), s.argb());
             try (MeshData mesh = b.buildOrThrow()) {
-                vertices = RenderSystem.getDevice().createBuffer(() -> "Galactica exotic objects", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
+                vertices = VERTICES.upload(mesh.vertexBuffer());
             }
         }
     }

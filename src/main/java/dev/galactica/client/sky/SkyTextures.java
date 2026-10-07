@@ -77,7 +77,13 @@ public final class SkyTextures {
             galaxy = t = new DynamicTexture(() -> "galactica:milky_way", new NativeImage(w, h, true));
             img = t.getPixels();
         }
-        for (int i = 0; i < argb.length; i++) img.setPixel(i % w, i / w, argb[i]);
+        // One pass straight into the image's memory (RGBA bytes = ABGR little-endian ints), not w·h setPixel calls:
+        // a 2048×1024 re-bake used to cost the render thread millions of bounds-checked calls while warping.
+        var dst = org.lwjgl.system.MemoryUtil.memIntBuffer(img.getPointer(), w * h);
+        for (int i = 0; i < argb.length; i++) {
+            int c = argb[i];
+            dst.put(i, c & 0xFF00FF00 | c >> 16 & 0xFF | (c & 0xFF) << 16);
+        }
         t.upload();
         snapshot = new Snapshot(argb, w, h);
     }
