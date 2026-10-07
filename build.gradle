@@ -114,6 +114,13 @@ loom {
             runDir 'runs/client'
             vmArgs '-Xmx4G'
         }
+        // Manual play: its own folder, so autotests running in parallel never share a world or options.
+        play {
+            client()
+            configName = 'Galactica Play'
+            runDir 'runs/play'
+            vmArgs '-Xmx4G'
+        }
         autotest {
             client()
             configName = 'Galactica Autotest'
