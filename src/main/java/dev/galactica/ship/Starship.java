@@ -109,6 +109,13 @@ public class Starship extends VehicleEntity {
     // Server-side bookkeeping.
     private @Nullable JumpTargetInfo pendingJump;
     private int lastReportTick, lastMainBurnTick = Integer.MIN_VALUE / 2;
+    /**
+     * Last tick the hull touched the ground. Weight on the gear is latched for {@link #GROUND_LATCH_TICKS}: a hull
+     * resting on a probe over a ledge loses contact for a tick whenever the probe slips off a block edge, and the
+     * flight assist must not lift it into a hover in that tick.
+     */
+    private int lastGroundTick = Integer.MIN_VALUE / 2;
+    private static final int GROUND_LATCH_TICKS = 5;
     // Pilot's client: reports awaiting a possible server clamp.
     private final PilotReconciler reconciler = new PilotReconciler();
     // Client-side visual state (gear, canopy, gimbal), ticked for every ship the client sees.
@@ -470,7 +477,9 @@ public class Starship extends VehicleEntity {
         Quaterniond q = new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w);
         Vector3d v = toMetres(getDeltaMovement());
         Vector3fc g = gravity();
-        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK);
+        if (onGround()) lastGroundTick = tickCount;
+        boolean grounded = tickCount - lastGroundTick <= GROUND_LATCH_TICKS;
+        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK, grounded);
         attitude.set((float) q.x, (float) q.y, (float) q.z, (float) q.w);
         localThrottle = hydrogen() > 0 ? (float) c.thrust() : 0F;
         setDeltaMovement(v.x * ShipFlightModel.TICK, v.y * ShipFlightModel.TICK, v.z * ShipFlightModel.TICK);
@@ -483,7 +492,10 @@ public class Starship extends VehicleEntity {
         Vector3fc g = gravity();
         double k = ShipFlightModel.TICK * ShipFlightModel.TICK;
         double vy = onGround() && g.y() < 0 ? Math.max(0, d.y) : d.y;
-        setDeltaMovement(d.x + g.x() * k, vy + g.y() * k, d.z + g.z() * k);
+        Vector3d v = new Vector3d(d.x + g.x() * k, vy + g.y() * k, d.z + g.z() * k);
+        // An empty ship on the ground stays parked on its gear (in blocks per tick: friction scales with dt² here).
+        if (onGround()) ShipFlightModel.gearFriction(v, new Vector3d(g.x(), g.y(), g.z()), k);
+        setDeltaMovement(v.x, v.y, v.z);
         entityData.set(DATA_THRUST, 0F);
     }
 

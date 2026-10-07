@@ -65,6 +65,39 @@ public final class ShipFlightModel {
      * @return hydrogen burned this step (never more than {@code hydrogen})
      */
     public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt) {
+        return step(attitude, velocity, c, gravity, hydrogen, dt, false);
+    }
+
+    /**
+     * Landing-gear friction coefficient (rubber-tyred / skid gear on rock and regolith, 0.6–0.8): the largest
+     * horizontal deceleration the ground can apply is μ·g.
+     */
+    public static final double GEAR_FRICTION = 0.8;
+
+    /**
+     * Whether a ship on the ground is parked: nothing asks it to leave (no main engine, no upward RCS). Then the
+     * ground, not the RCS, carries its weight, and the gear's friction holds it.
+     */
+    public static boolean parked(Controls c, double hydrogen, boolean grounded) {
+        return grounded && c.lift() <= 0 && (hydrogen <= 0 || c.thrust() == 0);
+    }
+
+    /**
+     * As {@link #step(Quaterniond, Vector3d, Controls, Vector3dc, double, double)}, knowing whether the hull rests on
+     * the ground. A parked ship ({@link #parked}) gets no flight-assist hover (the assist would otherwise null the
+     * velocity along the dorsal axis, gravity included, and float the hull on its own thrusters instead of
+     * letting it settle on its gear) and its gear holds it: Coulomb friction removes up to μ·g·dt of horizontal speed
+     * each step and stops it outright below that (static friction), so a landed ship comes to rest on flat ground
+     * and on any slope gentler than atan μ ≈ 39°. Taking off (lift up, or the main engine) is untouched.
+     */
+    public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt,
+                              boolean grounded) {
+        if (parked(c, hydrogen, grounded)) {
+            c = new Controls(c.thrust(), Math.min(0, c.lift()), c.yawDeg(), c.pitchDeg(), c.rollDeg(), false);
+            double burned = step(attitude, velocity, c, gravity, hydrogen, dt, false);
+            gearFriction(velocity, gravity, dt);
+            return burned;
+        }
         double yaw = clamp(c.yawDeg(), MAX_TURN_PER_TICK), pitch = clamp(c.pitchDeg(), MAX_TURN_PER_TICK),
                 roll = clamp(c.rollDeg(), MAX_TURN_PER_TICK);
         attitude.rotateY(Math.toRadians(-yaw)).rotateX(Math.toRadians(pitch)).rotateZ(Math.toRadians(roll)).normalize();
@@ -87,6 +120,22 @@ public final class ShipFlightModel {
         double v = velocity.length();
         if (v > MAX_SPEED) velocity.mul(MAX_SPEED / v);
         return Math.min(hydrogen, Math.abs(throttle) * dt / MAIN_SECONDS_PER_HYDROGEN);
+    }
+
+    /**
+     * Coulomb friction of the gear on the ground: removes up to μ·|g|·dt of the velocity across gravity, and all of
+     * it when less is left (the ship sticks). Velocity along gravity is left to the collision with the ground.
+     */
+    static void gearFriction(Vector3d velocity, Vector3dc gravity, double dt) {
+        double g = gravity.length();
+        if (g < 1e-9) return;
+        Vector3d down = new Vector3d(gravity).div(g);
+        double along = velocity.dot(down);
+        Vector3d across = new Vector3d(velocity).fma(-along, down);
+        double speed = across.length();
+        double stop = GEAR_FRICTION * g * dt;
+        if (speed <= stop) velocity.sub(across);
+        else velocity.fma(-stop / speed, across);
     }
 
     /** The part of {@code x} a budget-limited thruster can cancel this step. */
