@@ -45,6 +45,7 @@ public final class OriginShiftAutoTest {
     private static double lastFrameTime;
     private static Vec3 lastLocal;
     private static final ArrayDeque<String> RECENT = new ArrayDeque<>();
+    private static final ShipBurnAutoTest.Probe PROBE = new ShipBurnAutoTest.Probe();
 
     /** Starts a phase: {@code ship} (piloted ship) or {@code eva}; velocity in blocks per tick. */
     static void start(String name, Vec3 blocksPerTick) {
@@ -63,6 +64,12 @@ public final class OriginShiftAutoTest {
         start = lastFrame = null;
         lastLocal = null;
         RECENT.clear();
+        PROBE.reset();
+        Starship.netProbe = ship != null ? PROBE : null;
+        // The forced velocity is what the pilot reports from now on; the server gets it too, so it does not clamp
+        // the first reports as an impossible burn (and send corrections the test would read as off steps).
+        if (ship != null) ship.overrideVelocity(blocksPerTick);
+        setServerVelocity(blocksPerTick);
         active = true;
         SkyManager.frameProbe = OriginShiftAutoTest::frame;
         Galactica.LOG.info("[autotest] origin-recentre {}: start at {} with {} blocks/tick (ship id {})", name,
@@ -73,15 +80,19 @@ public final class OriginShiftAutoTest {
     static void finish() {
         active = false;
         SkyManager.frameProbe = null;
+        Starship.netProbe = null;
         LocalPlayer p = Minecraft.getInstance().player;
-        if (p != null) p.getRootVehicle().setDeltaMovement(Vec3.ZERO);
+        if (ship != null) ship.overrideVelocity(Vec3.ZERO);
+        else if (p != null) p.getRootVehicle().setDeltaMovement(Vec3.ZERO);
+        setServerVelocity(Vec3.ZERO);
         int shifts = OriginShiftClient.applied - shiftsAtStart;
         boolean ok = recentres >= 3 && shifts >= 3 && frameFailures == 0 && backwardFailures == 0 && mountFailures == 0
                 && shipLost == 0 && frames > 100;
         Galactica.LOG.info(String.format(Locale.ROOT,
                 "[autotest] %s origin-recentre %s: recentres=%d shiftsApplied=%d ticks=%d frames=%d worstFrameJump=%.2f of allowed, "
-                        + "frameJumps=%d backwards=%d dismounts=%d shipRemoved=%d strictJumps=%d offSteps=%d", ok ? "PASS" : "FAIL", phase, recentres,
-                shifts, ticks, frames, worstRatio, frameFailures, backwardFailures, mountFailures, shipLost, strictJumps, offSteps));
+                        + "frameJumps=%d backwards=%d dismounts=%d shipRemoved=%d strictJumps=%d offSteps=%d echoesDropped=%d staleEchoes=%d corrections=%d",
+                ok ? "PASS" : "FAIL", phase, recentres, shifts, ticks, frames, worstRatio, frameFailures, backwardFailures, mountFailures, shipLost,
+                strictJumps, offSteps, PROBE.echoes, PROBE.stale, PROBE.corrections));
     }
 
     private static void tick(Minecraft mc) {
@@ -160,6 +171,19 @@ public final class OriginShiftAutoTest {
         }
         lastFrame = viewer;
         lastFrameTime = now;
+    }
+
+    /** The integrated server's copy of the piloted ship takes the velocity too (the test drives a velocity no engine could reach). */
+    private static void setServerVelocity(Vec3 blocksPerTick) {
+        Minecraft mc = Minecraft.getInstance();
+        if (shipId < 0 || mc.getSingleplayerServer() == null || mc.level == null) return;
+        var server = mc.getSingleplayerServer();
+        var dimension = mc.level.dimension();
+        int id = shipId;
+        server.execute(() -> {
+            var level = server.getLevel(dimension);
+            if (level != null && level.getEntity(id) instanceof Starship s) s.setDeltaMovement(blocksPerTick);
+        });
     }
 
     private static String fmt(Vec3 v) {

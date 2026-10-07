@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import dev.galactica.Galactica;
 import dev.galactica.ship.HyperjumpPayload;
 import dev.galactica.ship.ShipControlPayload;
+import dev.galactica.ship.ShipCorrectionPayload;
 import dev.galactica.ship.ShipEntities;
 import dev.galactica.ship.Starship;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -56,6 +57,11 @@ public final class ShipClient {
         EntityRenderers.register(ShipEntities.SHIP, geckoLibUsable() ? ShipClient::geckoOrVanilla : StarshipRenderer::new);
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("ship_hud"), ShipHud::extract);
 
+        // Fabric runs play payload handlers on the client thread, in packet order.
+        ClientPlayNetworking.registerGlobalReceiver(ShipCorrectionPayload.TYPE, (msg, ctx) -> {
+            if (ctx.client().level != null && ctx.client().level.getEntity(msg.entityId()) instanceof Starship ship)
+                ship.applyCorrection(msg.seq(), msg.velocity());
+        });
         ClientTickEvents.START_CLIENT_TICK.register(ShipClient::beforeTick);
         ClientTickEvents.END_CLIENT_TICK.register(ShipClient::afterTick);
     }
@@ -122,8 +128,9 @@ public final class ShipClient {
     private static void afterTick(Minecraft mc) {
         Starship ship = piloted(mc);
         if (ship == null || !ClientPlayNetworking.canSend(ShipControlPayload.TYPE)) return;
+        int seq = ship.recordReport(ship.getDeltaMovement());
         Vec3 v = ship.getDeltaMovement().scale(20.0);
-        ClientPlayNetworking.send(new ShipControlPayload(ship.getId(), new Quaternionf(ship.attitude()),
+        ClientPlayNetworking.send(new ShipControlPayload(ship.getId(), seq, new Quaternionf(ship.attitude()),
                 new Vector3f((float) v.x, (float) v.y, (float) v.z), ship.coupled()));
     }
 }
