@@ -121,6 +121,7 @@ public final class SkyManager {
             GalacticPos at = viewer;
             int w = width, h = dev.galactica.config.ConfigEffects.skyHeight(width);
             worker.execute(() -> {
+                long perf = dev.galactica.perf.Perf.t0();
                 try {
                     float[] hdr = new float[w * h * 3];
                     baker.bakeEquirect(at.xPc(), at.yPc(), at.zPc(), w, h, hdr);
@@ -128,6 +129,7 @@ public final class SkyManager {
                     int[] argb = new int[w * h];
                     for (int i = 0; i < argb.length; i++) argb[i] = tm.toArgb(hdr[i * 3], hdr[i * 3 + 1], hdr[i * 3 + 2]);
                     pendingSky.set(new BakedSky(argb, at));
+                    dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SKY_BAKE, perf);
                 } catch (Throwable t) {
                     Galactica.LOG.error("Galaxy sky bake failed", t);
                 } finally {
@@ -140,11 +142,13 @@ public final class SkyManager {
             starsBusy = true;
             GalacticPos at = viewer;
             worker.execute(() -> {
+                long perf = dev.galactica.perf.Perf.t0();
                 try {
                     List<Starfield.VisibleStar> all = Starfield.compute(galaxy, at.xPc(), at.yPc(), at.zPc());
                     // Stars inside the near limit are drawn live by the renderer.
                     List<Starfield.VisibleStar> far = all.stream().filter(v -> v.distancePc() > NEAR_LIMIT_PC).toList();
                     pendingStars.set(new BakedStars(far, at));
+                    dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.STARFIELD, perf);
                 } catch (Throwable t) {
                     Galactica.LOG.error("Starfield computation failed", t);
                 } finally {

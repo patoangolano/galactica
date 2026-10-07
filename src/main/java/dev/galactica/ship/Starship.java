@@ -343,6 +343,16 @@ public class Starship extends VehicleEntity {
 
     @Override
     public void tick() {
+        // Server ticks only: the client's prediction is part of the frame, not of the server's tick budget.
+        long perf = level().isClientSide() ? 0L : dev.galactica.perf.Perf.t0();
+        try {
+            tickTimed();
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.STARSHIP_TICK, perf);
+        }
+    }
+
+    private void tickTimed() {
         if (getHurtTime() > 0) setHurtTime(getHurtTime() - 1);
         attitudeO.set(attitude);
         attitudeSync.apply(attitude, level().isClientSide() && !isLocalInstanceAuthoritative());

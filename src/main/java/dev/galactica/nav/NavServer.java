@@ -47,6 +47,15 @@ public final class NavServer {
     }
 
     public static void tick(MinecraftServer server) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            tickTimed(server);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.NAV_SERVER, perf);
+        }
+    }
+
+    private static void tickTimed(MinecraftServer server) {
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {
             boolean inSpace = p.level().dimension() == Galactica.SPACE;
             applyZeroG(p, inSpace);

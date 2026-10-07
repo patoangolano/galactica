@@ -82,6 +82,15 @@ public final class CockpitDisplay {
 
     /** Client tick end: repaints and uploads while the local player rides a ship and looks out of it. */
     static void tick(Minecraft mc) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            tickTimed(mc);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.COCKPIT, perf);
+        }
+    }
+
+    private static void tickTimed(Minecraft mc) {
         if (mc.player == null || !(mc.player.getVehicle() instanceof Starship ship) || mc.level == null) return;
         if (!mc.options.getCameraType().isFirstPerson()) return;
         gpuBall = ShipRenderTypes.displayUsable();

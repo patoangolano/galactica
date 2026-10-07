@@ -206,6 +206,15 @@ public final class ExoticOverlay {
      * @param modelView {@code RenderSystem.getModelViewMatrixCopy()} as used for the other layers
      */
     public static void draw(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            drawTimed(pass, quads, modelView);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.EXOTIC, perf);
+        }
+    }
+
+    private static void drawTimed(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
         if (vertices == null || SPRITES.isEmpty()) return;
         GpuSampler clamp = SkyTextures.linearClamp();
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(modelView, new Vector4f(1, 1, 1, 1));

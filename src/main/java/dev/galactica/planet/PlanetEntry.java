@@ -267,6 +267,15 @@ public final class PlanetEntry {
 
     /** Called every tick for players in galactica:space; approaches and lands them when inside an entry shell. */
     public static boolean tryEnter(ServerPlayer p) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            return tryEnterTimed(p);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.PLANET_ENTRY, perf);
+        }
+    }
+
+    private static boolean tryEnterTimed(ServerPlayer p) {
         Entity root = p.getRootVehicle();
         if (p.level().dimension() != Galactica.SPACE || p.isSpectator() || !isLeader(p, root)) {
             abortApproach(p);
@@ -587,6 +596,15 @@ public final class PlanetEntry {
      * the gravity modifiers.
      */
     public static void tickSurface(ServerPlayer p) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            tickSurfaceTimed(p);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.PLANET_ENTRY, perf);
+        }
+    }
+
+    private static void tickSurfaceTimed(ServerPlayer p) {
         // Left space without switching (death, command, portal): the approach is over.
         if (p.level().dimension() != Galactica.SPACE && APPROACHES.containsKey(p.getUUID())) abortApproach(p);
         int slot = PlanetSlots.slotOf(p.level().dimension());

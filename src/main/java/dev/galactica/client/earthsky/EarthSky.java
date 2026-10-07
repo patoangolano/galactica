@@ -138,6 +138,15 @@ public final class EarthSky {
 
     /** HEAD of SkyRenderer.render, outside any render pass: finish GPU uploads. */
     public static void prepare() {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            prepareTimed();
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.EARTH_SKY, perf);
+        }
+    }
+
+    private static void prepareTimed() {
         if (!realNightSky) return;
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.level.dimension() != Level.OVERWORLD) return;
@@ -218,6 +227,15 @@ public final class EarthSky {
      * vanilla adds it before {@code renderStars}.
      */
     public static void renderMilkyWay(RenderPass pass, PoseStack poseStack, float starAngle, float starBrightness) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            renderMilkyWayTimed(pass, poseStack, starAngle, starBrightness);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.EARTH_SKY, perf);
+        }
+    }
+
+    private static void renderMilkyWayTimed(RenderPass pass, PoseStack poseStack, float starAngle, float starBrightness) {
         if (starBrightness <= 0f || !active()) return;
         Matrix4f modelView = new Matrix4f(RenderSystem.getModelViewStack()).mul(poseStack.last().pose()).rotateX(starAngle);
         seasonal(modelView);
@@ -231,6 +249,15 @@ public final class EarthSky {
      * stars must be cancelled.
      */
     public static boolean renderStars(RenderPass pass, float starBrightness, PoseStack poseStack) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            return renderStarsTimed(pass, starBrightness, poseStack);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.EARTH_SKY, perf);
+        }
+    }
+
+    private static boolean renderStarsTimed(RenderPass pass, float starBrightness, PoseStack poseStack) {
         if (!active()) return false;
         if (stars != null) {
             Matrix4f modelView = new Matrix4f(RenderSystem.getModelViewStack()).mul(poseStack.last().pose());

@@ -102,6 +102,15 @@ public final class FloatingOrigin {
      * chunk arrived. Call every tick for the leader of a craft in space.
      */
     public static void keepCraftLoaded(ServerPlayer p) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            keepCraftLoadedTimed(p);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.FLOATING_ORIGIN, perf);
+        }
+    }
+
+    private static void keepCraftLoadedTimed(ServerPlayer p) {
         Entity root = p.getRootVehicle();
         Vec3 now = root.position();
         Vec3 before = LAST_POS.put(p.getUUID(), now);
@@ -134,6 +143,15 @@ public final class FloatingOrigin {
 
     /** Per-tick housekeeping: forgets shifts that left space or were never acknowledged. */
     public static void tick(ServerPlayer p) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            tickTimed(p);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.FLOATING_ORIGIN, perf);
+        }
+    }
+
+    private static void tickTimed(ServerPlayer p) {
         if (p.level().dimension() != Galactica.SPACE) {
             LAST_POS.remove(p.getUUID());
             LAST_STEP.remove(p.getUUID());

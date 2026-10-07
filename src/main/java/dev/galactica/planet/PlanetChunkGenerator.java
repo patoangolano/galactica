@@ -108,6 +108,15 @@ public final class PlanetChunkGenerator extends ChunkGenerator {
     }
 
     private static ChunkAccess fill(ChunkAccess chunk, TerrainSampler t) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            return fillTimed(chunk, t);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.PLANET_CHUNK, perf);
+        }
+    }
+
+    private static ChunkAccess fillTimed(ChunkAccess chunk, TerrainSampler t) {
         int bx = chunk.getPos().getMinBlockX(), bz = chunk.getPos().getMinBlockZ();
         // Heights with a one-column border, for slopes across chunk edges. Inner columns keep their
         // full macro sample for the materials pass; the border needs only the elevation.

@@ -125,6 +125,15 @@ public final class NearPlanetRenderer {
      * body this frame, in which case the caller skips its sprite.
      */
     public static boolean offer(Body b, double halfAngle, Star star, GalacticPos bodyPos, GalacticPos starPos, GalacticPos eye, double t) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            return offerTimed(b, halfAngle, star, bodyPos, starPos, eye, t);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.NEAR_PLANET, perf);
+        }
+    }
+
+    private static boolean offerTimed(Body b, double halfAngle, Star star, GalacticPos bodyPos, GalacticPos starPos, GalacticPos eye, double t) {
         if (halfAngle <= BAKE_HALF_ANGLE || !eligible(b)) return false;
         Candidate c = new Candidate(b, halfAngle, star, bodyPos, starPos, eye, t);
         if (largest == null || halfAngle > largest.halfAngle()) largest = c;
@@ -141,6 +150,15 @@ public final class NearPlanetRenderer {
      * frees everything when nothing is close.
      */
     public static void endFrame() {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            endFrameTimed();
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.NEAR_PLANET, perf);
+        }
+    }
+
+    private static void endFrameTimed() {
         Candidate target = claimed != null ? claimed : largest;
         winnerId = largest != null ? largest.body().id() : Long.MIN_VALUE;
         if (claimed == null) freeMesh();
@@ -173,11 +191,29 @@ public final class NearPlanetRenderer {
      * Milky Way and the stars, before the sun and the near bodies, so the sun is not veiled by it.
      */
     public static void drawSky(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            drawSkyTimed(pass, quads, modelView);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.NEAR_PLANET, perf);
+        }
+    }
+
+    private static void drawSkyTimed(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
         drawParts(pass, quads, modelView, SKY_PARTS);
     }
 
     /** Draws the claimed body inside the open space-sky pass, after the resolved planets. */
     public static void draw(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            drawTimed(pass, quads, modelView);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.NEAR_PLANET, perf);
+        }
+    }
+
+    private static void drawTimed(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView) {
         drawParts(pass, quads, modelView, PARTS);
     }
 

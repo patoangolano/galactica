@@ -171,6 +171,15 @@ public final class NebulaCloseUp {
 
     /** Inside the pass, right after the Milky Way layer and before the stars; {@code dim} is the Milky Way's dimming. */
     public static void draw(RenderPass pass, RenderSystem.AutoStorageIndexBuffer indices, Matrix4f modelView, float dim) {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            drawTimed(pass, indices, modelView, dim);
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.NEBULA, perf);
+        }
+    }
+
+    private static void drawTimed(RenderPass pass, RenderSystem.AutoStorageIndexBuffer indices, Matrix4f modelView, float dim) {
         if (quads == null || DRAWN.isEmpty()) return;
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(modelView, new Vector4f(dim, dim, dim, 1f));
         // Farthest (smallest) first, so a nearer nebula's patch lies over a farther one's.

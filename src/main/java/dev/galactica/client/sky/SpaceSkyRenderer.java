@@ -99,22 +99,39 @@ public final class SpaceSkyRenderer {
     }
 
     public static void render() {
+        long perf = dev.galactica.perf.Perf.t0();
+        try {
+            renderSky();
+        } finally {
+            dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SPACE_SKY, perf);
+        }
+    }
+
+    private static void renderSky() {
         Minecraft mc = Minecraft.getInstance();
         SkyManager mgr = SkyManager.get();
+        long perf = dev.galactica.perf.Perf.t0();
         mgr.update(mc);
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SKY_MANAGER, perf);
         SkyManager.BakedSky sky = mgr.takeSky();
         if (sky != null) SkyTextures.uploadGalaxy(sky.argb());
         SkyManager.BakedStars st = mgr.takeStars();
         if (st != null) rebuildStars(st.stars());
         if (sphere == null) buildSphere();
+        perf = dev.galactica.perf.Perf.t0();
         PlanetSprites.beginFrame();
         NearPlanetRenderer.beginFrame();
         rebuildNear(mgr);
         rebuildPlanets();
         NearPlanetRenderer.endFrame();
         PlanetSprites.evict();
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SPACE_NEAR, perf);
+        perf = dev.galactica.perf.Perf.t0();
         dev.galactica.client.exotic.ExoticOverlay.prepare(mgr.viewer(), mgr.nav() != null ? mgr.nav().timeSeconds() : 0);
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.EXOTIC, perf);
+        perf = dev.galactica.perf.Perf.t0();
         dev.galactica.client.exotic.NebulaCloseUp.prepare(mgr.viewer());
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.NEBULA, perf);
 
         // Resolve every texture first: creating a DynamicTexture uploads it, and uploads are
         // commands that are illegal while a render pass is open.
@@ -126,6 +143,7 @@ public final class SpaceSkyRenderer {
         RenderTarget rt = mc.gameRenderer.mainRenderTarget();
         RenderSystem.AutoStorageIndexBuffer quads = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
         Matrix4f modelView = RenderSystem.getModelViewMatrixCopy();
+        perf = dev.galactica.perf.Perf.t0();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder()
                 .createRenderPass(() -> "Galactica space sky", rt.getColorTextureView(), Optional.empty(), rt.getDepthTextureView(), OptionalDouble.empty())) {
             RenderSystem.bindDefaultUniforms(pass);
@@ -159,6 +177,7 @@ public final class SpaceSkyRenderer {
             }
             NearPlanetRenderer.draw(pass, quads, modelView);
         }
+        dev.galactica.perf.Perf.add(dev.galactica.perf.Perf.S.SPACE_DRAW, perf);
     }
 
     private static void draw(RenderPass pass, RenderSystem.AutoStorageIndexBuffer quads, Matrix4f modelView, GpuBuffer vb, int indexCount,
