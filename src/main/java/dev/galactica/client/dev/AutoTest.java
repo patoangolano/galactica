@@ -179,10 +179,13 @@ public final class AutoTest {
         orientShip(5, 150, 35);
         clearChat(5);
         key(5, "keyUp", true);
+        STEPS.add(new Step(0, ShipBurnAutoTest::start));
         shot(100, "18_ship_thrust");
         key(5, "keyUp", false);
+        STEPS.add(new Step(20, ShipBurnAutoTest::finish));
         camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
-        // Floating origin while piloting: the ship at ~14 blocks/tick through at least 3 recentres.
+        // Floating origin while piloting: the ship at ~14 blocks/tick through at least 3 recentres, straight
+        // from the burn above (no reset: the ship still coasts at the burn's velocity when the phase takes over).
         STEPS.add(new Step(5, () -> OriginShiftAutoTest.start("ship", new net.minecraft.world.phys.Vec3(0, 0, 14))));
         shot(150, "18b_ship_recentre");
         STEPS.add(new Step(180, OriginShiftAutoTest::finish));
