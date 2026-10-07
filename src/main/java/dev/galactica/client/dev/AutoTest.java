@@ -208,8 +208,11 @@ public final class AutoTest {
         look(180, 0, -10);  shot(5, "20_mars_descent");
         STEPS.add(new Step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Mars", 0.38)));
         shipDiagnostics(1, "Mars descent");
-        // The ship falls ~1 400 blocks from the entry height: hold the script until it rests (at most 90 s).
-        awaitShipOnGround(5, 1800);
+        // Flight assist holds altitude with no lift input, so descend the way a pilot does: hold sneak (RCS down)
+        // through the ~1 400 blocks from the entry height and hold the script until it rests (at most 120 s).
+        key(5, "keyShift", true);
+        awaitShipOnGround(1, 2400);
+        key(1, "keyShift", false);
         shipOnGround(40, "Mars");
         shipDiagnostics(1, "Mars landed");
         shot(20, "21a_mars_cockpit");
@@ -344,7 +347,10 @@ public final class AutoTest {
             boolean onShip = !mc.level.getEntitiesOfClass(dev.galactica.ship.Starship.class, box.expandTowards(0, -2, 0),
                     s -> s != ship).isEmpty();
             boolean hullClear = dev.galactica.ship.Starship.hullClear(mc.level, ship.position(), ship.attitude());
-            boolean ok = ship.onGround() && gap > -0.05 && gap < 1.5 && !inside && hullClear && tilt < 35 && !onShip && mc.player.isAlive();
+            // The gap under the box centre only says how rough the site is: on a slope the hull rests on a probe (nose or
+            // wing) over a ledge, so it is reported but does not fail the landing; resting, upright and clear does.
+            boolean ok = ship.onGround() && gap > -0.05 && !inside && hullClear && tilt < 35 && !onShip && mc.player.isAlive()
+                    && ship.getDeltaMovement().length() * 20 < 0.5;
             Galactica.LOG.info("[autotest] {} ship on ground on {}: onGround {}, box bottom {} over the footprint's top block {}, embedded {}, "
                             + "hull probes clear {}, tilt {} deg, on another ship {}, speed {} m/s",
                     ok ? "PASS" : "FAIL", body, ship.onGround(), String.format(java.util.Locale.ROOT, "%.2f", gap), top, inside, hullClear,
@@ -458,6 +464,7 @@ public final class AutoTest {
                 case "keyUp" -> o.keyUp;
                 case "keyDown" -> o.keyDown;
                 case "keyJump" -> o.keyJump;
+                case "keyShift" -> o.keyShift;
                 default -> throw new IllegalArgumentException(mapping);
             };
             Galactica.LOG.info("[autotest] key {} {}", mapping, down ? "down" : "up");
