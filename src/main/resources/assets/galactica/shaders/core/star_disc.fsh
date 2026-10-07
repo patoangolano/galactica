@@ -83,7 +83,10 @@ void main() {
     // Gnomonic quad: a point at quadUv lies atan(|uv| tan(half)) from the star's centre.
     float r = atan(len * StarGeom.y) / angR;              // in stellar radii
     float rMax = atan(StarGeom.y) / angR;                  // quad edge, stellar radii
-    float pr = max(fwidth(r), 1e-5);                       // stellar radii per pixel
+    // Stellar radii per pixel. The gradient length, not fwidth: fwidth (|dx| + |dy|) of a radial
+    // function is up to sqrt(2) larger on the diagonals than on the screen axes, which let the
+    // granulation LOD switch on only along the axes (a sparkling cross through the disc centre).
+    float pr = max(length(vec2(dFdx(r), dFdy(r))), 1e-5);
     vec2 dir2 = len > 1e-6 ? quadUv / len : vec2(1.0, 0.0);
     bool smoothSurface = StarLimb.z > 0.5;
     vec4 flare = flareState(t, seed);
@@ -109,7 +112,8 @@ void main() {
             // Granulation: Worley cells of the size set by the pressure scale height. Cells look
             // smaller toward the limb (foreshortening by mu), so they fade out there first.
             float cells = StarGran.x;
-            float lod = 1.0 - smoothstep(0.18, 0.45, cells * pr / max(mu, 0.15));
+            // Fully drawn at >= 8 px per cell, gone below ~3 px, where Worley cells only alias.
+            float lod = 1.0 - smoothstep(0.12, 0.3, cells * pr / max(mu, 0.15));
             if (lod > 0.0 && StarGran.z > 0.0) {
                 float phase = StarPhase.z;                           // TAU t / lifetime, wrapped on the CPU
                 vec3 gp = qs * cells + 0.12 * vec3(gx_simplex3(qs * cells * 0.5 + vec3(0.0, 0.0, t * 0.01)));

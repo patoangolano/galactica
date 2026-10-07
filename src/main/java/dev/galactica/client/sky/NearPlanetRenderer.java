@@ -108,6 +108,11 @@ public final class NearPlanetRenderer {
                 && sky != SurfaceAtmosphere.SkyClass.ORANGE;
     }
 
+    /** Name of the body drawn as terrain in the last frame, or null (autotest probe). */
+    public static String claimedName() {
+        return claimed == null ? null : claimed.body().name();
+    }
+
     /** Start of a space-sky frame. */
     public static void beginFrame() {
         largest = null;
@@ -417,7 +422,7 @@ public final class NearPlanetRenderer {
                     if (facing >= -1e-6 * x.d) visible = false;
                     q[k][3] = (float) fu;
                     q[k][4] = (float) fv;
-                    c[k] = surfaceVertex(x, nrm, q[k], 0, 0);
+                    c[k] = feather(surfaceVertex(x, nrm, q[k], 0, 0), fu, fv);
                 }
                 if (!visible) continue;
                 emitInward(buf, q, c);
@@ -425,6 +430,22 @@ public final class NearPlanetRenderer {
             }
         }
         return n;
+    }
+
+    /** Outer share of a clipmap level over which it fades into the coarser layer beneath. */
+    static final double LEVEL_FEATHER = 0.15;
+
+    /**
+     * Fades a level's colour alpha to 0 at its rim (patch coordinates fu, fv in 0..1), so a finer
+     * level blends into the coarser one under it instead of ending on a hard square edge.
+     */
+    static int feather(int argb, double fu, double fv) {
+        double edge = Math.min(Math.min(fu, 1 - fu), Math.min(fv, 1 - fv)) / LEVEL_FEATHER;
+        if (edge >= 1) return argb;
+        double s = Math.max(0, edge);
+        s = s * s * (3 - 2 * s);
+        int a = (int) Math.round(((argb >>> 24) & 0xFF) * s);
+        return (a << 24) | (argb & 0xFFFFFF);
     }
 
     /** Thin glowing shell just outside the disc: grazing airlight fading over a few scale heights. */
