@@ -10,6 +10,7 @@ import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import dev.galactica.Galactica;
+import dev.galactica.ship.ShipLighting;
 import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.fabricmc.fabric.api.resource.v1.reloader.ResourceReloaderKeys;
 import net.minecraft.client.Minecraft;
@@ -29,9 +30,10 @@ import java.util.Set;
 /**
  * The ship's own pipelines and render types (docs/recon/api_vfx_pipelines.md, api_vfx_entity.md):
  * <ul>
- *   <li>{@link #HULL_LIT}: vanilla {@code core/entity} shaders compiled with {@code NO_CARDINAL_LIGHTING} and
- *       {@code EMISSIVE}, so neither vanilla's two fixed lights nor the lightmap touch the hull: the vertex colour,
- *       which {@link ShadedVertexConsumer} computes per face from the host star, is the whole lighting.</li>
+ *   <li>{@link #HULL_LIT}: our {@code core/ship_hull} shaders. Neither vanilla's two fixed lights nor the lightmap
+ *       touch the hull: the vertex colour, which {@link ShadedVertexConsumer} computes per face from the host star,
+ *       is the whole lighting, times the exposure gain {@link ShipLighting#HULL_GAIN} under a highlight
+ *       shoulder.</li>
  *   <li>{@link #EXHAUST}: our {@code core/exhaust_plume} shaders, additive ({@code SRC_ALPHA, ONE}), depth-tested
  *       without depth write (reversed Z: GEQUAL), with the matching {@code OIT_ADDITIVE} set for improved
  *       transparency.</li>
@@ -62,14 +64,12 @@ public final class ShipRenderTypes {
             .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
             .withBindGroupLayout(BindGroupLayouts.SAMPLER1)
             .withLocation(id("pipeline/ship_hull_lit"))
-            .withVertexShader("core/entity")
-            .withFragmentShader("core/entity")
+            .withVertexShader(id("core/ship_hull"))
+            .withFragmentShader(id("core/ship_hull"))
             .withVertexBinding(0, DefaultVertexFormat.ENTITY)
             .withPrimitiveTopology(PrimitiveTopology.QUADS)
             .withDepthStencilState(DepthStencilState.DEFAULT)
-            .withShaderDefine("ALPHA_CUTOUT", 0.1F)
-            .withShaderDefine("NO_CARDINAL_LIGHTING")
-            .withShaderDefine("EMISSIVE")
+            .withShaderDefine("HULL_GAIN", ShipLighting.HULL_GAIN)
             .withColorTargetState(ColorTargetState.DEFAULT)
             .build();
 

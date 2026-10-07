@@ -115,13 +115,26 @@ public final class AutoTest {
         // M3: starship. Deploy and board near Earth, burn the main engine for 5 s, then a hyperjump.
         cmd(20, "galactica goto Sol");
         cmd(40, "galactica ship");
-        look(40, 90, 10);   shot(5, "17_ship_boarded");
-        STEPS.add(new Step(5, () -> Minecraft.getInstance().options.setCameraType(net.minecraft.client.CameraType.THIRD_PERSON_FRONT)));
-        look(10, 130, 25);  shot(10, "17b_ship_exterior");
-        STEPS.add(new Step(5, () -> Minecraft.getInstance().options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON)));
+        // The ship, not the pilot, sets the view while flying: turn the hull so the Sun is where each shot wants it
+        // (azimuth toward port from the nose, elevation above the ship's horizon).
+        clearChat(40);
+        orientShip(5, 35, 30);       shot(10, "17_ship_boarded");
+        // Exteriors without the HUD: the chase view with the Sun behind and above the camera, then a 3/4 front orbit.
+        hud(5, false);
+        camera(5, net.minecraft.client.CameraType.THIRD_PERSON_BACK);
+        orientShip(5, 150, 35);      shot(10, "17b_ship_exterior");
+        orientShip(5, -60, 40);
+        STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(145, 18, 7.5F)));
+        shot(10, "17c_ship_exterior_front");
+        STEPS.add(new Step(5, dev.galactica.client.ship.ShipCamera::clearOrbit));
+        hud(5, true);
+        // Main engine for 5 s in the chase view: the plume streams back toward the camera.
+        orientShip(5, 150, 35);
+        clearChat(5);
         key(5, "keyUp", true);
         shot(100, "18_ship_thrust");
         key(5, "keyUp", false);
+        camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
         cmd(20, "galactica where");
         cmd(20, "galactica nearest 3");
         STEPS.add(new Step(20, () -> Minecraft.getInstance().player.connection.sendCommand("galactica fuel 400 16")));
@@ -158,6 +171,73 @@ public final class AutoTest {
         look(80, 30, 5);    shot(5, "24_venus_ground");
         STEPS.add(new Step(60, () -> Minecraft.getInstance().stop()));
         ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+    }
+
+    /** Empties the chat and the action-bar line, so earlier command output does not cover the next shot. */
+    private static void clearChat(int wait) {
+        STEPS.add(new Step(wait, () -> {
+            var gui = Minecraft.getInstance().gui;
+            gui.hud.getChat().clearMessages(false);
+            gui.hud.setOverlayMessage(net.minecraft.network.chat.Component.empty(), false);
+        }));
+    }
+
+    /** Shows or hides the whole HUD (F1). */
+    private static void hud(int wait, boolean visible) {
+        STEPS.add(new Step(wait, () -> {
+            var hud = Minecraft.getInstance().gui.hud;
+            if (hud.isHidden() == visible) hud.toggle();
+        }));
+    }
+
+    private static void camera(int wait, net.minecraft.client.CameraType type) {
+        STEPS.add(new Step(wait, () -> Minecraft.getInstance().options.setCameraType(type)));
+    }
+
+    /**
+     * Turns the piloted ship (yaw and pitch, no roll) so the host star lies at {@code sunAzDeg} toward port from the
+     * nose and {@code sunElDeg} above the ship's horizon, as close as a 1° search gets. The pilot's client is
+     * authoritative for the attitude, so setting it here is what the server receives next tick.
+     */
+    private static void orientShip(int wait, float sunAzDeg, float sunElDeg) {
+        STEPS.add(new Step(wait, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            var ship = dev.galactica.client.ship.ShipClient.piloted(mc);
+            if (ship == null) {
+                Galactica.LOG.warn("[autotest] FAIL orient ship: not piloting");
+                return;
+            }
+            var state = new dev.galactica.client.ship.StarshipRenderState();
+            state.x = ship.getX();
+            state.y = ship.getY();
+            state.z = ship.getZ();
+            dev.galactica.client.ship.ShipEnvironment.sample(ship, state);
+            if (state.toStar.lengthSquared() < 0.5F) {
+                Galactica.LOG.warn("[autotest] FAIL orient ship: no host star (direct {})", state.direct);
+                return;
+            }
+            double az = Math.toRadians(sunAzDeg), el = Math.toRadians(sunElDeg);
+            // Body frame: +Z nose, +X port, +Y up.
+            org.joml.Vector3f body = new org.joml.Vector3f((float) (Math.sin(az) * Math.cos(el)), (float) Math.sin(el),
+                    (float) (Math.cos(az) * Math.cos(el)));
+            org.joml.Quaternionf best = new org.joml.Quaternionf(), q = new org.joml.Quaternionf();
+            org.joml.Vector3f v = new org.joml.Vector3f();
+            float bestDot = -2F;
+            for (int yaw = 0; yaw < 360; yaw++) {
+                for (int pitch = -85; pitch <= 85; pitch++) {
+                    q.rotationYXZ((float) Math.toRadians(yaw), (float) Math.toRadians(pitch), 0F);
+                    float d = q.transform(v.set(body)).dot(state.toStar);
+                    if (d > bestDot) {
+                        bestDot = d;
+                        best.set(q);
+                    }
+                }
+            }
+            ship.setAttitude(best);
+            Galactica.LOG.info("[autotest] ship oriented: Sun at az {} el {} (miss {} deg), direct light {}, toStar {}",
+                    sunAzDeg, sunElDeg, String.format(java.util.Locale.ROOT, "%.1f", Math.toDegrees(Math.acos(Math.min(1F, bestDot)))),
+                    state.direct, state.toStar);
+        }));
     }
 
     /** Presses or releases a key mapping inside the game (no OS input). */

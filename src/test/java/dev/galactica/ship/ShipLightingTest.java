@@ -36,6 +36,15 @@ class ShipLightingTest {
     }
 
     @Test
+    void exposedHullReadsAgainstSpace() {
+        double albedo = 75 / 255.0; // the hull's main grey panel
+        double sunlit = albedo * HULL_GAIN * shade(1, 1), night = albedo * HULL_GAIN * shade(-1, 1);
+        assertTrue(sunlit > 0.7, "sunlit side is bright: " + sunlit);
+        assertTrue(night > 0.12 && night < 0.2, "night side is dark grey, still a silhouette: " + night);
+        assertTrue(shade(1, 1) <= 1 && shade(1, 0) <= 1, "the vertex colour carries shade, which fits in 8 bits");
+    }
+
+    @Test
     void tintIsNormalisedAndHalfWayToWhite() {
         float[] out = new float[3];
         tint(new float[] {1F, 0.5F, 0.2F}, out);
