@@ -28,13 +28,29 @@ public final class AutoTest {
 
     private static final List<Step> STEPS = new ArrayList<>();
     private static final String TAG = System.getProperty("galactica.autotest.tag", "");
+    /**
+     * Run mode from -Dgalactica.autotest.mode only (e.g. "m7"). No environment fallback: a stale
+     * variable in the shell would silently replace the default and Iris runs.
+     */
+    private static final String MODE = System.getProperty("galactica.autotest.mode", "");
     private static int index, countdown = 200;
     private static Consumer<Minecraft> perTick = mc -> {};
 
     public static void install() {
         if (!Boolean.getBoolean("galactica.autotest")) return;
-        Galactica.LOG.info("[autotest] enabled{}", TAG.isEmpty() ? "" : " (" + TAG + ")");
-        if ("venus".equals(System.getProperty("galactica.autotest.mode"))) {
+        Galactica.LOG.info("[autotest] enabled{}{}", TAG.isEmpty() ? "" : " (" + TAG + ")", MODE.isEmpty() ? "" : " mode " + MODE);
+        if ("m7".equals(MODE)) {
+            // The test world persists between runs: empty the inventory so every run starts with one kit.
+            cmd(0, "clear");
+            cmd(5, "galactica kit");
+            cmd(10, "galactica launch");
+            cmd(40, "galactica goto Sol");
+            m7();
+            STEPS.add(new Step(40, () -> Minecraft.getInstance().stop()));
+            ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+            return;
+        }
+        if ("venus".equals(MODE)) {
             cmd(0, "galactica kit");
             cmd(10, "galactica launch");
             cmd(40, "galactica goto Sol");
@@ -49,7 +65,7 @@ public final class AutoTest {
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
-        if ("showcase".equals(System.getProperty("galactica.autotest.mode"))) {
+        if ("showcase".equals(MODE)) {
             showcase();
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
@@ -445,5 +461,367 @@ public final class AutoTest {
             Screenshot.grab(mc.gameDirectory, file, mc.gameRenderer.mainRenderTarget(), 1,
                     msg -> Galactica.LOG.info("[autotest] {}", msg.getString()));
         }));
+    }
+
+    // ---------------------------------------------------------------- M7 effects
+
+    /**
+     * Shots that exercise the M7 renderers: the GPU star plasma (a star several degrees wide),
+     * near-planet terrain from low orbit, entry plasma through the heating window and the dimension
+     * switch, the sun disc in a surface sky, and the nebula close-ups. Starts in galactica:space at Sol.
+     * Each probe logs one {@code [autotest] PASS|FAIL} line next to its screenshot.
+     */
+    private static void m7() {
+        // Star plasma: the Sun at 4 and 15 degrees of angular radius, its limb, then Betelgeuse at 10 degrees.
+        server(5, "park near the Sun (4 deg)", sp -> parkNearStar(sp, null, 4));
+        lookAtNearestExact(60); shot(5, "m7_01_sun_4deg");
+        probeStarPlasma(1, "Sun 4 deg");
+        server(5, "park near the Sun (15 deg)", sp -> parkNearStar(sp, null, 15));
+        lookAtNearestExact(60); shot(5, "m7_02_sun_15deg");
+        probeStarPlasma(1, "Sun 15 deg");
+        lookAtNearestOffset(5, 14f); shot(10, "m7_03_sun_limb");
+        cmd(10, "galactica goto Betelgeuse");
+        server(200, "park near Betelgeuse (10 deg)", sp -> parkNearStar(sp, "Betelgeuse", 10));
+        lookAtNearestExact(60); shot(5, "m7_04_betelgeuse_10deg");
+        probeStarPlasma(1, "Betelgeuse 10 deg");
+        cmd(10, "galactica goto Sol");
+
+        // Near-planet terrain from low orbit (the clipmap needs a few seconds to bake).
+        server(40, "park 400 km over Earth", sp -> parkOverBody(sp, "Earth", 400e3));
+        aimNadir(200, "Earth", 0); shot(5, "m7_10_earth_low_orbit_nadir");
+        probeNearPlanet(1, "Earth");
+        aimNadir(5, "Earth", -12); shot(20, "m7_11_earth_low_orbit_horizon");
+        server(10, "park 300 km over Mars", sp -> parkOverBody(sp, "Mars", 300e3));
+        aimNadir(200, "Mars", 0); shot(5, "m7_12_mars_low_orbit_nadir");
+        probeNearPlanet(1, "Mars");
+        aimNadir(5, "Mars", -12); shot(20, "m7_13_mars_low_orbit_horizon");
+
+        // Entry plasma: warp straight down from 300 km, shots through the heating window and the switch.
+        // EVA on Mars (the warp drive only runs without a ship in creative, Starship.consumeWarpFuel),
+        // then a fuelled starship into Earth's atmosphere.
+        cmd(5, "gamemode creative");
+        entry("Mars", "m7_20_mars_entry");
+        cmd(5, "gamemode survival");
+        cmd(20, "galactica ground");
+        // The touchdown can take a few seconds while the column generates.
+        // Aimed 4 degrees under the sun, so the disc sits just above the crosshair instead of under it.
+        STEPS.add(new Step(140, () -> {
+            double[] sun = dev.galactica.client.planet.SurfaceSkyOverlay.lastSunDir();
+            if (sun != null) {
+                double h = Math.sqrt(sun[0] * sun[0] + sun[2] * sun[2]);
+                aim((float) Math.toDegrees(Math.atan2(-sun[0], sun[2])), (float) -Math.toDegrees(Math.atan2(sun[1], h)) + 4f);
+            }
+            Galactica.LOG.info("[autotest] surface sun direction {} ({})", sun == null ? "unknown" : java.util.Arrays.toString(sun),
+                    dev.galactica.client.planet.SurfaceSkyOverlay.lastSunProbe());
+        }));
+        shot(10, "m7_30_mars_surface_sun");
+        STEPS.add(new Step(1, () -> {
+            double[] sun = dev.galactica.client.planet.SurfaceSkyOverlay.lastSunDir();
+            boolean ok = sun != null && sun[1] > 0 && dev.galactica.client.planet.SurfaceSkyOverlay.lastSunDrawn();
+            Galactica.LOG.info("[autotest] {} surface sun disc on Mars ({})", ok ? "PASS" : "FAIL",
+                    dev.galactica.client.planet.SurfaceSkyOverlay.lastSunProbe());
+        }));
+        cmd(10, "galactica launch");
+        cmd(40, "galactica goto Sol");
+        server(40, "park 300 km over Earth", sp -> parkOverBody(sp, "Earth", 300e3));
+        cmd(20, "galactica ship");
+        entry("Earth", "m7_40_earth_entry");
+        cmd(20, "galactica launch");
+        cmd(40, "galactica goto Sol");
+
+        // Nebula close-ups (the stands of 08d/08e), with a probe of the patches drawn.
+        visitGalactic(20, 209.01, -19.38, 360, "m7_50_orion_closeup", 412);
+        probeNebula(1, "Orion");
+        visitGalactic(20, 166.57, -23.52, 118, "m7_51_pleiades_closeup", 136);
+        probeNebula(1, "Pleiades");
+        cmd(20, "galactica goto Sol");
+    }
+
+    /**
+     * From orbit over {@code body}: aims at the nadir and warps down, then watches the entry. The glow
+     * is logged every 5 ticks; screenshots are taken when the plasma first shows, at a fixed time, and
+     * 2, 20 and 40 ticks after the dimension switch.
+     */
+    private static void entry(String body, String prefix) {
+        aimNadir(80, body, 0);
+        aimShipAtNadir(5, body);
+        shot(5, prefix + "_a_start");
+        STEPS.add(new Step(5, () -> {
+            Galactica.LOG.info("[autotest] entry {} begins", body);
+            Object startLevel = Minecraft.getInstance().level;
+            int[] t = {0};
+            int[] switchedAt = {-1};
+            double[] peak = {0};
+            boolean[] firstGlow = {false};
+            double[] drive = {0};
+            Consumer<Minecraft> previous = perTick;
+            perTick = m -> {
+                previous.accept(m);
+                int now = t[0]++;
+                double glow = dev.galactica.client.planet.TransferClient.glow();
+                peak[0] = Math.max(peak[0], glow);
+                // Fixed heading (aimed once): re-aiming every tick fights the starship's mouse steering
+                // and sent the ship away from Earth in a test run.
+                if (switchedAt[0] < 0) driveWarp(m, drive);
+                if (now % 5 == 0) {
+                    Galactica.LOG.info("[autotest] entry {} t={} glow={} mach={} dim={}", body, now,
+                            String.format(java.util.Locale.ROOT, "%.3f", glow),
+                            String.format(java.util.Locale.ROOT, "%.1f", dev.galactica.client.planet.TransferClient.mach()),
+                            m.level.dimension().identifier());
+                }
+                if (!firstGlow[0] && glow > 0.15) {
+                    firstGlow[0] = true;
+                    grab(prefix + "_b_first_glow");
+                }
+                if (switchedAt[0] < 0 && m.level != startLevel) switchedAt[0] = now;
+                if (switchedAt[0] >= 0) {
+                    int since = now - switchedAt[0];
+                    if (since == 2) grab(prefix + "_c_switch");
+                    // Third person for one shot: the sheath and embers around the craft.
+                    if (since == 6) m.options.setCameraType(net.minecraft.client.CameraType.THIRD_PERSON_BACK);
+                    if (since == 9) grab(prefix + "_c2_exterior");
+                    if (since == 11) m.options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON);
+                    if (since == 20) grab(prefix + "_d_after_1s");
+                    if (since == 40) grab(prefix + "_e_after_2s");
+                }
+                if (now == 400) {
+                    boolean ok = switchedAt[0] >= 0 && peak[0] > 0.2;
+                    Galactica.LOG.info("[autotest] {} entry plasma on {}: peak glow {}, switched {}", ok ? "PASS" : "FAIL", body,
+                            String.format(java.util.Locale.ROOT, "%.3f", peak[0]),
+                            switchedAt[0] >= 0 ? "at t=" + switchedAt[0] : "never");
+                }
+            };
+        }));
+        shot(60, prefix + "_t60");
+        STEPS.add(new Step(345, () -> perTick = m -> {}));
+        // If the entry never happened, land by command so the surface shots that follow still run.
+        STEPS.add(new Step(5, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.level != null && mc.level.dimension() == Galactica.SPACE) {
+                Galactica.LOG.warn("[autotest] entry {} did not switch; landing by command", body);
+                mc.player.connection.sendCommand("galactica land " + body);
+            }
+        }));
+    }
+
+    /**
+     * The warp drive as the sprint key would spool it, set on the server: 15 %/tick from 1 km/s,
+     * capped at nav.maxSpeed() and at half the distance to the surface ahead per second (NavServer's
+     * governor) plus the rate at which the body's own orbital motion opens that distance. NavServer
+     * lacks that last term, so a real dive can level off above the switch altitude when the body
+     * recedes along the line of flight (Mars, some orbital phases: see the M7 report); the term keeps
+     * this visual test independent of that flight bug. Set on the
+     * server rather than by holding the sprint mapping, so the dive does not depend on the client
+     * input reaching the server. Fuel rules still apply: a survival EVA cannot warp
+     * (Starship.consumeWarpFuel). The server decays an unpowered drive by 0.8 before it moves the
+     * player, hence the division.
+     */
+    private static void driveWarp(Minecraft mc, double[] drive) {
+        var srv = mc.getSingleplayerServer();
+        if (srv == null || mc.player == null) return;
+        java.util.UUID id = mc.player.getUUID();
+        srv.execute(() -> {
+            var sp = srv.getPlayerList().getPlayer(id);
+            if (sp == null || sp.level().dimension() != Galactica.SPACE) return;
+            var nav = sp.getAttachedOrCreate(Galactica.NAV);
+            GalacticPos here = serverHere(sp);
+            var look = sp.getLookAngle();
+            double[] dir = Frames.mcToGalactic(look.x, look.y, look.z);
+            Neighbourhood nb = NavServer.neighbourhood(sp);
+            double t = nav.timeSeconds();
+            double ahead = nb.distanceToNearestSurfaceAhead(here, t, dir);
+            double later = nb.distanceToNearestSurfaceAhead(here, t + 1, dir);
+            double recede = ahead < 1e15 && later < 1e15 ? Math.max(0, later - ahead) : 0;
+            double governor = Math.max(1e3, 0.5 * ahead + recede);
+            drive[0] = Math.min(Math.min(nav.maxSpeed(), governor), Math.max(1e3, drive[0] * 1.15));
+            sp.setAttached(Galactica.NAV, nav.withSpeed(drive[0] / 0.8));
+        });
+    }
+
+    /** Runs an action on the integrated server thread with the local player's server entity. */
+    private static void server(int wait, String label, Consumer<net.minecraft.server.level.ServerPlayer> action) {
+        STEPS.add(new Step(wait, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            var srv = mc.getSingleplayerServer();
+            if (srv == null || mc.player == null) return;
+            java.util.UUID id = mc.player.getUUID();
+            Galactica.LOG.info("[autotest] server: {}", label);
+            srv.execute(() -> {
+                var sp = srv.getPlayerList().getPlayer(id);
+                if (sp == null) return;
+                try {
+                    action.accept(sp);
+                } catch (Throwable e) {
+                    Galactica.LOG.error("[autotest] server action '{}' failed", label, e);
+                }
+            });
+        }));
+    }
+
+    private static GalacticPos serverHere(net.minecraft.server.level.ServerPlayer sp) {
+        return Frames.playerPos(sp.getAttachedOrCreate(Galactica.NAV), sp.getX(), sp.getY(), sp.getZ());
+    }
+
+    /** Moves the player towards a star (the system star when {@code name} is null) until it is {@code angDeg} in radius. */
+    private static void parkNearStar(net.minecraft.server.level.ServerPlayer sp, String name, double angDeg) {
+        GalacticPos here = serverHere(sp);
+        Star s = name == null ? NavServer.neighbourhood(sp).systemStar(here) : dev.galactica.galaxy.StarCatalog.byName(name);
+        if (s == null) {
+            Galactica.LOG.warn("[autotest] no star {} to park at", name);
+            return;
+        }
+        GalacticPos at = Neighbourhood.starPos(s);
+        double[] u = here.metresFrom(at);
+        double n = Math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+        if (n < 1) {
+            u = new double[] {1, 0, 0};
+        } else {
+            for (int i = 0; i < 3; i++) u[i] /= n;
+        }
+        double d = s.radiusMetres() / Math.sin(Math.toRadians(angDeg));
+        NavServer.moveTo(sp, at.plusMetres(u[0] * d, u[1] * d, u[2] * d));
+        Galactica.LOG.info("[autotest] parked {} km from {} ({} deg radius)", Math.round(d / 1e3), s.name(), angDeg);
+    }
+
+    /** Parks the player {@code altitude} metres over the sunlit side of a body (same geometry as /galactica orbit). */
+    private static void parkOverBody(net.minecraft.server.level.ServerPlayer sp, String name, double altitude) {
+        GalacticPos here = serverHere(sp);
+        Neighbourhood nb = NavServer.neighbourhood(sp);
+        Star s = nb.systemStar(here);
+        if (s == null) return;
+        double t = sp.getAttachedOrCreate(Galactica.NAV).timeSeconds();
+        for (Neighbourhood.Located l : nb.locateBodies(here, t)) {
+            if (!l.body().name().equalsIgnoreCase(name)) continue;
+            double d = l.body().radiusMetres() + altitude;
+            double[] toStar = Neighbourhood.starPos(s).metresFrom(l.pos());
+            double len = Math.sqrt(toStar[0] * toStar[0] + toStar[1] * toStar[1] + toStar[2] * toStar[2]);
+            double ux = toStar[0] / len, uy = toStar[1] / len, uz = toStar[2] / len;
+            double a = Math.toRadians(25), ca = Math.cos(a), sa = Math.sin(a);
+            double vx = ux * ca - uy * sa, vy = ux * sa + uy * ca, vz = uz + 0.15;
+            double vn = Math.sqrt(vx * vx + vy * vy + vz * vz);
+            NavServer.moveTo(sp, l.pos().plusMetres(vx / vn * d, vy / vn * d, vz / vn * d));
+            Galactica.LOG.info("[autotest] parked {} km over {}", Math.round(altitude / 1e3), name);
+            return;
+        }
+        Galactica.LOG.warn("[autotest] body {} not found to park over", name);
+    }
+
+    /**
+     * Aims at a body: {@code elevDeg} 0 looks straight down at the nadir; otherwise the aim is that
+     * many degrees from the horizon (negative = below it, so the limb sits above the screen centre).
+     */
+    /**
+     * Points a piloted starship's nose at the centre of {@code name}. The pilot's view follows the nose
+     * (EntityTurnShipMixin), so {@link #aimNadir} alone leaves the ship on its deploy heading. Set on
+     * both sides: the client's predicted attitude is what it sends back, and the server turns towards
+     * that at a capped rate. No-op on foot.
+     */
+    private static void aimShipAtNadir(int wait, String name) {
+        STEPS.add(new Step(wait, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship ship)) return;
+            SkyManager mgr = SkyManager.get();
+            GalacticPos eye = mgr.viewer();
+            if (eye == null || mgr.nav() == null) return;
+            for (Neighbourhood.Located l : mgr.neighbourhood().locateBodies(eye, mgr.nav().timeSeconds())) {
+                if (!l.body().name().equalsIgnoreCase(name)) continue;
+                double[] g = l.pos().metresFrom(eye);
+                double[] n = Frames.galacticToMc(g[0], g[1], g[2]);
+                double len = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                org.joml.Quaternionf q = new org.joml.Quaternionf().rotationTo(0, 0, 1,
+                        (float) (n[0] / len), (float) (n[1] / len), (float) (n[2] / len));
+                ship.setAttitude(q);
+                var srv = mc.getSingleplayerServer();
+                if (srv != null) {
+                    java.util.UUID id = ship.getUUID();
+                    srv.execute(() -> {
+                        for (var lvl : srv.getAllLevels()) {
+                            if (lvl.getEntity(id) instanceof dev.galactica.ship.Starship s) s.setAttitude(q);
+                        }
+                    });
+                }
+                Galactica.LOG.info("[autotest] ship nose aimed at the centre of {}", name);
+                return;
+            }
+        }));
+    }
+
+    private static void aimNadir(int wait, String name, float elevDeg) {
+        STEPS.add(new Step(wait, () -> {
+            SkyManager mgr = SkyManager.get();
+            GalacticPos eye = mgr.viewer();
+            if (eye == null || mgr.nav() == null) return;
+            for (Neighbourhood.Located l : mgr.neighbourhood().locateBodies(eye, mgr.nav().timeSeconds())) {
+                if (!l.body().name().equalsIgnoreCase(name)) continue;
+                double[] g = l.pos().metresFrom(eye);
+                double[] n = Frames.galacticToMc(g[0], g[1], g[2]);
+                double dist = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                for (int i = 0; i < 3; i++) n[i] /= dist;
+                // Angle from the nadir: the horizon is at asin(R/d).
+                double theta = elevDeg == 0 ? 0 : Math.asin(Math.min(1, l.body().radiusMetres() / dist)) + Math.toRadians(elevDeg);
+                // Tilt towards Minecraft up, projected off the nadir.
+                double[] u = {-n[1] * n[0], 1 - n[1] * n[1], -n[1] * n[2]};
+                double un = Math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2]);
+                if (un < 1e-6) {
+                    u = new double[] {1, 0, 0};
+                } else {
+                    for (int i = 0; i < 3; i++) u[i] /= un;
+                }
+                double c = Math.cos(theta), s = Math.sin(theta);
+                aimDir(n[0] * c + u[0] * s, n[1] * c + u[1] * s, n[2] * c + u[2] * s);
+                Galactica.LOG.info("[autotest] aiming {} deg from the nadir of {} (altitude {} km)",
+                        Math.round(Math.toDegrees(theta)), name, Math.round((dist - l.body().radiusMetres()) / 1e3));
+                return;
+            }
+            Galactica.LOG.warn("[autotest] body {} not found", name);
+        }));
+    }
+
+    private static void aimDir(double x, double y, double z) {
+        double h = Math.sqrt(x * x + z * z);
+        aim((float) Math.toDegrees(Math.atan2(-x, z)), (float) -Math.toDegrees(Math.atan2(y, h)));
+    }
+
+    private static void lookAtNearestOffset(int wait, float offsetDeg) {
+        STEPS.add(new Step(wait, () -> {
+            SkyManager mgr = SkyManager.get();
+            GalacticPos eye = mgr.viewer();
+            if (eye == null) return;
+            Star s = mgr.neighbourhood().nearestStar(eye);
+            if (s != null) aimAt(eye, Neighbourhood.starPos(s), offsetDeg);
+        }));
+    }
+
+    private static void probeStarPlasma(int wait, String what) {
+        STEPS.add(new Step(wait, () -> {
+            boolean ok = dev.galactica.client.sky.SpaceSkyRenderer.starPlasmaDrawn();
+            Galactica.LOG.info("[autotest] {} star plasma for {}: angular radius {} deg", ok ? "PASS" : "FAIL", what,
+                    String.format(java.util.Locale.ROOT, "%.2f",
+                            Math.toDegrees(dev.galactica.client.sky.SpaceSkyRenderer.starPlasmaAngularRadius())));
+        }));
+    }
+
+    private static void probeNearPlanet(int wait, String body) {
+        STEPS.add(new Step(wait, () -> {
+            String claimed = dev.galactica.client.sky.NearPlanetRenderer.claimedName();
+            boolean ok = body.equalsIgnoreCase(claimed);
+            Galactica.LOG.info("[autotest] {} near-planet terrain for {}: drawn body {}", ok ? "PASS" : "FAIL", body, claimed);
+        }));
+    }
+
+    private static void probeNebula(int wait, String what) {
+        STEPS.add(new Step(wait, () -> {
+            int n = dev.galactica.client.exotic.NebulaCloseUp.drawnCount();
+            Galactica.LOG.info("[autotest] {} nebula close-up at {}: {} patch(es) drawn", n > 0 ? "PASS" : "FAIL", what, n);
+        }));
+    }
+
+    /** Takes a screenshot at once (from a tick hook). */
+    private static void grab(String name) {
+        Minecraft mc = Minecraft.getInstance();
+        String file = "galactica_" + name + (TAG.isEmpty() ? "" : "_" + TAG) + ".png";
+        Galactica.LOG.info("[autotest] screenshot {}", file);
+        Screenshot.grab(mc.gameDirectory, file, mc.gameRenderer.mainRenderTarget(), 1,
+                msg -> Galactica.LOG.info("[autotest] {}", msg.getString()));
     }
 }

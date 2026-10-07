@@ -83,6 +83,16 @@ public final class SpaceSkyRenderer {
     private record Resolved(float dx, float dy, float dz, double halfAngle, double distance,
                             net.minecraft.client.renderer.texture.DynamicTexture texture, float brightness) {}
 
+    /** True when the last frame drew the system star with the GPU plasma shader (autotest probe). */
+    public static boolean starPlasmaDrawn() {
+        return starGpu;
+    }
+
+    /** Angular radius of the plasma-drawn star in the last frame, radians (autotest probe). */
+    public static double starPlasmaAngularRadius() {
+        return starGpu ? starAng : 0;
+    }
+
     public static boolean active() {
         Minecraft mc = Minecraft.getInstance();
         return mc.level != null && mc.level.dimension() == dev.galactica.Galactica.SPACE;

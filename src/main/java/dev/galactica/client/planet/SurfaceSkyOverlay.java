@@ -121,6 +121,25 @@ public final class SurfaceSkyOverlay {
         return on;
     }
 
+    /** World-axis (Minecraft) direction of the sun in the last surface-sky frame (autotest probe, a copy), or null. */
+    public static double[] lastSunDir() {
+        return lastSunDir == null ? null : lastSunDir.clone();
+    }
+
+    /** Whether the last surface-sky frame drew the sun disc, on the GPU or as a sprite (autotest probe). */
+    public static boolean lastSunDrawn() {
+        return probeDrawn;
+    }
+
+    private static double[] lastSunDir;
+    private static boolean probeGpu, probeDrawn;
+    private static double probeAng, probeRain, probeDay;
+
+    /** How the sun was drawn in the last surface-sky frame (autotest probe). */
+    public static String lastSunProbe() {
+        return String.format(java.util.Locale.ROOT, "gpu=%s ang=%.5f rad rain=%.2f day=%.2f", probeGpu, probeAng, probeRain, probeDay);
+    }
+
     /** The body under the local player, or null off-planet. */
     public static Body currentBody() {
         Minecraft mc = Minecraft.getInstance();
@@ -195,6 +214,8 @@ public final class SurfaceSkyOverlay {
 
         double[] toStar = mc(starPos.metresFrom(eye));
         double[] sun = SkyAlignment.vanillaSun(state.sunAngle);
+        lastSunDir = sun.clone();
+        probeDrawn = false;
         double[] m = SkyAlignment.matrix(toStar, mc(BodyFrame.pole(star, here)), sun);
         SurfaceAtmosphere.SkyClass skyClass = SurfaceAtmosphere.skyClass(here);
         double day = clamp(sun[1] * 3 + 0.3, 0, 1);
@@ -230,6 +251,11 @@ public final class SurfaceSkyOverlay {
                 }
                 starGpu = StarDiscRenderer.prepare(sunVisual, ang, rain);
             }
+            probeGpu = starGpu;
+            probeDrawn = true;
+            probeAng = ang;
+            probeRain = rain;
+            probeDay = day;
             if (!starGpu) list.add(quad(sun, Math.min(1.2, Math.max(2 * ang, 4 * DOT_SIZE)), argb(rgb[0], rgb[1], rgb[2], rain)));
         }
         for (Body planet : cachedSystem) {

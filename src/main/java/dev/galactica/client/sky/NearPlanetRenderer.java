@@ -108,6 +108,11 @@ public final class NearPlanetRenderer {
                 && sky != SurfaceAtmosphere.SkyClass.ORANGE;
     }
 
+    /** Name of the body drawn as terrain in the last frame, or null (autotest probe). */
+    public static String claimedName() {
+        return claimed == null ? null : claimed.body().name();
+    }
+
     /** Start of a space-sky frame. */
     public static void beginFrame() {
         largest = null;
@@ -304,9 +309,13 @@ public final class NearPlanetRenderer {
             DynamicTexture globe = clip.globe();
             double horizon = Math.acos(Math.min(1, x.radius / x.d)) * 0.9995;
             if (globe != null) addPart(PARTS, vertex, cap(buf, x, horizon, 0), globe, true);
+            // Each level fades into whatever is drawn under it; the bottom one only when the globe cap is there.
+            boolean under = globe != null;
             for (int k = clip.coarsestUsable(); k >= Math.min(minLevel, SurfaceClipmap.LEVELS - 1); k--) {
                 SurfaceClipmap.Level l = clip.level(k);
-                if (l.ready()) addPart(PARTS, vertex, level(buf, x, l), l.texture(), false);
+                if (!l.ready()) continue;
+                addPart(PARTS, vertex, level(buf, x, l, under), l.texture(), false);
+                under = true;
             }
             DynamicTexture clouds = clip.clouds();
             if (clouds != null && (b.type() == BodyType.TERRAN || b.type() == BodyType.OCEAN)) {
@@ -391,8 +400,11 @@ public final class NearPlanetRenderer {
         return n;
     }
 
-    /** One clipmap level as a patch of the sphere; quads behind the horizon are skipped. */
-    private static int level(BufferBuilder buf, Ctx x, SurfaceClipmap.Level l) {
+    /**
+     * One clipmap level as a patch of the sphere; quads behind the horizon are skipped. {@code fade}
+     * feathers its rim, for a level drawn over something (a coarser level or the globe cap).
+     */
+    private static int level(BufferBuilder buf, Ctx x, SurfaceClipmap.Level l, boolean fade) {
         float[][] q = new float[4][5];
         int[] c = new int[4];
         double[] nrm = new double[3];
@@ -417,7 +429,8 @@ public final class NearPlanetRenderer {
                     if (facing >= -1e-6 * x.d) visible = false;
                     q[k][3] = (float) fu;
                     q[k][4] = (float) fv;
-                    c[k] = surfaceVertex(x, nrm, q[k], 0, 0);
+                    int col = surfaceVertex(x, nrm, q[k], 0, 0);
+                    c[k] = fade ? feather(col, fu, fv) : col;
                 }
                 if (!visible) continue;
                 emitInward(buf, q, c);
@@ -425,6 +438,22 @@ public final class NearPlanetRenderer {
             }
         }
         return n;
+    }
+
+    /** Outer share of a clipmap level over which it fades into the coarser layer beneath. */
+    static final double LEVEL_FEATHER = 0.15;
+
+    /**
+     * Fades a level's colour alpha to 0 at its rim (patch coordinates fu, fv in 0..1), so a finer
+     * level blends into the coarser one under it instead of ending on a hard square edge.
+     */
+    static int feather(int argb, double fu, double fv) {
+        double edge = Math.min(Math.min(fu, 1 - fu), Math.min(fv, 1 - fv)) / LEVEL_FEATHER;
+        if (edge >= 1) return argb;
+        double s = Math.max(0, edge);
+        s = s * s * (3 - 2 * s);
+        int a = (int) Math.round(((argb >>> 24) & 0xFF) * s);
+        return (a << 24) | (argb & 0xFFFFFF);
     }
 
     /** Thin glowing shell just outside the disc: grazing airlight fading over a few scale heights. */
