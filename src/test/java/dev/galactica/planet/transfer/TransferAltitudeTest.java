@@ -100,4 +100,22 @@ class TransferAltitudeTest {
         // High enough: armed whatever the direction.
         assertFalse(TransferAltitude.reentryBlocked(1.31 * h, h, 100));
     }
+
+    @Test
+    void entryRowsClearEveryBuildLimit() {
+        // Vanilla Overworld (top 319) and the tall planet slots (top 1279) keep the classic rows.
+        assertEquals(TransferAltitude.ENTRY_Y, TransferAltitude.entryY(319));
+        assertEquals(TransferAltitude.ENTRY_Y, TransferAltitude.entryY(dev.galactica.planet.TerrainSampler.MAX_Y));
+        assertEquals(TransferAltitude.EXIT_Y, TransferAltitude.exitY(dev.galactica.planet.TerrainSampler.MAX_Y));
+        // A Tectonic Overworld at the 26.3 ceiling (top 2031): rows move up together.
+        for (int top : new int[] {319, 639, 1279, 1500, 2031}) {
+            double entry = TransferAltitude.entryY(top);
+            assertTrue(entry - 64 > top, "the whole arrival band is above build height for top " + top);
+            assertTrue(entry - 100 > top, "no terrain reaches the touchdown margin for top " + top);
+            assertEquals(TransferAltitude.EXIT_ABOVE_ENTRY, TransferAltitude.exitY(top) - entry, 1e-9);
+        }
+        // The planet slot's highest possible ground is far below the arrival band.
+        assertTrue(dev.galactica.planet.TerrainSampler.SEA_LEVEL + dev.galactica.planet.TerrainSampler.PEAK_CAP
+                < TransferAltitude.ENTRY_Y - 100);
+    }
 }

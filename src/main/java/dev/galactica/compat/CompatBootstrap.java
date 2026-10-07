@@ -24,6 +24,7 @@ public final class CompatBootstrap implements ModInitializer {
         if (OptionalMods.distantHorizons()) {
             dev.galactica.compat.dh.GalacticaDh.install();
         }
+        WorldgenCompat.install();
         if (OptionalMods.bobby()) {
             // Bobby caches chunks per dimension id. Landing slots are recycled between bodies, and the
             // slot wipe only clears server files, so a cached client copy of an old body could show.

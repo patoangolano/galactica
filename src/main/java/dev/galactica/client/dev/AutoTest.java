@@ -86,6 +86,14 @@ public final class AutoTest {
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
+        if ("terrain".equals(MODE) || "tectonic".equals(MODE)) {
+            // Tall planet terrain tour, or Earth under Tectonic (TerrainAutoTest): screenshots and PASS/FAIL lines.
+            if ("terrain".equals(MODE)) TerrainAutoTest.tour(TAG);
+            else TerrainAutoTest.tectonic(TAG);
+            STEPS.add(new Step(40, () -> Minecraft.getInstance().stop()));
+            ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+            return;
+        }
         if ("showcase".equals(MODE)) {
             showcase();
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
@@ -308,7 +316,7 @@ public final class AutoTest {
      * (b) flying at Earth from 2,000 km on the main engine, (a) a ship's take-off from the Overworld left alone, (d) a
      * suited player at rest 1,000 km up, then (b) again on the warp drive. Each logs one PASS/FAIL line.
      */
-    private static void soi() {
+    static void soi() {
         cmd(5, "galactica kit");
         cmd(10, "galactica launch");
         cmd(40, "galactica goto Sol");
@@ -331,7 +339,13 @@ public final class AutoTest {
         awaitSoi(1, 6300, "approach");
         STEPS.add(new Step(5, () -> SoiAutoTest.start(SoiAutoTest.takeOff(1600))));
         awaitSoi(1, 3000, "take-off");
-        server(20, "leave the ship", net.minecraft.server.level.ServerPlayer::stopRiding);
+        // In one server step: a take-off that ended low (a taller Overworld moves the switch up) would otherwise fall
+        // back into Earth between leaving the ship and the park below.
+        server(20, "leave the ship, out of the frame's fall", sp -> {
+            sp.stopRiding();
+            NavServer.launch(sp);
+            parkOverBody(sp, "Earth", 1000e3);
+        });
         cmd(10, "galactica launch");
         server(40, "park 1000 km over Earth on EVA", sp -> parkOverBody(sp, "Earth", 1000e3));
         STEPS.add(new Step(40, () -> SoiAutoTest.start(SoiAutoTest.evaFall(200))));
@@ -412,10 +426,9 @@ public final class AutoTest {
         // Fresh terrain: a spectator dropped over Martian ground no run has generated yet (a new offset every run),
         // so the server generates, lights and sends the whole view area while it is measured (PLANET_CHUNK, mspt).
         cmd(5, "gamemode spectator");
-        STEPS.add(new Step(5, () -> {
-            long offset = 40_000 + (System.currentTimeMillis() / 1000 % 500) * 2_000;
-            Minecraft.getInstance().player.connection.sendCommand("tp @s ~" + offset + " 300 ~");
-        }));
+        // 60 blocks above the new ground (the tall slots put Martian ground anywhere from Y −400 to 1200).
+        long offset = 40_000 + (System.currentTimeMillis() / 1000 % 500) * 2_000;
+        server(5, "hover over fresh terrain", sp -> TerrainAutoTest.hoverOverTerrain(sp, offset, 60));
         look(1, 30, 30);
         measure(1, "planet_chunkgen");
         cmd(5, "gamemode creative");
@@ -437,7 +450,7 @@ public final class AutoTest {
     }
 
     /** Waits {@code settle} ticks, then measures {@code name} for 200 ticks (10 s). */
-    private static void measure(int settle, String name) {
+    static void measure(int settle, String name) {
         STEPS.add(new Step(settle, () -> {
             Galactica.LOG.info("[perf] measuring {}", name);
             PerfBench.begin(name);
@@ -446,7 +459,7 @@ public final class AutoTest {
     }
 
     /** Empties the chat and the action-bar line, so earlier command output does not cover the next shot. */
-    private static void clearChat(int wait) {
+    static void clearChat(int wait) {
         STEPS.add(new Step(wait, () -> {
             var gui = Minecraft.getInstance().gui;
             gui.hud.getChat().clearMessages(false);
@@ -455,7 +468,7 @@ public final class AutoTest {
     }
 
     /** Shows or hides the whole HUD (F1). */
-    private static void hud(int wait, boolean visible) {
+    static void hud(int wait, boolean visible) {
         STEPS.add(new Step(wait, () -> {
             var hud = Minecraft.getInstance().gui.hud;
             if (hud.isHidden() == visible) hud.toggle();
@@ -899,17 +912,30 @@ public final class AutoTest {
         countdown = index < STEPS.size() ? Math.max(1, STEPS.get(index).waitTicks()) : 0;
     }
 
+    /** Appends a raw step (for the scripts in {@link TerrainAutoTest}). */
+    static void step(int wait, Runnable action) {
+        STEPS.add(new Step(wait, action));
+    }
+
+    /** Holds the script until {@code done} is true or {@code maxTicks} pass. */
+    static void await(int wait, int maxTicks, java.util.function.BooleanSupplier done) {
+        STEPS.add(new Step(wait, () -> {
+            holdLeft = maxTicks;
+            hold = done;
+        }));
+    }
+
     /** The block the guarded vertical recentre phase keeps in sight (server side). */
     private static volatile net.minecraft.core.BlockPos guardBlock;
 
-    private static void cmd(int wait, String command) {
+    static void cmd(int wait, String command) {
         STEPS.add(new Step(wait, () -> {
             Galactica.LOG.info("[autotest] /{}", command);
             Minecraft.getInstance().player.connection.sendCommand(command);
         }));
     }
 
-    private static void look(int wait, float yaw, float pitch) {
+    static void look(int wait, float yaw, float pitch) {
         STEPS.add(new Step(wait, () -> aim(yaw, pitch)));
     }
 
@@ -1006,7 +1032,7 @@ public final class AutoTest {
         aim((float) Math.toDegrees(Math.atan2(-m[0], m[2])) + offsetDeg, (float) -Math.toDegrees(Math.atan2(m[1], h)));
     }
 
-    private static void shot(int wait, String name) {
+    static void shot(int wait, String name) {
         STEPS.add(new Step(wait, () -> {
             Minecraft mc = Minecraft.getInstance();
             GalacticPos eye = SkyManager.get().viewer();
@@ -1194,7 +1220,7 @@ public final class AutoTest {
     }
 
     /** Runs an action on the integrated server thread with the local player's server entity. */
-    private static void server(int wait, String label, Consumer<net.minecraft.server.level.ServerPlayer> action) {
+    static void server(int wait, String label, Consumer<net.minecraft.server.level.ServerPlayer> action) {
         STEPS.add(new Step(wait, () -> {
             Minecraft mc = Minecraft.getInstance();
             var srv = mc.getSingleplayerServer();

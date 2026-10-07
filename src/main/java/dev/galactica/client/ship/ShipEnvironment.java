@@ -55,8 +55,14 @@ public final class ShipEnvironment {
             state.ambientBar = (float) ExhaustPhysics.barometric(body.surfacePressureBar(),
                     state.y - TerrainSampler.SEA_LEVEL, body.scaleHeight());
         } else {
-            state.ambientBar = (float) ExhaustPhysics.barometric(EARTH_SEA_LEVEL_BAR, state.y - VANILLA_SEA_LEVEL, EARTH_SCALE_HEIGHT_M);
+            state.ambientBar = (float) ExhaustPhysics.barometric(EARTH_SEA_LEVEL_BAR, state.y - seaLevel(level), EARTH_SCALE_HEIGHT_M);
         }
+    }
+
+    /** The level's own sea level (63 in vanilla and Tectonic), falling back to vanilla's when the level reports none. */
+    private static int seaLevel(Level level) {
+        int s = level.getSeaLevel();
+        return s > level.getMinY() ? s : VANILLA_SEA_LEVEL;
     }
 
     /** Packed light for the lightmap routes in space: bright inside a system, dim but visible far from stars. */

@@ -25,10 +25,13 @@ class LodColumnPlanTest {
                 new TerrainSampler(BodyType.TERRAN, 42L, 1.0, SurfaceGrid.of(1.0e5), false, false),
                 new TerrainSampler(BodyType.OCEAN, 7L, 0.8, SurfaceGrid.of(1.0e5), false, true),
                 new TerrainSampler(BodyType.LAVA, 9L, 1.2, SurfaceGrid.of(1.0e5), true, false),
+                // Tall banded worlds: mountains and canyon walls carry the 3D cliff band.
+                new TerrainSampler(new dev.galactica.planet.PlanetMacro(BodyType.TERRAN, 42L, true, 0.3), 1.0, SurfaceGrid.of(6.4e6), false, false),
+                new TerrainSampler(BodyType.DESERT, 11L, 0.38, SurfaceGrid.of(3.39e6), true, false),
         };
         LodColumnPlan plan = new LodColumnPlan();
         TerrainSampler.Column ref = new TerrainSampler.Column();
-        int wet = 0;
+        int wet = 0, banded = 0, overhangs = 0;
         for (TerrainSampler t : worlds) {
             for (int i = 0; i < 400; i++) {
                 int x = i * 977 - 150_000, z = i * 613 + 20_000;
@@ -37,7 +40,16 @@ class LodColumnPlanTest {
                 plan.plan(t, x, z, h, slope, 1, MIN_Y, HEIGHT);
                 validateLikeDh(plan);
                 t.column(x, z, h, slope, ref);
+                t.carve(x, z, ref);
                 if (ref.fluid != Material.AIR) wet++;
+                if (ref.bandLen > 0) banded++;
+                boolean seenAir = false;
+                for (int y = ref.solidTop; y > ref.solidTop - 2 * TerrainSampler.BAND_MAX && !seenAir; y--) {
+                    if (t.materialAt(ref, y, x, z) == Material.AIR) {
+                        seenAir = true;
+                        overhangs++;
+                    }
+                }
                 for (int k = 0; k < plan.count(); k++) {
                     LodColumnPlan.Span s = plan.span(k);
                     for (int yRel = s.bottom; yRel < s.top; yRel += Math.max(1, (s.top - s.bottom) / 7)) {
@@ -49,6 +61,8 @@ class LodColumnPlanTest {
             }
         }
         assertTrue(wet > 50, "the sample must include seas, got " + wet);
+        assertTrue(banded > 50, "the sample must include banded mountain columns, got " + banded);
+        assertTrue(overhangs > 0, "some banded column must have air under solid rock, got " + overhangs);
     }
 
     @Test
