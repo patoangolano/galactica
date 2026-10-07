@@ -143,10 +143,11 @@ final class TerrainAutoTest {
         double x = g.xPc(), y = g.yPc(), z = g.zPc();
         List<Star> stars = NavServer.neighbourhood(sp).nearbyStars(g).stream()
                 .sorted(Comparator.comparingDouble(s -> s.distanceTo(x, y, z))).toList();
-        for (Star s : stars) {
+        // First a living temperate world (blue sky, vegetation), else any temperate one.
+        for (int pass = 0; pass < 2; pass++) for (Star s : stars.subList(0, Math.min(stars.size(), 400))) {
             if ("Sol".equals(s.name())) continue;
             for (Body b : SystemGenerator.generate(s)) {
-                if (b.type() != BodyType.TERRAN) continue;
+                if (b.type() != BodyType.TERRAN || (pass == 0 && b.life() == Body.Life.NONE)) continue;
                 earthLikeName = b.name();
                 dev.galactica.ship.Hyperdrive.arriveAt(sp, s);
                 Galactica.LOG.info("[autotest] Earth-like world {} ({} g, life {}) at {}", b.name(),
