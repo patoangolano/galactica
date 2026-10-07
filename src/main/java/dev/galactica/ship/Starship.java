@@ -902,14 +902,29 @@ public class Starship extends VehicleEntity {
         else return false;
         if (!ok) return false;
         if (!level().isClientSide()) {
-            if (stack.is(Items.IRON_INGOT)) setHull(hull() + HULL_PER_IRON);
-            else if (stack.is(hydrogenCell)) setHydrogen(hydrogen() + 1F);
-            else setExotic(exotic() + 1);
-            stack.consume(1, player);
+            // Up to serviceBatch() items per click (one for the Kestrel), never more than there is room for.
+            int n;
+            if (stack.is(Items.IRON_INGOT)) {
+                n = Math.max(1, Math.min(serviceBatch(), (int) Math.ceil((maxHull() - hull()) / HULL_PER_IRON)));
+                n = Math.min(n, stack.getCount());
+                setHull(hull() + HULL_PER_IRON * n);
+            } else if (stack.is(hydrogenCell)) {
+                n = Math.min(stack.getCount(), Math.max(1, Math.min(serviceBatch(), (int) Math.floor(maxHydrogen() - hydrogen()))));
+                setHydrogen(hydrogen() + n);
+            } else {
+                n = Math.min(stack.getCount(), Math.max(1, Math.min(serviceBatch(), maxExotic() - exotic())));
+                setExotic(exotic() + n);
+            }
+            stack.consume(n, player);
             player.sendOverlayMessage(Component.translatable("hud.galactica.ship.serviced",
                     String.format("%.1f", hydrogen()), exotic(), Math.round(hull())));
         }
         return true;
+    }
+
+    /** Most fuel, exotic or repair items one click loads: one for the Kestrel. */
+    protected int serviceBatch() {
+        return 1;
     }
 
     /** Content items are looked up by id so this area compiles without the content area's classes. */

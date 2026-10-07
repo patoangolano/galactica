@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "side": "galactica:block/ship_hydrogen_tank_side",
+    "end": "galactica:block/ship_hydrogen_tank_top"
+  }
+}

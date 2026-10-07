@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "I": "minecraft:iron_ingot"
+  },
+  "pattern": [
+    "II",
+    "II"
+  ],
+  "result": {
+    "id": "galactica:ship_hull_plating",
+    "count": 4
+  }
+}

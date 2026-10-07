@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "galactica:block/ship_crew_seat"
+    },
+    "facing=east": {
+      "model": "galactica:block/ship_crew_seat",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "galactica:block/ship_crew_seat",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "galactica:block/ship_crew_seat",
+      "y": 270
+    }
+  }
+}

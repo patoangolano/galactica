@@ -39,14 +39,22 @@ final class CockpitRenderer {
     static void submit(StarshipRenderState state, PoseStack pose, SubmitNodeCollector out) {
         int light = state.lightCoords;
         out.submitCustomGeometry(pose, RenderTypes.entityTranslucent(StarshipRenderer.TEXTURE), (p, buf) -> glass(p, buf, light));
+        submitDisplay(state, pose, out, StarshipGeometry.SCREEN);
+    }
+
+    /**
+     * The live display and its attitude ball on a screen rectangle {@code s} = {x0, x1, y0, y1, z} (body frame, facing
+     * aft toward the crew): the Kestrel's panel, or the screen above a block-built ship's helm.
+     */
+    static void submitDisplay(StarshipRenderState state, PoseStack pose, SubmitNodeCollector out, float[] s) {
         if (!CockpitDisplay.ready()) return;
         if (CockpitDisplay.ballOnGpu()) {
             CockpitDisplay.angles(state.attitude, CockpitDisplay.up(), ATT);
             float pitch = ATT[0], roll = ATT[1];
-            out.submitCustomGeometry(pose, ShipRenderTypes.COCKPIT_ADI_TYPE, (p, buf) -> ball(p, buf, pitch, roll));
-            out.submitCustomGeometry(pose, ShipRenderTypes.COCKPIT_DISPLAY_TYPE, (p, buf) -> display(p, buf, false));
+            out.submitCustomGeometry(pose, ShipRenderTypes.COCKPIT_ADI_TYPE, (p, buf) -> ball(p, buf, pitch, roll, s));
+            out.submitCustomGeometry(pose, ShipRenderTypes.COCKPIT_DISPLAY_TYPE, (p, buf) -> display(p, buf, false, s));
         } else {
-            out.submitCustomGeometry(pose, RenderTypes.entityTranslucentEmissive(CockpitDisplay.ID), (p, buf) -> display(p, buf, true));
+            out.submitCustomGeometry(pose, RenderTypes.entityTranslucentEmissive(CockpitDisplay.ID), (p, buf) -> display(p, buf, true, s));
         }
     }
 
@@ -54,8 +62,7 @@ final class CockpitRenderer {
      * The display quad, facing aft (toward the crew): port (+X) is the crew's left, so u runs from +X to −X.
      * {@code entity}: the vanilla entity vertex layout (light, overlay, normal) instead of position-uv-colour.
      */
-    private static void display(PoseStack.Pose pose, VertexConsumer buf, boolean entity) {
-        float[] s = StarshipGeometry.SCREEN;
+    private static void display(PoseStack.Pose pose, VertexConsumer buf, boolean entity, float[] s) {
         float x0 = s[0], x1 = s[1], y0 = s[2], y1 = s[3], z = s[4];
         if (entity) {
             vertex(buf, pose, x1, y1, z, 0F, 0F, -1, StarshipRenderer.FULL_BRIGHT, 0, 0, -1);
@@ -75,8 +82,7 @@ final class CockpitRenderer {
      * by {@code roll} (radians, right wing down positive) and shifted by {@code pitch} (degrees). The tape mapping is
      * affine, so a fan of quads samples it exactly; the canvas ring hides the disc's polygon edge.
      */
-    private static void ball(PoseStack.Pose pose, VertexConsumer buf, float pitch, float roll) {
-        float[] s = StarshipGeometry.SCREEN;
+    private static void ball(PoseStack.Pose pose, VertexConsumer buf, float pitch, float roll, float[] s) {
         float perPx = (s[1] - s[0]) / CockpitDisplay.W;
         float cx = s[1] - CockpitDisplay.BALL_CX * perPx, cy = s[3] - CockpitDisplay.BALL_CY * perPx, z = s[4] + BALL_DEPTH;
         float r = CockpitDisplay.BALL_R;

@@ -143,7 +143,9 @@ public final class ShipFlightModel {
         Vector3d up = attitude.transform(new Vector3d(0, 1, 0));
         Vector3d side = attitude.transform(new Vector3d(1, 0, 0));
         double mainAccel = throttle >= 0 ? spec.mainAccel() : spec.reverseAccel(), rcsAccel = spec.rcsAccel();
-        velocity.fma(throttle * mainAccel * dt, fwd).fma(lift * rcsAccel * dt, up).fma(dt, gravity);
+        // Dorsal (+Y) authority: the RCS plus any engines firing downward (VTOL lift); ventral is the RCS alone.
+        double liftAccel = Math.max(rcsAccel, spec.liftAccel());
+        velocity.fma(throttle * mainAccel * dt, fwd).fma(lift * (lift > 0 ? liftAccel : rcsAccel) * dt, up).fma(dt, gravity);
 
         if (c.coupled()) {
             // Each RCS axis has its own thruster pair, so the budget is per axis; an axis the pilot is
@@ -151,7 +153,10 @@ public final class ShipFlightModel {
             double budget = rcsAccel * dt;
             Vector3d rel = new Vector3d(velocity).add(frame);
             velocity.fma(-toward0(rel.dot(side), budget), side);
-            if (lift == 0) velocity.fma(-toward0(rel.dot(up), budget), up);
+            if (lift == 0) {
+                double dorsal = rel.dot(up);
+                velocity.fma(-toward0(dorsal, (dorsal < 0 ? liftAccel : rcsAccel) * dt), up);
+            }
         }
 
         double v = velocity.length();
@@ -203,7 +208,7 @@ public final class ShipFlightModel {
     /** {@link #maxDeltaVPerTick(boolean, double)} for the craft {@code spec} describes (the server's own copy, never the client's). */
     public static double maxDeltaVPerTick(ShipSpec spec, boolean fuelled, double gravity) {
         double main = fuelled ? Math.max(spec.mainAccel(), spec.reverseAccel()) : 0;
-        return (main + Math.sqrt(3) * spec.rcsAccel() + gravity) * TICK;
+        return (main + Math.sqrt(3) * Math.max(spec.rcsAccel(), spec.liftAccel()) + gravity) * TICK;
     }
 
     /**

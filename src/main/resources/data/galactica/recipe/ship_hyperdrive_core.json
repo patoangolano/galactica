@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "O": "minecraft:obsidian",
+    "E": "galactica:exotic_matter",
+    "D": "minecraft:diamond"
+  },
+  "pattern": [
+    "OEO",
+    "EDE",
+    "OEO"
+  ],
+  "result": {
+    "id": "galactica:ship_hyperdrive_core"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/cube_bottom_top",
+  "textures": {
+    "side": "galactica:block/ship_landing_gear_side",
+    "top": "galactica:block/ship_hull_metal",
+    "bottom": "galactica:block/ship_landing_gear_bottom"
+  }
+}

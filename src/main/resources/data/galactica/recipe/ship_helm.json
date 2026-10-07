@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "G": "minecraft:glass_pane",
+    "C": "minecraft:compass",
+    "I": "minecraft:iron_ingot",
+    "W": "#minecraft:wool"
+  },
+  "pattern": [
+    " G ",
+    "ICI",
+    "IWI"
+  ],
+  "result": {
+    "id": "galactica:ship_helm"
+  }
+}

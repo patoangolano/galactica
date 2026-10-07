@@ -9,6 +9,7 @@ import dev.galactica.ship.ShipEntities;
 import dev.galactica.ship.Starship;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.ModelLayerRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -62,7 +63,21 @@ public final class ShipClient {
         // GeckoLib is optional: its classes are only loaded through GeckoShipRendering, and only for the API line
         // this mod was compiled against.
         EntityRenderers.register(ShipEntities.SHIP, geckoLibUsable() ? ShipClient::geckoOrVanilla : StarshipRenderer::new);
+        EntityRenderers.register(ShipEntities.STRUCTURE, BuiltShipRenderer::new);
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("ship_hud"), ShipHud::extract);
+        // A block-built ship's blocks: applied to the entity, or held until its spawn packet has been handled.
+        ClientPlayNetworking.registerGlobalReceiver(dev.galactica.ship.ShipBlocksPayload.TYPE, (msg, ctx) -> {
+            if (ctx.client().level != null && ctx.client().level.getEntity(msg.entityId()) instanceof dev.galactica.ship.ShipStructure s) {
+                s.setBlocks(msg.blocks());
+            } else {
+                PENDING_BLOCKS.put(msg.entityId(), msg.blocks());
+            }
+        });
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents.ENTITY_LOAD.register((entity, level) -> {
+            var blocks = PENDING_BLOCKS.remove(entity.getId());
+            if (blocks != null && entity instanceof dev.galactica.ship.ShipStructure s) s.setBlocks(blocks);
+        });
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> PENDING_BLOCKS.clear());
 
         // Fabric runs play payload handlers on the client thread, in packet order.
         ClientPlayNetworking.registerGlobalReceiver(ShipCorrectionPayload.TYPE, (msg, ctx) -> {
@@ -74,6 +89,10 @@ public final class ShipClient {
         // The cockpit display repaints and uploads here, between frames, never while a render pass is open.
         ClientTickEvents.END_CLIENT_TICK.register(CockpitDisplay::tick);
     }
+
+    /** Block sets that arrived before their ship's spawn was handled, by entity id (client thread only). */
+    private static final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<dev.galactica.ship.build.ShipBlocks> PENDING_BLOCKS =
+            new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
 
     /** GeckoLib versions whose API {@code GeckoShipRendering} was compiled against (5.5.7, MC 26.3). */
     static final String GECKOLIB_RANGE = ">=5.5.7 <5.6";

@@ -16,7 +16,8 @@ import java.util.List;
  * @param massKg          total mass
  * @param mainThrustN     main engines along +Z (nose)
  * @param reverseThrustN  engines along −Z (braking, "S")
- * @param rcsThrustN      RCS per translation axis (lift, flight-assist side and dorsal nulling)
+ * @param rcsThrustN      RCS per translation axis (flight-assist side nulling, ventral)
+ * @param liftThrustN     dorsal (+Y) thrust: RCS plus engines firing downward (VTOL lift); never below the RCS
  * @param maxHydrogen     hydrogen capacity, cells
  * @param maxExotic       exotic-matter capacity, units
  * @param maxHull         hull points
@@ -31,14 +32,14 @@ import java.util.List;
  * @param inertia         principal moments about the centre of mass (diagonal, kg·m²: x pitch, y yaw, z roll)
  * @param turnScale       share (0..1] of the Kestrel's commanded turn rates the RCS can deliver against the inertia
  */
-public record ShipSpec(double massKg, double mainThrustN, double reverseThrustN, double rcsThrustN,
+public record ShipSpec(double massKg, double mainThrustN, double reverseThrustN, double rcsThrustN, double liftThrustN,
                        float maxHydrogen, int maxExotic, float maxHull, double jumpRangeLy,
                        float pivot, float boxWidth, float boxHeight, float hullReach,
                        List<Vector3fc> seats, float[][] probes, Vector3dc centreOfMass, Vector3dc inertia, double turnScale) {
 
     /** The hand-modelled Kestrel: the constants every test and autotest was tuned on. */
     public static final ShipSpec KESTREL = new ShipSpec(ShipFlightModel.MASS_KG, ShipFlightModel.MAIN_THRUST_N,
-            ShipFlightModel.MAIN_THRUST_N, ShipFlightModel.RCS_THRUST_N,
+            ShipFlightModel.MAIN_THRUST_N, ShipFlightModel.RCS_THRUST_N, ShipFlightModel.RCS_THRUST_N,
             Starship.MAX_HYDROGEN, Starship.MAX_EXOTIC, Starship.MAX_HULL, DriveRules.TIER_RANGE_LY,
             ShipDimensions.PIVOT, ShipDimensions.BOX_WIDTH, ShipDimensions.BOX_HEIGHT, ShipDimensions.HULL_REACH,
             List.of(new Vector3f(ShipDimensions.PILOT_SEAT), new Vector3f(ShipDimensions.PASSENGER_SEAT)),
@@ -54,6 +55,10 @@ public record ShipSpec(double massKg, double mainThrustN, double reverseThrustN,
 
     public double rcsAccel() {
         return massKg > 0 ? rcsThrustN / massKg : 0;
+    }
+
+    public double liftAccel() {
+        return massKg > 0 ? Math.max(rcsThrustN, liftThrustN) / massKg : 0;
     }
 
     /**

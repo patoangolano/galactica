@@ -80,6 +80,40 @@ public final class ShipRenderTypes {
                     .affectsCrumbling()
                     .createRenderSetup());
 
+    /**
+     * Block-built hulls under the star ({@code BuiltShipRenderer}): the same shaders on the block atlas, with an
+     * exposure gain for vanilla block albedos (~0.5–0.8) instead of the Kestrel's dark paint.
+     */
+    public static final float BLOCK_HULL_GAIN = 1.3F;
+
+    public static final RenderPipeline BLOCK_HULL_LIT = RenderPipeline.builder()
+            .withBindGroupLayout(BindGroupLayouts.GLOBALS)
+            .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+            .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
+            .withBindGroupLayout(BindGroupLayouts.FOG)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER1)
+            .withLocation(id("pipeline/ship_block_hull_lit"))
+            .withVertexShader(id("core/ship_hull"))
+            .withFragmentShader(id("core/ship_hull"))
+            .withVertexBinding(0, DefaultVertexFormat.ENTITY)
+            .withPrimitiveTopology(PrimitiveTopology.QUADS)
+            .withDepthStencilState(DepthStencilState.DEFAULT)
+            .withShaderDefine("HULL_GAIN", BLOCK_HULL_GAIN)
+            .withColorTargetState(ColorTargetState.DEFAULT)
+            .build();
+
+    public static final RenderType BLOCK_HULL_LIT_TYPE = RenderType.create("galactica_ship_block_hull_lit",
+            RenderSetup.builder(BLOCK_HULL_LIT)
+                    .withTexture("Sampler0", net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)
+                    .useOverlay()
+                    .createRenderSetup());
+
+    /** True if block-built hulls can draw star-lit; false falls back to the vanilla entity cutout type. */
+    public static boolean blockHullUsable() {
+        return compiles(BLOCK_HULL_LIT);
+    }
+
     private static RenderPipeline.Builder exhaustBase() {
         return RenderPipeline.builder()
                 .withBindGroupLayout(BindGroupLayouts.GLOBALS)
@@ -134,6 +168,7 @@ public final class ShipRenderTypes {
     /** Client init: precompile at resource reload, and forget failures after every reload. */
     public static void init() {
         RenderPipelines.registerOptional(HULL_LIT);
+        RenderPipelines.registerOptional(BLOCK_HULL_LIT);
         RenderPipelines.registerOptional(EXHAUST);
         RenderPipelines.registerOptional(COCKPIT_DISPLAY);
         // Precompiled so turning improved transparency on does not hitch on the first exhaust draw.

@@ -1,0 +1,12 @@
+{
+  "values": [
+    "galactica:ship_helm",
+    "galactica:ship_crew_seat",
+    "galactica:ship_thruster",
+    "galactica:ship_rcs",
+    "galactica:ship_hydrogen_tank",
+    "galactica:ship_hyperdrive_core",
+    "galactica:ship_landing_gear",
+    "galactica:ship_hull_plating"
+  ]
+}

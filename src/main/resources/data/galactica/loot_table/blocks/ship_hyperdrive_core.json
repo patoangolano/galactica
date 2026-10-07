@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "condition": {
+        "type": "minecraft:survives_explosion"
+      },
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "galactica:ship_hyperdrive_core"
+        }
+      ]
+    }
+  ],
+  "random_sequence": "galactica:blocks/ship_hyperdrive_core"
+}

@@ -30,7 +30,9 @@ public final class EntityCullingCompat {
                 }
                 if (!types && ec.entityWhitelist != null && ec.tickCullWhitelists != null && mc.level != null) {
                     ec.entityWhitelist.add(ShipEntities.SHIP);
+                    ec.entityWhitelist.add(ShipEntities.STRUCTURE);
                     ec.tickCullWhitelists.add(ShipEntities.SHIP);
+                    ec.tickCullWhitelists.add(ShipEntities.STRUCTURE);
                     types = true;
                     Galactica.LOG.info("EntityCulling: starships and their crews are never culled");
                 }
