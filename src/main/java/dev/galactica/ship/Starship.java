@@ -373,6 +373,21 @@ public class Starship extends VehicleEntity {
         for (Entity e : getPassengers()) e.resetFallDistance();
     }
 
+    /**
+     * A ship with no player aboard is never recentred by the floating origin (only a player's craft is), so in space
+     * it is held within {@link dev.galactica.nav.FloatingOrigin#PARKED_LIMIT_Y} of block 0 vertically: a player
+     * climbing towards it always reaches it before their own forced recentre, and a ship saved above or below that in
+     * an older, taller space dimension comes back the first time it ticks.
+     */
+    private void keepParkedInReach() {
+        if (level().dimension() != Galactica.SPACE) return;
+        double limit = dev.galactica.nav.FloatingOrigin.PARKED_LIMIT_Y;
+        if (Math.abs(getY()) <= limit) return;
+        for (Entity e : getIndirectPassengers()) if (e instanceof Player) return;
+        setPos(getX(), Math.copySign(limit, getY()), getZ());
+        setDeltaMovement(getDeltaMovement().multiply(1.0, 0.0, 1.0));
+    }
+
     // ---------------------------------------------------------------- hull beyond the box
 
     /**
@@ -499,6 +514,7 @@ public class Starship extends VehicleEntity {
 
     private void serverStep() {
         ServerPlayer pilot = getControllingPassenger() instanceof ServerPlayer sp ? sp : null;
+        keepParkedInReach();
         entityData.set(DATA_GRAVITY, computeGravity(pilot));
         if (pilot != null) {
             Input in = pilot.getLastClientInput();

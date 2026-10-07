@@ -53,6 +53,23 @@ public final class FloatingOrigin {
      */
     public static final double LIMIT_Y = 192.0;
     /**
+     * A vertical recentre moves only this craft, so anything else nearby (another player, another ship, blocks)
+     * would jump {@code ~LIMIT_Y} blocks relative to it, well inside the 160-block tracking range. While anything
+     * like that is within {@link #GUARD_RADIUS} horizontally (at any height), the vertical recentre waits, up to
+     * this height; past it the craft is close to the build limit (±768) and is recentred regardless.
+     */
+    public static final double HARD_LIMIT_Y = 704.0;
+    /**
+     * An unoccupied ship in space is kept within this height ({@code Starship}), so a player climbing towards it
+     * reaches it before {@link #HARD_LIMIT_Y} forces their own recentre; ships saved higher in older worlds (the
+     * dimension used to be 4 064 blocks tall) are brought back here when they load.
+     */
+    public static final double PARKED_LIMIT_Y = 640.0;
+    /** Horizontal reach of the vertical-recentre guard: a ship's tracking range (160 blocks) plus a margin. */
+    private static final double GUARD_RADIUS = 176.0;
+    /** The guard's scan (players, ships, non-empty sections) is reused this many ticks. */
+    private static final int GUARD_RECHECK_TICKS = 20;
+    /**
      * Chunk view distance in galactica:space ({@code SpaceViewDistanceMixin}): a ship is tracked within 10 chunks, and
      * empty space beyond that costs chunk generation, saving and meshing every time the origin moves.
      * {@code -Dgalactica.spaceViewDistance} overrides it (2–32).
@@ -80,6 +97,8 @@ public final class FloatingOrigin {
     private static final Map<UUID, Vec3> LAST_POS = new HashMap<>(), LAST_STEP = new HashMap<>();
     /** Server tick at which a craft first needed a shift that is still waiting for its landing chunks. */
     private static final Map<UUID, Integer> DEFER_SINCE = new HashMap<>();
+    /** Per player: {server tick of the last guard scan, 1 if something foreign was near}. */
+    private static final Map<UUID, int[]> GUARD = new HashMap<>();
 
     private record Pending(int seq, Vec3 delta, int sentAt) {}
 
@@ -98,6 +117,7 @@ public final class FloatingOrigin {
             LAST_STEP.remove(handler.player.getUUID());
             DEFER_SINCE.remove(handler.player.getUUID());
             SENT_RADIUS.remove(handler.player.getUUID());
+            GUARD.remove(handler.player.getUUID());
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(s -> {
             PENDING.clear();
@@ -105,6 +125,7 @@ public final class FloatingOrigin {
             LAST_STEP.clear();
             DEFER_SINCE.clear();
             SENT_RADIUS.clear();
+            GUARD.clear();
             TICKETED.clear();
         });
     }
@@ -214,7 +235,7 @@ public final class FloatingOrigin {
         double far = maxNorm(root.position());
         Vec3 step = LAST_STEP.getOrDefault(p.getUUID(), Vec3.ZERO);
         // Only vertical: the same chunk columns, already loaded, so it needs no preload and never waits.
-        Vec3 vertical = Math.abs(root.getY()) > LIMIT_Y ? new Vec3(0, -Math.round(root.getY()), 0) : null;
+        Vec3 vertical = verticalShift(p, root);
         // Only a craft actually heading past the limit soon preloads: a parked or slow craft holds nothing extra.
         if (far <= LIMIT && maxNorm(root.position().add(step.scale(PRELOAD_TICKS))) <= LIMIT) {
             DEFER_SINCE.remove(p.getUUID());
@@ -246,6 +267,54 @@ public final class FloatingOrigin {
         }
         DEFER_SINCE.remove(p.getUUID());
         return d;
+    }
+
+    /**
+     * The vertical-only recentre for {@code p}'s craft, or null. Past {@link #LIMIT_Y} it happens only when nothing
+     * foreign is near ({@link #foreignNearby}); past {@link #HARD_LIMIT_Y} it happens anyway.
+     */
+    private static @Nullable Vec3 verticalShift(ServerPlayer p, Entity root) {
+        double y = root.getY();
+        if (Math.abs(y) <= LIMIT_Y) return null;
+        Vec3 d = new Vec3(0, -Math.round(y), 0);
+        if (Math.abs(y) > HARD_LIMIT_Y) return d;
+        return foreignNearby(p, root) ? null : d;
+    }
+
+    /**
+     * True when another player, another ship or any non-air block is within {@link #GUARD_RADIUS} blocks of the craft
+     * horizontally, at any height: a vertical recentre would make it jump relative to the craft. Only loaded chunks
+     * are looked at (nothing is loaded for it); the answer is reused for {@link #GUARD_RECHECK_TICKS} ticks.
+     */
+    private static boolean foreignNearby(ServerPlayer p, Entity root) {
+        ServerLevel level = p.level();
+        int now = level.getServer().getTickCount();
+        int[] cached = GUARD.get(p.getUUID());
+        if (cached != null && now - cached[0] >= 0 && now - cached[0] < GUARD_RECHECK_TICKS) return cached[1] != 0;
+        boolean near = scanForeign(level, root);
+        GUARD.put(p.getUUID(), new int[] {now, near ? 1 : 0});
+        return near;
+    }
+
+    private static boolean scanForeign(ServerLevel level, Entity root) {
+        double x = root.getX(), z = root.getZ();
+        for (ServerPlayer other : level.players()) {
+            if (other.getRootVehicle() == root) continue;
+            if (Math.abs(other.getX() - x) <= GUARD_RADIUS && Math.abs(other.getZ() - z) <= GUARD_RADIUS) return true;
+        }
+        var box = new net.minecraft.world.phys.AABB(x - GUARD_RADIUS, level.getMinY() - 4096, z - GUARD_RADIUS,
+                x + GUARD_RADIUS, level.getMaxY() + 4096, z + GUARD_RADIUS);
+        if (!level.getEntitiesOfClass(dev.galactica.ship.Starship.class, box, s -> s.getRootVehicle() != root).isEmpty()) return true;
+        int r = (int) Math.ceil(GUARD_RADIUS / 16.0);
+        int cx = BlockPos.containing(x, 0, z).getX() >> 4, cz = BlockPos.containing(x, 0, z).getZ() >> 4;
+        for (int i = -r; i <= r; i++) {
+            for (int j = -r; j <= r; j++) {
+                var chunk = level.getChunkSource().getChunkNow(cx + i, cz + j);
+                if (chunk == null) continue;
+                for (var section : chunk.getSections()) if (!section.hasOnlyAir()) return true;
+            }
+        }
+        return false;
     }
 
     /** Horizontal distance from block 0 (max of |x|, |z|): the vertical axis has its own, smaller limit. */

@@ -96,7 +96,7 @@ public final class NearPlanetRenderer {
     private static long builtBody = Long.MIN_VALUE;
     private static int builtGeneration = -1, builtMinLevel = -1;
     private static final double[] builtRel = new double[3], builtToStar = new double[3];
-    private static double builtSpin, builtScale, builtAltitude;
+    private static double builtSpin, builtScale, builtAltitude, builtHorizon;
     private static final org.joml.Vector3f builtPoleMc = new org.joml.Vector3f();
     /**
      * Carries the mesh from where it was built to where the body is now (a rigid move: the eye-relative
@@ -111,6 +111,14 @@ public final class NearPlanetRenderer {
      * rebuilt the whole ~15 k-quad mesh on every tick in orbit, as the body moved 30 km/s past the eye.
      */
     private static final double REBUILD_SHIFT = 0.01, REBUILD_ANGLE = 1e-3;
+    /**
+     * What a rigid move cannot carry: the cap is cut at the build eye's horizon, the limb ring sits on it and the
+     * clipmap levels keep the quads that faced that eye. A radial move changes the horizon angle (at 0.1 R a 1 %
+     * altitude change moves it ~2 mrad, ten times the cap's 0.05 % margin), which would open a gap or an overlap
+     * at the limb. So the mesh is also rebuilt when the horizon angle has moved by half a pixel; a circular orbit
+     * (the common case: the body sweeping past at constant altitude) never trips this.
+     */
+    private static final double REBUILD_HORIZON = 0.5 / PX_PER_RAD;
 
     /** Off-thread rebuilds for a moving eye; rebuilds after a clipmap upload stay synchronous (textures changed). */
     private static final java.util.concurrent.ExecutorService MESHER = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
@@ -240,8 +248,14 @@ public final class NearPlanetRenderer {
             ds += (x.toStar[k] - builtToStar[k]) * (x.toStar[k] - builtToStar[k]);
         }
         double tol = REBUILD_SHIFT * Math.min(x.altitude, builtAltitude);
-        boolean stale = dr > tol * tol || Math.sqrt(ds) > REBUILD_ANGLE || Math.abs(x.spin - builtSpin) > REBUILD_ANGLE;
+        boolean stale = dr > tol * tol || Math.sqrt(ds) > REBUILD_ANGLE || Math.abs(x.spin - builtSpin) > REBUILD_ANGLE
+                || Math.abs(horizonAngle(x) - builtHorizon) > REBUILD_HORIZON;
         return stale ? Rebuild.ASYNC : Rebuild.NONE;
+    }
+
+    /** Angle from the sub-eye point to the horizon, as seen from the body's centre. */
+    private static double horizonAngle(Ctx x) {
+        return Math.acos(Math.min(1, x.radius / x.d));
     }
 
     /** Installs a finished off-thread mesh, unless the textures it was made for have changed since. */
@@ -293,6 +307,7 @@ public final class NearPlanetRenderer {
         builtSpin = x.spin;
         builtScale = x.scale;
         builtAltitude = x.altitude;
+        builtHorizon = horizonAngle(x);
         builtPoleMc.set((float) x.pole[0], (float) x.pole[2], (float) -x.pole[1]).normalize();
     }
 
@@ -503,7 +518,7 @@ public final class NearPlanetRenderer {
             if (!x.atm.vacuum() && x.altitude < 1.5 * PlanetEntry.entryAltitude(x.body)) {
                 addPart(out.sky, vertex, dome(buf, x), plan.white(), false);
             }
-            double horizon = Math.acos(Math.min(1, x.radius / x.d)) * 0.9995;
+            double horizon = horizonAngle(x) * 0.9995;
             if (plan.globe() != null) addPart(out.parts, vertex, cap(buf, x, horizon, 0), plan.globe(), true);
             // Each level fades into whatever is drawn under it; the bottom one only when the globe cap is there.
             boolean under = plan.globe() != null;

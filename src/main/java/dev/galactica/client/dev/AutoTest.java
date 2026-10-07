@@ -146,6 +146,20 @@ public final class AutoTest {
         // Floating origin on EVA: ~14 blocks/tick through at least 3 recentres, camera and sky continuous.
         STEPS.add(new Step(20, () -> OriginShiftAutoTest.start("eva", new net.minecraft.world.phys.Vec3(0, 0, 14))));
         STEPS.add(new Step(330, OriginShiftAutoTest::finish));
+        // Vertical floating origin on EVA, nothing near: recentred every ~LIMIT_Y (192) blocks of climb.
+        STEPS.add(new Step(20, () -> OriginShiftAutoTest.start("eva-vertical", new net.minecraft.world.phys.Vec3(0, 14, 0), 150, 300)));
+        STEPS.add(new Step(150, OriginShiftAutoTest::finish));
+        // A block 40 blocks away: a recentre now would make it jump ~192 blocks within sight, so the vertical
+        // recentre waits until HARD_LIMIT_Y (704) and every shift is that large.
+        server(20, "guard block 40 blocks east", sp -> {
+            guardBlock = sp.blockPosition().east(40);
+            sp.level().setBlockAndUpdate(guardBlock, net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        });
+        STEPS.add(new Step(20, () -> OriginShiftAutoTest.start("eva-vertical-guarded", new net.minecraft.world.phys.Vec3(0, -14, 0), 600, 800)));
+        STEPS.add(new Step(260, OriginShiftAutoTest::finish));
+        server(5, "remove guard block", sp -> {
+            if (guardBlock != null) sp.level().setBlockAndUpdate(guardBlock, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
+        });
         cmd(40, "galactica ship");
         // The ship, not the pilot, sets the view while flying: turn the hull so the Sun is where each shot wants it
         // (azimuth toward port from the nose, elevation above the ship's horizon).
@@ -199,6 +213,9 @@ public final class AutoTest {
         STEPS.add(new Step(5, () -> OriginShiftAutoTest.start("ship", new net.minecraft.world.phys.Vec3(0, 0, 14))));
         shot(150, "18b_ship_recentre");
         STEPS.add(new Step(180, OriginShiftAutoTest::finish));
+        // The same ship climbing: vertical recentres every ~192 blocks, pilot aboard the same ship instance.
+        STEPS.add(new Step(5, () -> OriginShiftAutoTest.start("ship-vertical", new net.minecraft.world.phys.Vec3(0, 14, 0), 150, 300)));
+        STEPS.add(new Step(150, OriginShiftAutoTest::finish));
         cmd(20, "galactica where");
         cmd(20, "galactica nearest 3");
         STEPS.add(new Step(20, () -> Minecraft.getInstance().player.connection.sendCommand("galactica fuel 400 16")));
@@ -223,7 +240,10 @@ public final class AutoTest {
         key(5, "keyShift", true);
         awaitShipOnGround(1, 2400);
         key(1, "keyShift", false);
-        shipOnGround(40, "Mars");
+        // Touchdown on a slope ends in a skid of a few seconds: check once it has stopped, not at a fixed delay
+        // (a check at +40 ticks caught it still sliding at ~1 m/s, before and after the performance work alike).
+        awaitShipSettled(40, 200);
+        shipOnGround(1, "Mars");
         shipDiagnostics(1, "Mars landed");
         shot(20, "21a_mars_cockpit");
         landedExterior("21c_mars_ship_landed");
@@ -506,6 +526,18 @@ public final class AutoTest {
         camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
     }
 
+    /** Holds the script (after {@code wait}) until the ridden ship moves under 0.5 m/s, for at most {@code maxTicks}. */
+    private static void awaitShipSettled(int wait, int maxTicks) {
+        STEPS.add(new Step(wait, () -> {
+            holdLeft = maxTicks;
+            hold = () -> {
+                var mc = Minecraft.getInstance();
+                return mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship s)
+                        || s.getDeltaMovement().length() * 20 < 0.5;
+            };
+        }));
+    }
+
     /**
      * Holds the script (after {@code wait}) until the ridden ship is on the ground, for at most {@code maxTicks}
      * (then logs FAIL). Meanwhile keeps the wings level and clears derelict ships from earlier runs around the landing
@@ -647,6 +679,9 @@ public final class AutoTest {
         }
         countdown = index < STEPS.size() ? Math.max(1, STEPS.get(index).waitTicks()) : 0;
     }
+
+    /** The block the guarded vertical recentre phase keeps in sight (server side). */
+    private static volatile net.minecraft.core.BlockPos guardBlock;
 
     private static void cmd(int wait, String command) {
         STEPS.add(new Step(wait, () -> {
