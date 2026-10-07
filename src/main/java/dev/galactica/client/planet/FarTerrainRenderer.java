@@ -205,7 +205,7 @@ public final class FarTerrainRenderer {
             outer[k] = Math.min(rMax, edge - 0.5 * fadeBand);
             if (outer[k] > inner[k]) {
                 use[k] = true;
-                quadsTotal += RINGS * SEGMENTS;
+                quadsTotal += 2 * RINGS * SEGMENTS; // each ground quad goes out as two triangles (emitTriangles)
                 covered = Math.max(covered, outer[k]);
             }
             prevOpaque = Math.max(prevOpaque, edge - fadeBand);
@@ -276,8 +276,8 @@ public final class FarTerrainRenderer {
                             qc[c] = argb(enc(sunT[0] * lambert), enc(sunT[1] * lambert), enc(sunT[2] * lambert), alpha);
                         }
                         if (!ok) continue;
-                        emitInward(b, q, qc);
-                        emitted++;
+                        emitTriangles(b, q, qc);
+                        emitted += 2;
                     }
                 }
                 if (emitted > 0) PARTS.add(new Part(vertex, emitted, l.texture()));
@@ -351,6 +351,27 @@ public final class FarTerrainRenderer {
     }
 
     /** END_SKY culls back faces and the camera sits at every shell's centre: wind each quad inward. */
+    private static final float[][] TRI = new float[4][];
+    private static final int[] TRI_ARGB = new int[4];
+
+    /**
+     * A ground quad as two triangles (each a quad with its last vertex repeated), each turned to face the camera on
+     * its own: a quad of tall terrain can be concave on screen, and one winding for the whole quad then culled one
+     * of its triangles (the triangular holes in the skirt). Render thread only.
+     */
+    static void emitTriangles(BufferBuilder b, float[][] v, int[] argb) {
+        int[][] tris = {{0, 1, 2}, {0, 2, 3}};
+        for (int[] t : tris) {
+            for (int k = 0; k < 3; k++) {
+                TRI[k] = v[t[k]];
+                TRI_ARGB[k] = argb[t[k]];
+            }
+            TRI[3] = v[t[2]];
+            TRI_ARGB[3] = argb[t[2]];
+            emitInward(b, TRI, TRI_ARGB);
+        }
+    }
+
     static void emitInward(BufferBuilder b, float[][] v, int[] argb) {
         float ax = v[1][0] - v[0][0], ay = v[1][1] - v[0][1], az = v[1][2] - v[0][2];
         float bx = v[2][0] - v[0][0], by = v[2][1] - v[0][1], bz = v[2][2] - v[0][2];
