@@ -49,17 +49,17 @@ public final class FloatingOrigin {
     /** A shift the client never acknowledged (mod missing, connection stalled) stops translating after this. */
     private static final int ACK_TIMEOUT_TICKS = 100;
     /** Start holding the landing chunks this many blocks before the limit (several seconds at full ship speed). */
-    private static final double PRELOAD_MARGIN = 128.0;
+    private static final double PRELOAD_MARGIN = 256.0;
 
     /** Keeps the chunks around block 0 loaded and entity-ticking while a craft approaches the limit (like a pearl). */
     public static final TicketType LANDING = Registry.register(BuiltInRegistries.TICKET_TYPE, Galactica.id("origin_landing"),
             new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE));
 
-    /** Follows a moving craft: its chunk and the one it reaches in {@link #LOOK_AHEAD_TICKS} ticks. */
+    /** Follows a moving craft: every chunk it crosses in the next {@link #LOOK_AHEAD_TICKS} ticks. */
     public static final TicketType CRAFT = Registry.register(BuiltInRegistries.TICKET_TYPE, Galactica.id("craft"),
             new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE));
-    private static final double LOOK_AHEAD_TICKS = 10;
-    private static final Map<UUID, Vec3> LAST_POS = new HashMap<>();
+    private static final int LOOK_AHEAD_TICKS = 10;
+    private static final Map<UUID, Vec3> LAST_POS = new HashMap<>(), LAST_STEP = new HashMap<>();
 
     private record Pending(int seq, Vec3 delta, int sentAt) {}
 
@@ -75,10 +75,12 @@ public final class FloatingOrigin {
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             PENDING.remove(handler.player.getUUID());
             LAST_POS.remove(handler.player.getUUID());
+            LAST_STEP.remove(handler.player.getUUID());
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(s -> {
             PENDING.clear();
             LAST_POS.clear();
+            LAST_STEP.clear();
         });
     }
 
@@ -93,18 +95,39 @@ public final class FloatingOrigin {
         Entity root = p.getRootVehicle();
         Vec3 now = root.position();
         Vec3 before = LAST_POS.put(p.getUUID(), now);
-        if (before == null) return;
-        Vec3 step = now.subtract(before);
+        Vec3 step = before == null ? Vec3.ZERO : now.subtract(before);
         double len = step.length();
-        if (len < 0.5 || len > 64) return; // parked, or this tick's jump was a recentre or a teleport
-        ServerLevel level = p.level();
-        level.getChunkSource().addTicketAndLoadWithRadius(CRAFT, ChunkPos.containing(BlockPos.containing(now)), 2);
-        level.getChunkSource().addTicketAndLoadWithRadius(CRAFT, ChunkPos.containing(BlockPos.containing(now.add(step.scale(LOOK_AHEAD_TICKS)))), 2);
+        if (len > 64) return; // this tick's jump was a recentre or a teleport: keep the last known step
+        LAST_STEP.put(p.getUUID(), step);
+        if (len >= 0.5) holdPath(p.level(), CRAFT, now, step);
+    }
+
+    /** Tickets every chunk the craft passes in the next {@link #LOOK_AHEAD_TICKS} ticks at {@code step} per tick. */
+    private static void holdPath(ServerLevel level, TicketType type, Vec3 from, Vec3 step) {
+        long last = Long.MIN_VALUE;
+        for (int k = 0; k <= LOOK_AHEAD_TICKS; k++) {
+            ChunkPos c = ChunkPos.containing(BlockPos.containing(from.add(step.scale(k))));
+            if (c.pack() == last) continue;
+            last = c.pack();
+            // Radius 2: the centre chunk is entity-ticking (ticket level 31), its neighbours fully loaded.
+            level.getChunkSource().addTicketAndLoadWithRadius(type, c, 2);
+        }
+    }
+
+    /** True when every point of that path is in an entity-ticking chunk. */
+    private static boolean pathTicking(ServerLevel level, Vec3 from, Vec3 step) {
+        for (int k = 0; k <= LOOK_AHEAD_TICKS; k++) {
+            if (!level.isPositionEntityTicking(BlockPos.containing(from.add(step.scale(k))))) return false;
+        }
+        return true;
     }
 
     /** Per-tick housekeeping: forgets shifts that left space or were never acknowledged. */
     public static void tick(ServerPlayer p) {
-        if (p.level().dimension() != Galactica.SPACE) LAST_POS.remove(p.getUUID());
+        if (p.level().dimension() != Galactica.SPACE) {
+            LAST_POS.remove(p.getUUID());
+            LAST_STEP.remove(p.getUUID());
+        }
         Pending pending = PENDING.get(p.getUUID());
         if (pending == null) return;
         if (p.level().dimension() != Galactica.SPACE) {
@@ -127,14 +150,19 @@ public final class FloatingOrigin {
         // the limit. A vehicle moved into a chunk that is not loaded yet stops being tracked at all (vanilla removes
         // it from every client, the pilot included), so the shift waits until the landing chunks are ready.
         ServerLevel level = p.level();
-        // Radius 3: entity-ticking for the 3 x 3 chunks around block 0 (a landing at -0.4 sits in chunk -1).
+        Vec3 d = new Vec3(-Math.round(root.getX()), -Math.round(root.getY()), -Math.round(root.getZ()));
+        // The landing point is the craft's sub-block offset from block 0 whenever the shift happens, so its path after
+        // landing is known in advance: radius 3 around block 0 (a landing at -0.4 sits in chunk -1) plus the chunks
+        // the craft crosses in its first LOOK_AHEAD_TICKS ticks there, where the follow ticket takes over.
+        Vec3 landing = root.position().add(d);
+        Vec3 step = LAST_STEP.getOrDefault(p.getUUID(), Vec3.ZERO);
         level.getChunkSource().addTicketAndLoadWithRadius(LANDING, ChunkPos.ZERO, 3);
+        if (step.length() >= 0.5) holdPath(level, LANDING, landing, step);
         if (far <= LIMIT) return null;
         for (ServerPlayer rider : riders(root)) {
             if (PENDING.containsKey(rider.getUUID()) || ((OriginShiftable) rider.connection).galactica$awaitingTeleport()) return null;
         }
-        Vec3 d = new Vec3(-Math.round(root.getX()), -Math.round(root.getY()), -Math.round(root.getZ()));
-        if (!level.isPositionEntityTicking(BlockPos.containing(root.position().add(d)))) return null;
+        if (!pathTicking(level, landing, step)) return null;
         for (Entity e : root.getIndirectPassengers()) {
             if (!level.isPositionEntityTicking(BlockPos.containing(e.position().add(d)))) return null;
         }
