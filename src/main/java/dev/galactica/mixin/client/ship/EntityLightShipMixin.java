@@ -32,6 +32,8 @@ public abstract class EntityLightShipMixin {
         ShipRiderState rider = (ShipRiderState) state;
         if (!(entity.getVehicle() instanceof Starship ship)) {
             rider.galactica$setRidesShip(false);
+            // EVA: a player in open space gets the same starlight route as a ship's crew (the lightmap is zero there).
+            if (entity instanceof net.minecraft.world.entity.player.Player) brighten(state, ShipEnvironment.evaLight(entity, partialTicks));
             return;
         }
         rider.galactica$setRidesShip(true);
@@ -47,7 +49,11 @@ public abstract class EntityLightShipMixin {
             head[0] = Mth.clamp((float) Math.toDegrees(Math.atan2(-d.x, d.z)), -85F, 85F);
             head[1] = (float) Math.toDegrees(-Math.asin(Mth.clamp(d.y, -1F, 1F)));
         }
-        int light = ShipEnvironment.passengerLight(ship, partialTicks);
+        brighten(state, ShipEnvironment.passengerLight(ship, partialTicks));
+    }
+
+    /** Raises block and sky light to at least {@code light}'s (packed light, -1 = leave as is). */
+    private static void brighten(EntityRenderState state, int light) {
         if (light >= 0) state.lightCoords = Math.max(state.lightCoords & 0xFFFF, light & 0xFFFF) | Math.max(state.lightCoords >>> 16, light >>> 16) << 16;
     }
 }

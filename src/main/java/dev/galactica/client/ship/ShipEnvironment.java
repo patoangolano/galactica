@@ -83,6 +83,35 @@ public final class ShipEnvironment {
         return lightCoords(s.direct);
     }
 
+    /** Render-thread scratch for {@link #evaLight}. */
+    private static final StarshipRenderState EVA = new StarshipRenderState();
+
+    /**
+     * Light for an entity in open space, not aboard a ship (an EVA player's body and first-person arm), or -1 outside
+     * space: the same starlight route as a ship's crew, from the system's star at the entity's position, with the
+     * {@link #lightCoords} floor far from any star.
+     */
+    public static int evaLight(net.minecraft.world.entity.Entity entity, float partialTicks) {
+        Level level = entity.level();
+        if (level.dimension() != Galactica.SPACE) return -1;
+        var pos = entity.getPosition(partialTicks);
+        return lightCoords(sampleSpace(level, pos.x, pos.y, pos.z, EVA).direct);
+    }
+
+    /** Fills the starlight fields of {@code state} (toStar, direct, tint) for a point in space; returns {@code state}. */
+    public static StarshipRenderState sampleSpace(Level level, double x, double y, double z, StarshipRenderState state) {
+        state.x = x;
+        state.y = y;
+        state.z = z;
+        state.starLit = true;
+        state.toStar.zero();
+        state.direct = 0F;
+        state.tint[0] = state.tint[1] = state.tint[2] = 1F;
+        state.ambientBar = 0F;
+        starLight(level, state);
+        return state;
+    }
+
     private static void starLight(Level level, StarshipRenderState state) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;
