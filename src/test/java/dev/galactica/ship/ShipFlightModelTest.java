@@ -172,4 +172,27 @@ class ShipFlightModelTest {
         assertEquals((MAIN_ACCEL + Math.sqrt(3) * RCS_ACCEL) * TICK, maxDeltaVPerTick(true, 0), 1e-12);
         assertEquals(Math.sqrt(3) * RCS_ACCEL * TICK, maxDeltaVPerTick(false, 0), 1e-12);
     }
+    @Test
+    void assistNullsDriftRelativeToTheBodyNotTheFrame() {
+        // Nose +Z; the orbital frame drifts at 400 m/s across the nose (+X) relative to the body.
+        Vector3d frame = new Vector3d(400, 0, 0);
+        Quaterniond q = new Quaterniond();
+        Vector3d v = new Vector3d();
+        step(q, v, Controls.IDLE, NO_G, 0, TICK, frame);
+        assertEquals(-RCS_ACCEL * TICK, v.x, 1e-12, "one tick of RCS against the body-relative drift");
+        Vector3d folded = new Vector3d();
+        for (int i = 0; i < 2000; i++) {
+            step(q, v, Controls.IDLE, NO_G, 0, TICK, frame);
+            Vector3d k = krakensbane(v);
+            frame.add(k);
+            folded.add(k);
+        }
+        assertEquals(0.0, v.x + frame.x, 1e-9, "relative to the body the ship stops");
+        assertTrue(folded.x < -100, "past the block cap the braking is folded into the frame");
+        assertTrue(Math.abs(v.x) <= KRAKENSBANE_SPEED + 1e-9, "the hull's block speed stays under the cap");
+
+        Vector3d free = new Vector3d();
+        step(new Quaterniond(), free, new Controls(0, 0, 0, 0, 0, false), NO_G, 0, TICK, new Vector3d(400, 0, 0));
+        assertEquals(0.0, free.x, 0.0, "decoupled: pure inertia, whatever the frame does");
+    }
 }

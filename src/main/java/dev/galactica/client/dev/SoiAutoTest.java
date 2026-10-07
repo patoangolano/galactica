@@ -161,11 +161,17 @@ public final class SoiAutoTest {
                 OrbitReadout.speed(o.speed()), OrbitReadout.apsis(o.periapsis()), OrbitReadout.apsis(o.apoapsis()));
     }
 
-    /** (c) Left alone on a circular orbit at {@code target} metres: the altitude stays within ±5 % for {@code length} ticks. */
+    /**
+     * (c) Left alone, flight assist off, on a circular orbit at {@code target} metres: the altitude stays within ±5 %
+     * for {@code length} ticks.
+     */
     static Phase orbit(double target, int length) {
         double[] range = {Double.MAX_VALUE, -Double.MAX_VALUE};
         int[] missed = {0};
         return (mc, t) -> {
+            Starship ship = ShipClient.piloted(mc);
+            // Flight assist brakes relative to the planet, orbital speed included: coasting on an orbit is assist off.
+            if (t == 0 && ship != null && ship.coupled()) ship.toggleCoupled();
             double alt = earthAltitude(mc);
             if (Double.isNaN(alt)) missed[0]++;
             else {
@@ -196,6 +202,9 @@ public final class SoiAutoTest {
                     mc.options.keySprint.setDown(true);
                     mc.player.setSprinting(true);
                 } else {
+                    // Assist on, as a pilot flies: it measures drift against Earth, not against the falling frame.
+                    Starship ship = ShipClient.piloted(mc);
+                    if (t == 0 && ship != null && !ship.coupled()) ship.toggleCoupled();
                     if (t % 100 == 0) aimShipAtEarth(mc);
                     mc.options.keyUp.setDown(true);
                 }

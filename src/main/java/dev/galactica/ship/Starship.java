@@ -474,13 +474,28 @@ public class Starship extends VehicleEntity {
         Quaterniond q = new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w);
         Vector3d v = toMetres(getDeltaMovement());
         Vector3fc g = gravity();
-        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK);
+        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK, assistReference());
         // Speed beyond the block cap goes to the frame (reported with the velocity, ShipClient), not lost.
         if (level().dimension() == Galactica.SPACE) pendingRebase.add(ShipFlightModel.krakensbane(v));
         attitude.set((float) q.x, (float) q.y, (float) q.z, (float) q.w);
         localThrottle = hydrogen() > 0 ? (float) c.thrust() : 0F;
         setDeltaMovement(v.x * ShipFlightModel.TICK, v.y * ShipFlightModel.TICK, v.z * ShipFlightModel.TICK);
         syncRotationFields();
+    }
+
+    /**
+     * Pilot's client: the velocity (m/s, world frame) of the block frame relative to the dominant body, against which
+     * flight assist measures (the synced orbital-frame velocity plus what was folded into it since the last report).
+     * Zero outside space.
+     */
+    private Vector3d assistReference() {
+        if (level().dimension() != Galactica.SPACE || !(getControllingPassenger() instanceof Player p)) return new Vector3d();
+        NavState nav = p.getAttached(Galactica.NAV);
+        if (nav == null) return new Vector3d(pendingRebase);
+        double[] f = nav.frameVelocity();
+        double[] mc = Frames.galacticToMc(f[0], f[1], f[2]);
+        Vector3d r = new Vector3d(mc[0], mc[1], mc[2]).add(pendingRebase);
+        return r.isFinite() ? r : new Vector3d();
     }
 
     /** Nobody at the controls (server): free fall plus whatever velocity it had. */

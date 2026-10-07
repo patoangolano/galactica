@@ -70,6 +70,21 @@ public final class ShipFlightModel {
      * @return hydrogen burned this step (never more than {@code hydrogen})
      */
     public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt) {
+        return step(attitude, velocity, c, gravity, hydrogen, dt, ZERO);
+    }
+
+    private static final Vector3dc ZERO = new Vector3d();
+
+    /**
+     * {@link #step} with flight assist measured against a reference: {@code frame} (m/s, world frame) is the velocity
+     * the craft's block frame already has relative to the body it flies near (in space, the orbital frame's velocity,
+     * {@code OrbitalFrame}). Coupled mode then nulls the craft's velocity across the nose <i>relative to that body</i>
+     * ({@code velocity + frame}), not relative to a frame that is itself falling or orbiting; the correction goes into
+     * {@code velocity}, and whatever piles up past {@link #KRAKENSBANE_SPEED} is folded back into the frame by
+     * {@link #krakensbane}, which is how the assist slows the frame down.
+     */
+    public static double step(Quaterniond attitude, Vector3d velocity, Controls c, Vector3dc gravity, double hydrogen, double dt,
+                              Vector3dc frame) {
         double yaw = clamp(c.yawDeg(), MAX_TURN_PER_TICK), pitch = clamp(c.pitchDeg(), MAX_TURN_PER_TICK),
                 roll = clamp(c.rollDeg(), MAX_TURN_PER_TICK);
         attitude.rotateY(Math.toRadians(-yaw)).rotateX(Math.toRadians(pitch)).rotateZ(Math.toRadians(roll)).normalize();
@@ -85,8 +100,9 @@ public final class ShipFlightModel {
             // Each RCS axis has its own thruster pair, so the budget is per axis; an axis the pilot is
             // commanding is left alone.
             double budget = RCS_ACCEL * dt;
-            velocity.fma(-toward0(velocity.dot(side), budget), side);
-            if (lift == 0) velocity.fma(-toward0(velocity.dot(up), budget), up);
+            Vector3d rel = new Vector3d(velocity).add(frame);
+            velocity.fma(-toward0(rel.dot(side), budget), side);
+            if (lift == 0) velocity.fma(-toward0(rel.dot(up), budget), up);
         }
 
         double v = velocity.length();
