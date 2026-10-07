@@ -52,6 +52,10 @@ def verifiedMcpfabricJar() {
 configurations {
     // Resolved on its own (transitive deps off: each jar bundles what it needs, Fabric API comes from the main runtime).
     perfStack { transitive = false }
+    // Earth terrain overhaul for the Tectonic runs (README "Terreno"): Tectonic + Lithostitched, Terralith on request.
+    tectonicStack { transitive = false }
+    // Distant Horizons runs: DH plus the client rendering mods tested next to it (Sodium Extra, Bobby, Nvidium on request).
+    dhStack { transitive = false }
 }
 
 dependencies {
@@ -102,6 +106,22 @@ dependencies {
     perfStack("maven.modrinth:c2me-fabric:${perf_c2me}")
     perfStack("maven.modrinth:krypton:${perf_krypton}")
     perfStack("maven.modrinth:modernfix-mvus:${perf_modernfix}") // ModernFix-mVUS: the 26.x fork; upstream ModernFix stops at 1.21
+    perfStack("maven.modrinth:scalablelux:${perf_scalablelux}")     // parallel light engine: the lighting cost of the tall planet slots
+
+    // Tectonic (MIT) and its library Lithostitched (MIT) reshape the Overworld = Earth. Never bundled: "suggests" only.
+    // Terralith (Stardust Labs licence, never bundled or copied) joins with -Pgalactica.terralith=true.
+    tectonicStack("maven.modrinth:tectonic:${tectonic_version}")
+    tectonicStack("maven.modrinth:lithostitched:${lithostitched_version}")
+    if (project.findProperty('galactica.terralith') == 'true') {
+        tectonicStack("maven.modrinth:terralith:${terralith_version}")
+    }
+    dhStack("maven.modrinth:distanthorizons:${dh_version}")
+    dhStack("maven.modrinth:sodium-extra:${sodium_extra_version}")
+    dhStack("maven.modrinth:bobby:${bobby_version}")
+    // Nvidium replaces Sodium's terrain renderer on NVIDIA Turing+ only (it disables itself elsewhere): opt-in.
+    if (project.findProperty('galactica.nvidium') == 'true') {
+        dhStack("maven.modrinth:nvidium:${nvidium_version}")
+    }
 
     testImplementation(platform('org.junit:junit-bom:5.13.4'))
     testImplementation('org.junit.jupiter:junit-jupiter')
@@ -173,6 +193,14 @@ loom {
             configName = 'Galactica Autotest (Venus)'
             runDir 'runs/client'
             vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=venus'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
+        // The tall-terrain screenshot tour (Mars, an Earth-like world, the Moon) without Distant Horizons.
+        autotestTerrain {
+            client()
+            configName = 'Galactica Autotest (terrain tour)'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=terrain'
             programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
         }
         // The orbital-frame checks alone (AutoTest "soi" mode; the default run ends with them too).
@@ -255,10 +283,56 @@ def perfStackSha512 = [
         'd81fa97e11784c19d42f89c2f433831d007603dd7193cee45fa177e4a6a9c52b384b198586e04a0f7f63cd996fed713322578bde9a8db57e1188854ae5cbe584', // ferritecore 9.0.0
         '8e139589fd995bce3d485a34d92a07243964212f7ed2e4fc2f6de5b9a74d0f59b03252e7ce40c64e006cf3e21bed5de27b830d33ef048b286e041f6178ad8428', // immediatelyfast 1.17.1+26.3
         'c5d8947cb022f8baed4bf17e38ca598c56b8049871e7e47fb462bcecc9bc01e7eb75290494199fcb1aa73f5e37f93a296211ba78c9dd2a5bff30d5eed497ebcc', // entityculling 1.11.2
-        'b4fcf82bbe15bfa253e3ab6df4d6b64e800a2ccdb45d4ca2b8040da87f72033fed34f4f94016aac507596c78fddb18dba28c6642790181642cae46fae28b3a85', // c2me 0.4.2-alpha.0.89+26.3
+        'd0140ebdad22b7ee002c4e17685dbb254d667562840000ef98cedabafa53bc67d1011b9fc4d70f26f964fc781373e61583d39b001e7e15644ba97dd19ea1c2ce', // c2me 0.4.2-alpha.0.90+26.3
         'd1d57ebd41395b75b01f130cd9503eb8d208212424a399ff9f367f50be8fbc1c6472442b33c686e777c3148f6a609520e8fb732c755157c358cb207fd4d1123a', // krypton 0.3.2
         'b586434056107aac4ef86e9351d66170dac65a45a1e5f8bd48fb931b3012ab2431b16476eb9c256773339e2b4c60f6f3e90a4709180f700b2aea59ff607f4243', // modernfix-mvus 5.27.20-build.2
+        'ded5a939fb20ab81c1f33b147ca9b98050773dbb28dff16df939c7d567b626809522994ec8dbfb99e7f498dc6a4e62f25e141a87d18efb43f73fc5ad1569ccc9', // scalablelux 0.3.0-alpha.0.6+26.3
 ] as Set
+
+// Tectonic stack pins (Modrinth SHA-512 of each primary file, api.modrinth.com/v2/version/<id>, 2026-10-07).
+def tectonicStackSha512 = [
+        '8adbd91ee3e7c925465ef88367ce3a13bd958838b9df1e8ba9e3f0c5e719719475ef484491b93194914800cc5b7523104cb09452619bf307555c649f5d2e02bc', // tectonic 3.0.31-fabric-26.3
+        'cf0a2ce0f059f2e208600f7f4b86f49ec448c37070d4b71eff6900c97037c9013ab2f517d811433f397f8542fe18e0b04ed7f99f1677d491aab29ce5fc628ca1', // lithostitched 2.0.4-fabric-26.3
+        '918b232df7a855bae89c7fa85affb5ce134e236c4726fa14a5bdaa179eb1e010f040a9fa981f006a0e26e421a2a961bc29a75e99a4500fd18361a8ba81478071', // terralith 2.6.5+26.3 (optional)
+] as Set
+// Distant Horizons stack pins.
+def dhStackSha512 = [
+        '0b90b1b08d99974bfc3c8e86b2ceb252e2f91715ed66b925004c28335fb44e1bddbbb6b8043e4d4d53c87ed247789cd1788b1ba4e3f4394efe154e0c59cff236', // distanthorizons 3.3.4-26.3
+        'a2e8d8416a556b7a351460a06407119eaba62f06636377001720bbda9b797dc881b2bb4528fb75a0459fee34475db529858633b6b86b545a72d0f13cf3c2b7bb', // sodium-extra 0.9.4+mc26.3
+        'f9ed86c48eb095b0e35f6f16abd376ad8dd3d2a5cd336fe8907d0562c9ecd1e0c7af35fc5afed121e1385fc14e41cc5f915ca986c3e19434f5c278cc0664b444', // bobby 5.2.16+mc26.3
+        '36cfe2f0efdbcbf44e7a5367441eb0655257561f929434b1aa821ba0442fa845232cae7320e7dadd26f2962150b8a42c16e4fd1dd3d94d6a4bd0bfb46fdff6d1', // nvidium 0.4.4-beta7-26.3 (optional)
+] as Set
+
+/** Checks every jar of a configuration against a set of pinned SHA-512s; {@code exact} also requires every pin to be used. */
+def verifyStackJars(String name, Configuration stack, Set pins, boolean exact) {
+    def files = stack.files
+    files.each { jar ->
+        def digest = java.security.MessageDigest.getInstance('SHA-512')
+        jar.withInputStream { input ->
+            byte[] buffer = new byte[65536]
+            int read
+            while ((read = input.read(buffer)) > 0) digest.update(buffer, 0, read)
+        }
+        def actual = digest.digest().encodeHex().toString()
+        if (!pins.contains(actual)) throw new GradleException("${name}: ${jar.name} has SHA-512 ${actual}, not a pinned Modrinth hash")
+        logger.lifecycle("${name}: ${jar.name} OK")
+    }
+    if (exact && files.size() != pins.size()) throw new GradleException("${name}: ${files.size()} jars, expected ${pins.size()}")
+}
+
+tasks.register('verifyTectonicStack') {
+    description = 'Checks the Tectonic-run jars against their pinned Modrinth SHA-512s.'
+    def stack = configurations.tectonicStack
+    inputs.files(stack)
+    doLast { verifyStackJars('tectonic stack', stack, tectonicStackSha512, false) }
+}
+
+tasks.register('verifyDhStack') {
+    description = 'Checks the Distant Horizons-run jars against their pinned Modrinth SHA-512s.'
+    def stack = configurations.dhStack
+    inputs.files(stack)
+    doLast { verifyStackJars('dh stack', stack, dhStackSha512, false) }
+}
 
 tasks.register('verifyPerfStack') {
     description = 'Checks every performance-stack jar against its pinned Modrinth SHA-512.'
@@ -301,4 +375,48 @@ afterEvaluate {
         source perf
     }
     tasks.matching { it.name in ['runPlayPerf', 'runAutotestPerfStack'] }.configureEach { dependsOn 'verifyPerfStack' }
+
+    // Tectonic Earth: its own folder and world (Tectonic reshapes the Overworld of every world it loads in).
+    //   ./gradlew runPlayTectonic           manual play in runs/play-tectonic
+    //   ./gradlew runAutotestTectonic       Earth entry/exit and screenshots under Tectonic, in runs/client-tectonic
+    def tectonic = sourceSets.create('tectonic')
+    tectonic.compileClasspath = sourceSets.main.compileClasspath
+    tectonic.runtimeClasspath = sourceSets.main.runtimeClasspath + configurations.tectonicStack
+    loom.runs.create('playTectonic') {
+        client()
+        configName = 'Galactica Play (Tectonic Earth)'
+        runDir 'runs/play-tectonic'
+        vmArgs '-Xmx4G'
+        source tectonic
+    }
+    loom.runs.create('autotestTectonic') {
+        client()
+        configName = 'Galactica Autotest (Tectonic Earth)'
+        runDir 'runs/client-tectonic'
+        vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=tectonic', '-Dgalactica.autotest.tag=tectonic'
+        programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        source tectonic
+    }
+    // Distant Horizons with the rendering mods: tall planet terrain and Earth out to the LOD horizon.
+    //   ./gradlew runAutotestDh             terrain tour (Mars, an Earth-like world, the Moon, Earth) in runs/client-dh
+    def dh = sourceSets.create('dh')
+    dh.compileClasspath = sourceSets.main.compileClasspath
+    dh.runtimeClasspath = sourceSets.main.runtimeClasspath + configurations.dhStack
+    loom.runs.create('playDh') {
+        client()
+        configName = 'Galactica Play (Distant Horizons + rendering mods)'
+        runDir 'runs/play'
+        vmArgs '-Xmx6G'
+        source dh
+    }
+    loom.runs.create('autotestDh') {
+        client()
+        configName = 'Galactica Autotest (Distant Horizons terrain tour)'
+        runDir 'runs/client-dh'
+        vmArgs '-Xmx6G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=terrain', '-Dgalactica.autotest.tag=dh'
+        programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        source dh
+    }
+    tasks.matching { it.name in ['runPlayTectonic', 'runAutotestTectonic'] }.configureEach { dependsOn 'verifyTectonicStack' }
+    tasks.matching { it.name in ['runPlayDh', 'runAutotestDh'] }.configureEach { dependsOn 'verifyDhStack' }
 }

@@ -137,7 +137,8 @@ public final class PlanetEntry {
     private record Rearm(long bodyId, double switchAltitude) {}
 
     /** Where an entry lands: a slot level, or the Overworld for Earth. */
-    private record Dest(ServerLevel level, int slot, SurfaceGrid grid, double seaLevel, EarthOverworld earth) {
+    /** {@code entryY}: the level's entry row ({@link TransferAltitude#entryY}), live from its build height. */
+    private record Dest(ServerLevel level, int slot, SurfaceGrid grid, double seaLevel, EarthOverworld earth, double entryY) {
         double x(double lon) {
             return earth != null ? earth.blockX(lon) : grid.blockX(lon);
         }
@@ -147,8 +148,27 @@ public final class PlanetEntry {
         }
 
         double switchAltitude() {
-            return TransferAltitude.switchAltitude(seaLevel, grid.metresPerBlock());
+            return TransferAltitude.switchAltitude(entryY, seaLevel, grid.metresPerBlock());
         }
+    }
+
+    /** Entry row of a level ({@link TransferAltitude#entryY}): 1500 unless the level is taller than vanilla allows for. */
+    public static double entryY(net.minecraft.world.level.Level level) {
+        return TransferAltitude.entryY(level.getMaxY());
+    }
+
+    /** Take-off row of a level ({@link TransferAltitude#exitY}). */
+    public static double exitY(net.minecraft.world.level.Level level) {
+        return TransferAltitude.exitY(level.getMaxY());
+    }
+
+    /**
+     * Sea level of the Overworld as the server generates it (63 in vanilla and under Tectonic, read live so a
+     * datapack that moves it keeps the Earth hand-off altitude right).
+     */
+    static double overworldSeaLevel(MinecraftServer server) {
+        int s = server.overworld().getSeaLevel();
+        return s > server.overworld().getMinY() ? s : TransferAltitude.OVERWORLD_SEA_LEVEL;
     }
 
     private static final class Approach {
@@ -460,7 +480,8 @@ public final class PlanetEntry {
         MinecraftServer server = p.level().getServer();
         if (isEarth(addr)) {
             EarthOverworld map = overworldMap(server);
-            return new Dest(server.overworld(), TransferPreparePayload.OVERWORLD, map.grid(), TransferAltitude.OVERWORLD_SEA_LEVEL, map);
+            return new Dest(server.overworld(), TransferPreparePayload.OVERWORLD, map.grid(), overworldSeaLevel(server), map,
+                    entryY(server.overworld()));
         }
         PlanetSlots slots = PlanetSlots.get(server);
         long now = server.overworld().getGameTime();
@@ -478,7 +499,7 @@ public final class PlanetEntry {
         }
         PlanetSlots.Runtime rt = PlanetSlots.runtime(slot);
         SurfaceGrid grid = rt != null ? rt.grid() : SurfaceGrid.of(r.body().radiusMetres());
-        return new Dest(level, slot, grid, TerrainSampler.SEA_LEVEL, null);
+        return new Dest(level, slot, grid, TerrainSampler.SEA_LEVEL, null, entryY(level));
     }
 
     /**
@@ -490,7 +511,7 @@ public final class PlanetEntry {
                                  double lat, double lon, double altitude, double[] vGround, LocalFrame frame) {
         Body body = r.body();
         double mpb = dest.grid().metresPerBlock();
-        double y = Math.max(ENTRY_Y - 64, Math.min(ENTRY_Y, TransferAltitude.blockY(altitude, dest.seaLevel(), mpb)));
+        double y = Math.max(dest.entryY() - 64, Math.min(dest.entryY(), TransferAltitude.blockY(altitude, dest.seaLevel(), mpb)));
         Vec3 target = new Vec3(Math.floor(dest.x(lon)) + 0.5, y, Math.floor(dest.z(lat)) + 0.5);
 
         Entity root = p.getRootVehicle();
@@ -574,7 +595,7 @@ public final class PlanetEntry {
             p.getAbilities().flying = eva;
             p.onUpdateAbilities();
         }
-        Arrival arrival = new Arrival(p.level().getServer().getTickCount(), Math.max(ENTRY_Y, p.getRootVehicle().getY()));
+        Arrival arrival = new Arrival(p.level().getServer().getTickCount(), Math.max(dest.entryY(), p.getRootVehicle().getY()));
         if (dest.earth() != null) {
             p.removeAttached(SURFACE);
             arrival.overworldDescent = eva && !keepsFlight;
@@ -659,11 +680,12 @@ public final class PlanetEntry {
         SurfaceGrid g = rt.grid();
         if (isLeader(p, root)) {
             surfacePlasma(p, root, rt.body(), g, TerrainSampler.SEA_LEVEL);
-            if (root.getY() > EXIT_Y) {
-                toSpace(p, root, rt.resolved(), rt.address(), g, TerrainSampler.SEA_LEVEL, g.latitude(root.getZ()), g.longitude(root.getX()));
+            double entryRow = entryY(p.level());
+            if (root.getY() > entryRow + TransferAltitude.EXIT_ABOVE_ENTRY) {
+                toSpace(p, root, rt.resolved(), rt.address(), g, TerrainSampler.SEA_LEVEL, entryRow, g.latitude(root.getZ()), g.longitude(root.getX()));
                 return;
             }
-            armExit(p, root, slot, rt.address(), g, TerrainSampler.SEA_LEVEL, g.latitude(root.getZ()), g.longitude(root.getX()));
+            armExit(p, root, slot, rt.address(), g, TerrainSampler.SEA_LEVEL, entryRow, g.latitude(root.getZ()), g.longitude(root.getX()));
         }
         if (!drives) return; // the driver moves the vehicle across the map edges
         double[] pole = g.overPole(root.getX(), root.getZ());
@@ -693,26 +715,27 @@ public final class PlanetEntry {
         if (!isLeader(p, root)) return;
         EarthOverworld map = overworldMap(server);
         // Only arrivals from space glow: a vanilla elytra flight is far too slow to heat anyway.
-        if (arrival != null) surfacePlasma(p, root, r.body(), map.grid(), TransferAltitude.OVERWORLD_SEA_LEVEL);
+        double sea = overworldSeaLevel(server), entryRow = entryY(p.level());
+        if (arrival != null) surfacePlasma(p, root, r.body(), map.grid(), sea);
         // Climbing a ship out of the Overworld launches to orbit; players on foot or elytra stay home.
         if (!(root instanceof Starship)) return;
         double lat = map.latitude(root.getZ()), lon = map.longitude(root.getX());
-        if (root.getY() > EXIT_Y) {
-            toSpace(p, root, r, earthAddress, map.grid(), TransferAltitude.OVERWORLD_SEA_LEVEL, lat, lon);
+        if (root.getY() > entryRow + TransferAltitude.EXIT_ABOVE_ENTRY) {
+            toSpace(p, root, r, earthAddress, map.grid(), sea, entryRow, lat, lon);
             return;
         }
-        armExit(p, root, TransferPreparePayload.OVERWORLD, earthAddress, map.grid(), TransferAltitude.OVERWORLD_SEA_LEVEL, lat, lon);
+        armExit(p, root, TransferPreparePayload.OVERWORLD, earthAddress, map.grid(), sea, entryRow, lat, lon);
     }
 
     /**
      * Standing on this planet's ground. The on-ground flag survives a cross-dimension teleport until the
      * client's next movement packet, so a player sent here from another surface still reads as grounded
      * at the entry altitude; trusting it there ended the descent flight at once and dropped the player
-     * from the entry row. Arrivals sit within 64 blocks below {@link #ENTRY_Y}, and no terrain reaches
-     * 100 blocks below it.
+     * from the entry row. Arrivals sit within 64 blocks below the level's entry row ({@link #entryY}), and no
+     * terrain reaches 100 blocks below it ({@link TransferAltitude#ENTRY_CLEARANCE}).
      */
     private static boolean touchedDown(ServerPlayer p) {
-        return p.onGround() && p.getY() < ENTRY_Y - 100;
+        return p.onGround() && p.getY() < entryY(p.level()) - 100;
     }
 
     /** Ends an EVA descent flight on touchdown, climb or timeout; true when it ended. */
@@ -737,18 +760,19 @@ public final class PlanetEntry {
 
     /** A climb close to the take-off row arms the riders' clients so the switch shows no loading screen. */
     private static void armExit(ServerPlayer p, Entity root, int slot, PlanetAddress addr, SurfaceGrid g, double seaLevel,
-                                double lat, double lon) {
+                                double entryRow, double lat, double lon) {
         double climb = root.getDeltaMovement().y;
-        if (root.getY() < EXIT_Y - EXIT_ARM_BAND || climb <= 0) return;
+        double exitRow = entryRow + TransferAltitude.EXIT_ABOVE_ENTRY;
+        if (root.getY() < exitRow - EXIT_ARM_BAND || climb <= 0) return;
         if ((p.tickCount % 5) != 0) return;
-        int eta = (int) Math.ceil((EXIT_Y - root.getY()) / Math.max(climb, 0.05));
+        int eta = (int) Math.ceil((exitRow - root.getY()) / Math.max(climb, 0.05));
         prepare(ridersOf(p), TransferPreparePayload.SPACE, addr, lat, lon,
-                TransferAltitude.exitAltitude(seaLevel, g.metresPerBlock()), Math.min(eta, 1200), false);
+                TransferAltitude.realAltitude(exitRow, seaLevel, g.metresPerBlock()), Math.min(eta, 1200), false);
     }
 
     /** Takes off: back to galactica:space on the local radial, at the same real altitude, keeping velocity and attitude. */
     private static void toSpace(ServerPlayer p, Entity root, PlanetAddress.Resolved r, PlanetAddress addr, SurfaceGrid grid,
-                                double seaLevel, double lat, double lon) {
+                                double seaLevel, double entryRow, double lat, double lon) {
         MinecraftServer server = p.level().getServer();
         ServerLevel space = server.getLevel(Galactica.SPACE);
         if (space == null) return;
@@ -787,7 +811,7 @@ public final class PlanetEntry {
         }
 
         prepare(riders, TransferPreparePayload.SPACE, addr, lat, lon,
-                TransferAltitude.exitAltitude(seaLevel, mpb), 0, false);
+                TransferAltitude.realAltitude(entryRow + TransferAltitude.EXIT_ABOVE_ENTRY, seaLevel, mpb), 0, false);
         Vec3 spot = new Vec3(0.5, 0, 0.5);
         if (root != p && root instanceof LivingEntity mount) clearGravity(mount);
         Entity arrived = root.teleport(new TeleportTransition(space, spot, velocity, (float) angles[0], (float) angles[1],
@@ -797,7 +821,7 @@ public final class PlanetEntry {
             ship.setDeltaMovement(velocity);
         }
         int until = server.getTickCount() + REENTRY_COOLDOWN_TICKS;
-        double hSwitch = TransferAltitude.switchAltitude(seaLevel, mpb);
+        double hSwitch = TransferAltitude.switchAltitude(entryRow, seaLevel, mpb);
         for (ServerPlayer rider : riders) {
             if (arrived == rider) {
                 NavServer.moveTo(rider, target);

@@ -6,20 +6,49 @@ import dev.galactica.system.Body;
 import dev.galactica.system.BodyType;
 
 /**
- * Surface terrain of a landable body as a pure function of block (x, z). Every noise field is
- * sampled on the map sphere ({@link SurfaceGrid#spherePoint}), so the surface closes on itself at
- * the x seam and shrinks honestly towards the poles.
+ * Surface terrain of a landable body as a pure function of block (x, z), plus a thin 3D band around
+ * that surface for cliffs and overhangs. Every 2D noise field is sampled on the map sphere
+ * ({@link SurfaceGrid#spherePoint}), so the surface closes on itself at the x seam and shrinks
+ * honestly towards the poles.
  *
  * <p><b>One source of truth.</b> Planet-scale shape (continents, seas, deserts, ice caps, maria,
  * impact basins) comes from {@link PlanetMacro}, the same fields the orbital imager paints; this
- * class adds the macro field's fractal tail and block-scale relief. On bodies with a sea the
- * coastline is exactly where the macro elevation crosses zero, so the sea you saw from orbit is
- * the sea you land in.
+ * class adds the macro field's fractal tail and the regional and block-scale relief. On bodies with
+ * a sea the coastline is exactly where the macro elevation crosses zero, so the sea you saw from
+ * orbit is the sea you land in.
  *
- * <p><b>Relief.</b> Topographic amplitude scales as 1/g: the height a crust can support before it
- * flows goes as σ/(ρg) (Melosh 2011, ch. 4), which is why Olympus Mons (Mars, 0.38 g) stands 2.5× as
- * tall as Mauna Kea's base-to-peak. It is clamped to 20–250 blocks so Earth-like worlds still have
- * hills and airless pebbles stay walkable: Earth 60, Mars 158, the Moon 250.
+ * <p><b>Vertical scale (heights in blocks).</b> The map is 1 block = {@code mpb} metres horizontally
+ * ({@link SurfaceGrid#metresPerBlock}: Earth-size worlds 10 m, Mars 5.3 m, the Moon 2.7 m, small bodies
+ * 1 m), and the sky above it uses the same scale for altitude ({@code TransferAltitude}). Terrain uses
+ * that scale too, <i>until it no longer fits</i>:
+ * <ul>
+ *   <li>Physical peak relief above the datum is the height a crust supports before it flows,
+ *       σ/(ρg) (Melosh 2011, ch. 4): Everest's 8.85 km at 1 g, so {@value #EVEREST_M}/g metres. It is
+ *       capped at Olympus Mons' 21.9 km above the Martian datum (the tallest edifice known) and at
+ *       {@value #MAX_RELIEF_TO_RADIUS} of the body's radius (Vesta's Rheasilvia peak, 22 km on a 262 km
+ *       body, is about that), so small bodies do not grow mountains taller than they can hold.</li>
+ *   <li>That height in blocks at true scale is relief/mpb: Earth-like worlds 885 blocks, Mars 4 130,
+ *       the Moon 8 100. Up to {@value #PEAK_BUDGET} blocks the terrain is drawn at <b>true scale</b>
+ *       (vertical = horizontal map scale). Beyond it the whole relief of the body is compressed by one
+ *       factor κ = {@value #PEAK_BUDGET}/true ({@link #verticalScale}), so shapes keep their proportions:
+ *       Mars is drawn at κ ≈ 0.22 (one vertical block ≈ 24 m), the Moon at κ ≈ 0.11 (≈ 24 m).
+ *       A soft knee from {@value #PEAK_KNEE} to {@value #PEAK_CAP} blocks above sea level only
+ *       catches the rare stack of mountain, volcano and detail above the budget.</li>
+ *   <li>Below the datum, sea floors reach {@value #TRENCH_TO_PEAK_SEA}× the peak (the Mariana trench
+ *       is 1.25 Everests deep) and dry basins {@value #BASIN_TO_PEAK_DRY}× (Hellas −7 km against
+ *       Olympus +22 km; the Moon's SPA −9 km against +10.8 km), both budgeted at {@value #DEPTH_BUDGET}
+ *       blocks with a soft knee to {@value #DEPTH_CAP}.</li>
+ * </ul>
+ * The generator range is {@link #MIN_Y} to {@link #MAX_Y} (dimension_type galactica:surface, min_y −512,
+ * height 1792): sea level 96, peaks at most 96 + 1120 = 1216, floors at least 96 − 560 = −464.
+ *
+ * <p><b>Tectonic-style separation of scales.</b> As in the Tectonic mod's noise router, vertical scale,
+ * continents, erosion and ridges are independent knobs: continents are the macro field (planet scale);
+ * mountain ranges are squared ridged noise whose wavelength grows with the relief ({@link #featureScale})
+ * so slopes stay climbable however tall the body's mountains are; an erosion field switches ranges on and
+ * off regionally, leaving plains between them; deserts get flat-floored canyon systems and volcanic worlds
+ * shield volcanoes with summit calderas. Mountain flanks and canyon walls get a 3D density band
+ * ({@link #carve}) for overhangs, cliffs and arches.
  *
  * <p><b>Craters.</b> Bodies whose air cannot burn up impactors ({@link SurfaceAtmosphere#cratered})
  * get two populations of simple craters from a cellular stamp: bowl depth ≈ 0.2 D (the
@@ -36,16 +65,47 @@ public final class TerrainSampler {
         WATER, LAVA, COARSE_DIRT
     }
 
+    /**
+     * Version of the generator's output. Saved slot chunks from another version are dropped at startup
+     * ({@code PlanetSlots}): 1 = the 768-block slots, 2 = the 1792-block slots with the cliff band.
+     */
+    public static final int GENERATION = 2;
+
     /** Fluid surface and the world Y every body's datum sits at. */
     public static final int SEA_LEVEL = 96;
-    /** Generator vertical range, matching dimension_type galactica:surface (min_y −256, height 768). */
-    public static final int MIN_Y = -256, MAX_Y = 511;
-    public static final int MIN_RELIEF = 20, MAX_RELIEF = 250;
-    /** Relief of a 1 g world, blocks. */
-    public static final double RELIEF_AT_1G = 60;
+    /** Generator vertical range, matching dimension_type galactica:surface (min_y −512, height 1792). */
+    public static final int MIN_Y = -512, MAX_Y = 1279;
 
-    /** One column's layering, filled by {@link #column}. Reused to keep generation allocation-free. */
+    /** Everest above sea level, metres: the peak relief of a 1 g crust. */
+    public static final double EVEREST_M = 8848;
+    /** Olympus Mons above the Martian datum, metres: the tallest edifice known, the cap of the 1/g law. */
+    public static final double OLYMPUS_M = 21_900;
+    /** Peak relief never exceeds this fraction of the body's radius (Rheasilvia on Vesta). */
+    public static final double MAX_RELIEF_TO_RADIUS = 0.085;
+    /** Deepest sea floor relative to the peak (Challenger Deep / Everest). */
+    public static final double TRENCH_TO_PEAK_SEA = 1.25;
+    /** Deepest dry basin relative to the peak. */
+    public static final double BASIN_TO_PEAK_DRY = 0.6;
+    /** Peak height (blocks above sea level) drawn at true scale; beyond it the relief is compressed. */
+    public static final double PEAK_BUDGET = 900;
+    /** Soft knee and hard ceiling of the final surface, blocks above sea level. */
+    public static final double PEAK_KNEE = 760, PEAK_CAP = 1120;
+    /** The same below sea level. */
+    public static final double DEPTH_BUDGET = 480, DEPTH_KNEE = 420, DEPTH_CAP = 560;
+    /** Smallest peak relief, blocks: heavy worlds still get hills. */
+    public static final double MIN_PEAK_BLOCKS = 40;
+    /** Normalised elevation the highest ground reaches; the up amplitude is peak / this. */
+    static final double E_PEAK = 1.5;
+    /** Normalised depth of the deepest floors. */
+    static final double E_DEPTH = 1.2;
+    /** Half-height of the 3D cliff band at full weight, blocks. */
+    public static final int BAND_MAX = 24;
+    /** Fixed block-scale roughness, blocks (independent of the body's relief so the ground is never glassy). */
+    static final double FINE_BLOCKS = 3;
+
+    /** One column's layering, filled by {@link #column} and optionally {@link #carve}. Reused, allocation-free. */
     public static final class Column {
+        /** 2.5D surface height (the heightmap the LOD, clipmap and imager share). */
         public int height;
         public Material top, filler, under;
         public int topDepth, fillerDepth;
@@ -54,20 +114,40 @@ public final class TerrainSampler {
         public int fluidTop;
         /** Frozen sea surface replaces the top fluid block. */
         public boolean iceCap;
+        /** Highest solid block once the band is carved (== height without a band). */
+        public int solidTop;
+        /** 3D band [bandLo, bandLo + bandLen): solid flags and local depth below the nearest air above. */
+        public int bandLo, bandLen;
+        final boolean[] bandSolid = new boolean[2 * BAND_MAX + 4];
+        final int[] bandDepth = new int[2 * BAND_MAX + 4];
 
         /** The material seen from above: frozen sea, fluid surface or the top solid block. */
         public Material visible() {
             if (fluid != Material.AIR) return iceCap ? Material.ICE : fluid;
             return top;
         }
+
+        /** True when y lies inside the carved band. */
+        public boolean inBand(int y) {
+            return y >= bandLo && y < bandLo + bandLen;
+        }
+
+        /** Band solidity at y (y must be {@link #inBand}). */
+        public boolean bandSolid(int y) {
+            return bandSolid[y - bandLo];
+        }
     }
 
     private final BodyType type;
     private final long seed;
     private final SurfaceGrid grid;
-    private final double amplitude;
+    private final double peakBlocks, depthBlocks;
+    private final double amplitude, depthAmplitude;
+    private final double verticalScale;
+    private final double featureScale;
     private final boolean cratered;
     private final boolean frozenSeas;
+    private final boolean banded;
     private final PlanetMacro macro;
     private static final ThreadLocal<PlanetMacro.Sample> SAMPLE = ThreadLocal.withInitial(PlanetMacro.Sample::new);
     private static final ThreadLocal<double[]> POINT = ThreadLocal.withInitial(() -> new double[3]);
@@ -83,9 +163,22 @@ public final class TerrainSampler {
         this.seed = macro.seed();
         this.macro = macro;
         this.grid = grid;
-        this.amplitude = reliefFor(gravityG);
+        double mpb = grid.metresPerBlock();
+        double peakM = reliefPeakMetres(gravityG, grid.radiusMetres());
+        double truePeak = peakM / mpb;
+        this.peakBlocks = Math.max(MIN_PEAK_BLOCKS, Math.min(PEAK_BUDGET, truePeak));
+        this.verticalScale = Math.min(1, peakBlocks / Math.max(1e-9, truePeak));
+        double trueDepth = peakM * (macro.hasSea() ? TRENCH_TO_PEAK_SEA : BASIN_TO_PEAK_DRY) / mpb;
+        this.depthBlocks = Math.max(MIN_PEAK_BLOCKS * 0.5, Math.min(DEPTH_BUDGET, trueDepth));
+        this.amplitude = peakBlocks / E_PEAK;
+        this.depthAmplitude = depthBlocks / E_DEPTH;
+        this.featureScale = featureScaleFor(amplitude);
         this.cratered = cratered;
         this.frozenSeas = frozenSeas;
+        this.banded = switch (type) {
+            case TERRAN, DESERT, GREENHOUSE, LAVA -> true;
+            default -> false;
+        };
     }
 
     public static TerrainSampler of(Body b, SurfaceGrid grid) {
@@ -98,14 +191,53 @@ public final class TerrainSampler {
         return new TerrainSampler(BodyType.BARREN, 0L, 1.0, SurfaceGrid.of(1.0e5), false, false);
     }
 
-    /** Relief amplitude in blocks for a surface gravity in Earth g: 60/g clamped to [20, 250]. */
-    public static double reliefFor(double gravityG) {
-        double r = RELIEF_AT_1G / Math.max(1e-6, gravityG);
-        return Math.max(MIN_RELIEF, Math.min(MAX_RELIEF, r));
+    /**
+     * Physical peak relief above the datum, metres: {@value #EVEREST_M}/g (σ/ρg), capped at Olympus Mons and
+     * at {@value #MAX_RELIEF_TO_RADIUS} of the radius.
+     */
+    public static double reliefPeakMetres(double gravityG, double radiusMetres) {
+        return Math.min(Math.min(EVEREST_M / Math.max(1e-6, gravityG), OLYMPUS_M), MAX_RELIEF_TO_RADIUS * radiusMetres);
     }
 
+    /**
+     * Horizontal stretch of the regional relief (mountain ranges, erosion, canyons) for an amplitude, ≥ 1:
+     * taller relief gets proportionally wider ranges (√(A/40)) so slopes stay of the same order on every body.
+     */
+    static double featureScaleFor(double amplitude) {
+        return Math.max(1, Math.min(8, Math.sqrt(amplitude / 40)));
+    }
+
+    /** Blocks per unit of normalised elevation above the datum. */
     public double amplitude() {
         return amplitude;
+    }
+
+    /** Blocks per unit of normalised elevation below the datum (sea floors, basins). */
+    public double depthAmplitude() {
+        return depthAmplitude;
+    }
+
+    /** Highest peak the relief law gives this body, blocks above sea level (before the knee). */
+    public double peakBlocks() {
+        return peakBlocks;
+    }
+
+    /** Deepest floor the law gives, blocks below sea level. */
+    public double depthBlocks() {
+        return depthBlocks;
+    }
+
+    /**
+     * Vertical compression κ: 1 when the terrain is drawn at the map's true scale, below 1 when the body's
+     * physical relief exceeds {@value #PEAK_BUDGET} blocks. One vertical block then stands for mpb/κ metres.
+     */
+    public double verticalScale() {
+        return verticalScale;
+    }
+
+    /** Horizontal stretch of mountain ranges and canyons relative to the 1 g reference ({@link #featureScaleFor}). */
+    public double featureScale() {
+        return featureScale;
     }
 
     public BodyType type() {
@@ -124,6 +256,11 @@ public final class TerrainSampler {
         return macro.hasSea();
     }
 
+    /** True for body types whose mountains and canyon walls get the 3D cliff band. */
+    public boolean banded() {
+        return banded;
+    }
+
     /**
      * Body-fixed unit direction ({@link PlanetMacro} frame: z north, x longitude 0, y 90° east) under
      * map position (x, z). The map sphere point is (x, y = north, z), so its components are re-ordered.
@@ -137,16 +274,16 @@ public final class TerrainSampler {
         out[2] = north;
     }
 
-    /** Solid surface Y (top solid block) of column (x, z). */
+    /** 2.5D surface Y (top solid block before the cliff band) of column (x, z). */
     public int height(int x, int z) {
         return height((double) x, (double) z);
     }
 
     /**
-     * Solid surface Y at a (possibly fractional) map position. On bodies with a sea the land/sea
-     * decision is exactly the sign of the macro elevation plus its fractal tail, and local relief is
-     * capped so it never pushes ground across sea level: land sits at least one block above the sea
-     * surface, sea floors at least one block below it.
+     * Surface Y at a (possibly fractional) map position. On bodies with a sea the land/sea decision is
+     * exactly the sign of the macro elevation plus its fractal tail, and local relief is capped so it
+     * never pushes ground across sea level: land sits at least one block above the sea surface, sea
+     * floors at least one block below it.
      */
     public int height(double x, double z) {
         double[] s = POINT.get();
@@ -172,47 +309,78 @@ public final class TerrainSampler {
 
     /** Surface Y at map-sphere point s (blocks) whose macro elevation, tail included, is {@code macroE}. */
     private int heightAt(double[] s, double macroE) {
-        double e = elevation(s[0], s[1], s[2], macroE);
+        double x = s[0], y = s[1], z = s[2];
+        double e = elevation(x, y, z, macroE);
+        boolean land = !macro.hasSea() || macroE >= 0;
+        // Normalised elevation to blocks: separate up and down amplitudes (taller mountains need not mean
+        // deeper seas, Tectonic's "vertical scale" acts above sea level only).
+        double b = e >= 0 ? e * amplitude : e * depthAmplitude;
+        if (land) {
+            b += FINE_BLOCKS * Noise.fbm(seed + 111, x / 48, y / 48, z / 48, 2);
+            b += volcanoes(x, y, z);
+            b -= canyon(x, y, z);
+        }
+        if (cratered) b += craters(x, y, z);
+        b = b >= 0 ? softCap(b, PEAK_KNEE, PEAK_CAP) : -softCap(-b, DEPTH_KNEE, DEPTH_CAP);
         double h;
         if (macro.hasSea()) {
-            if (macroE >= 0) h = Math.floor(SEA_LEVEL + 1 + e * amplitude);
-            else h = Math.min(SEA_LEVEL - 1, Math.floor(SEA_LEVEL + e * amplitude));
-            if (cratered) h = macroE >= 0 ? Math.max(SEA_LEVEL + 1, h + craters(s[0], s[1], s[2]))
-                    : Math.min(SEA_LEVEL - 1, h + craters(s[0], s[1], s[2]));
+            if (macroE >= 0) h = Math.max(SEA_LEVEL + 1, Math.floor(SEA_LEVEL + 1 + b));
+            else h = Math.min(SEA_LEVEL - 1, Math.floor(SEA_LEVEL + b));
         } else {
-            h = SEA_LEVEL + e * amplitude;
-            if (cratered) h += craters(s[0], s[1], s[2]);
+            h = Math.floor(SEA_LEVEL + b);
         }
-        return (int) Math.max(MIN_Y + 8, Math.min(MAX_Y - 16, Math.floor(h)));
+        return (int) Math.max(MIN_Y + 8, Math.min(MAX_Y - 16, h));
+    }
+
+    /** Identity up to {@code knee}, then a tanh roll-off that never exceeds {@code cap}. */
+    static double softCap(double v, double knee, double cap) {
+        if (v <= knee) return v;
+        double room = cap - knee;
+        return knee + room * Math.tanh((v - knee) / room);
+    }
+
+    /** Squared ridged noise of the mountain ranges, 0 … 1, wavelength 700 × feature scale. */
+    private double ridges(double x, double y, double z) {
+        double k = 700 * featureScale;
+        double ridged = 1 - 2 * Math.abs(Noise.fbm(seed + 202, x / k, y / k, z / k, 4));
+        return ridged > 0 ? ridged * ridged : 0;
+    }
+
+    /** Erosion gate (Tectonic's erosion): 1 where ranges stand, 0 on eroded plains, at the regional scale. */
+    private double erosionGate(double x, double y, double z) {
+        double k = 2400 * featureScale;
+        return PlanetMacro.smooth(-0.15, 0.30, Noise.fbm(seed + 707, x / k, y / k, z / k, 3));
     }
 
     /**
-     * Normalised elevation, ~[−1.5, 1.5], before scaling by the relief amplitude: the macro elevation
-     * (planet scale, shared with the imager) plus block-scale relief sampled on the map sphere at
-     * (x, y, z). On sea-bearing bodies the result keeps the sign of {@code macroE}.
+     * Normalised elevation, ~[−1.5, 1.5], before scaling by the relief amplitudes: the macro elevation
+     * (planet scale, shared with the imager) plus regional and block-scale relief sampled on the map
+     * sphere at (x, y, z). On sea-bearing bodies the result keeps the sign of {@code macroE}.
      */
     double elevation(double x, double y, double z, double macroE) {
-        double detail = Noise.fbm(seed + 101, x / 220, y / 220, z / 220, 4);
-        double ridged = 1 - 2 * Math.abs(Noise.fbm(seed + 202, x / 700, y / 700, z / 700, 4));
-        double mountains = ridged > 0 ? ridged * ridged : 0;
+        double kd = 220 * featureScale;
+        double detail = Noise.fbm(seed + 101, x / kd, y / kd, z / kd, 4);
+        double gate = erosionGate(x, y, z);
+        double mountains = ridges(x, y, z) * gate;
         return switch (type) {
-            case TERRAN -> coastal(1.6, macroE, 0.25 * detail, 0.9 * mountains);
-            case OCEAN -> coastal(1.4, macroE, 0.2 * detail, 0.4 * mountains);
-            case LAVA -> coastal(1.2, macroE, 0.35 * detail, 0.5 * mountains);
-            case DESERT -> 1.6 * macroE + 0.3 * detail + 0.6 * mountains
-                    + 0.08 * Math.abs(Noise.fbm(seed + 303, x / 36, y / 36, z / 36, 2)) * 4; // dunes
-            case BARREN -> 1.2 * macroE + 0.3 * detail + 0.4 * mountains;
+            case TERRAN -> coastal(1.6, macroE, 0.25 * detail, 1.0 * mountains);
+            case OCEAN -> coastal(1.4, macroE, 0.2 * detail, 0.5 * mountains);
+            case LAVA -> coastal(1.2, macroE, 0.35 * detail, 0.6 * mountains);
+            case DESERT -> 1.6 * macroE + 0.3 * detail + 0.7 * mountains
+                    + 0.08 * Math.abs(Noise.fbm(seed + 303, x / 36, y / 36, z / 36, 2)) * 4 * 60 / amplitude; // dunes, ~20 blocks
+            case BARREN -> 1.2 * macroE + 0.3 * detail + 0.45 * ridges(x, y, z) * (0.4 + 0.6 * gate);
             case ICE -> {
                 // Europa-like lineae at block scale: narrow grooves where a mid-scale field crosses zero.
                 double l = Noise.fbm(seed + 404, x / 300, y / 300, z / 300, 3);
                 double groove = Math.max(0, 1 - Math.abs(l) * 14);
-                yield 1.2 * macroE + 0.15 * detail - 0.25 * groove + 0.2 * mountains;
+                yield 1.2 * macroE + 0.15 * detail - 0.25 * groove * Math.min(1, 150 / amplitude) + 0.25 * mountains;
             }
             case GREENHOUSE -> {
-                // Venusian tesserae: plateaus broken into terraces.
+                // Venusian tesserae: plateaus broken into terraces ~16 blocks high whatever the relief.
                 double e0 = 1.4 * macroE + 0.3 * detail;
-                double step = Math.floor(e0 * 6) / 6;
-                yield step + 0.35 * (e0 - step) + 0.3 * mountains;
+                double k = Math.max(6, amplitude / 16);
+                double step = Math.floor(e0 * k) / k;
+                yield step + 0.35 * (e0 - step) + 0.4 * mountains;
             }
             default -> 0;
         };
@@ -230,11 +398,157 @@ public final class TerrainSampler {
         return Math.min(0, e);
     }
 
+    // ---------------------------------------------------------------- canyons and volcanoes
+
+    /** Canyon profile 0 … 1 (1 on the flat floor) of desert worlds; 0 elsewhere. */
+    double canyonProfile(double x, double y, double z) {
+        if (type != BodyType.DESERT) return 0;
+        double k = 1800 * featureScale;
+        double region = PlanetMacro.smooth(0.05, 0.25, Noise.fbm(seed + 809, x / (4 * k), y / (4 * k), z / (4 * k), 2));
+        if (region <= 0) return 0;
+        double c = Math.abs(Noise.fbm(seed + 808, x / k, y / k, z / k, 3));
+        // Where the field crosses zero: steep walls (smoothstep over a narrow band) and a flat floor.
+        return region * PlanetMacro.smooth(0.07, 0.035, c);
+    }
+
+    /** Canyon depth, blocks: Valles Marineris is ~7 km deep against Olympus' 22 km, about a third of the peak. */
+    private double canyon(double x, double y, double z) {
+        double p = canyonProfile(x, y, z);
+        return p <= 0 ? 0 : 0.35 * peakBlocks * p;
+    }
+
+    private static final double VOLCANO_CELL = 9000;
+
+    /**
+     * Shield volcanoes of volcanic worlds (deserts like Mars, lava worlds, greenhouse worlds like Venus):
+     * broad cones (flank slopes of a few degrees at true scale) with a summit caldera, up to 0.9 of the
+     * body's peak relief. Blocks of height added at map-sphere point (x, y, z).
+     */
+    double volcanoes(double x, double y, double z) {
+        if (type != BodyType.DESERT && type != BodyType.LAVA && type != BodyType.GREENHOUSE) return 0;
+        double cell = VOLCANO_CELL * featureScale;
+        long cx = (long) Math.floor(x / cell), cy = (long) Math.floor(y / cell), cz = (long) Math.floor(z / cell);
+        double rs = grid.radiusBlocks();
+        double sum = 0;
+        for (long i = cx - 1; i <= cx + 1; i++) {
+            for (long j = cy - 1; j <= cy + 1; j++) {
+                for (long k = cz - 1; k <= cz + 1; k++) {
+                    SeedRng rng = new SeedRng(SeedRng.hash(seed ^ 0x701C_A40EL, i, j, k));
+                    if (rng.nextDouble() >= 0.14) continue;
+                    double px = (i + rng.nextDouble()) * cell, py = (j + rng.nextDouble()) * cell, pz = (k + rng.nextDouble()) * cell;
+                    double n = Math.sqrt(px * px + py * py + pz * pz);
+                    if (n < 1e-9 || Math.abs(n - rs) > cell) continue;
+                    px *= rs / n;
+                    py *= rs / n;
+                    pz *= rs / n;
+                    double u = rng.nextDouble();
+                    double radius = cell * (0.12 + 0.3 * u);
+                    double height = peakBlocks * (0.3 + 0.6 * u * u);
+                    double dx = x - px, dy = y - py, dz = z - pz;
+                    double t = Math.sqrt(dx * dx + dy * dy + dz * dz) / radius;
+                    if (t >= 1) continue;
+                    sum += volcanoProfile(t, height);
+                }
+            }
+        }
+        return sum;
+    }
+
+    /** Shield profile at normalised distance t: H (1 − t)^1.5, minus a caldera 0.12 H deep inside t < 0.08. */
+    static double volcanoProfile(double t, double height) {
+        double cone = height * Math.pow(1 - t, 1.5);
+        if (t < 0.08) cone -= 0.12 * height * (1 - sq(t / 0.08));
+        return cone;
+    }
+
+    /** Shield-volcano height at column (x, z), blocks (0 off volcanic worlds); for tours and tests. */
+    public double volcanoAt(int x, int z) {
+        double[] p = POINT.get();
+        grid.spherePoint(x, z, p);
+        return volcanoes(p[0], p[1], p[2]);
+    }
+
+    /** Canyon depth at column (x, z), blocks (0 off desert worlds); for tours and tests. */
+    public double canyonAt(int x, int z) {
+        double[] p = POINT.get();
+        grid.spherePoint(x, z, p);
+        return canyon(p[0], p[1], p[2]);
+    }
+
     /** Macro fields at map position (x, z), written into {@code out} (imager resolution, no tail). */
     public void macroAt(double x, double z, PlanetMacro.Sample out) {
         double[] d = POINT.get();
         direction(x, z, d);
         macro.sample(d[0], d[1], d[2], out);
+    }
+
+    // ---------------------------------------------------------------- 3D cliff band
+
+    /**
+     * Weight 0 … 1 of the 3D band at column (x, z): mountain ranges (ridges under the erosion gate) and
+     * canyon walls. 0 on bodies without a band.
+     */
+    public double bandWeight(int x, int z) {
+        if (!banded) return 0;
+        double[] s = POINT.get();
+        grid.spherePoint(x, z, s);
+        double w = 1.4 * ridges(s[0], s[1], s[2]) * erosionGate(s[0], s[1], s[2]);
+        if (type == BodyType.DESERT) {
+            double p = canyonProfile(s[0], s[1], s[2]);
+            w = Math.max(w, 4 * p * (1 - p) * 1.5); // walls, not the floor
+        }
+        return clamp01(w);
+    }
+
+    /**
+     * Carves the 3D band of column (x, z) into {@code c} (after {@link #column}): within ±B blocks of the
+     * 2.5D surface h (B = {@value #BAND_MAX} × {@link #bandWeight}) a block is solid where
+     * (h + ½ − y)/B + 0.85 n(x, y, z) &gt; 0, n a two-octave 3D value noise of 22 and 9 block wavelength.
+     * That is the vanilla terrain test (a vertical gradient plus 3D noise, as Tectonic's {@code final_density})
+     * confined to a thin shell, so the rest of the column keeps the 2.5D speed. Bodies with a sea only carve
+     * above sea level, so no air pocket forms under a fluid. Records the local depth below the nearest air
+     * above for the layering, so ground under an overhang gets its topsoil.
+     */
+    public void carve(int x, int z, Column c) {
+        c.bandLen = 0;
+        c.solidTop = c.height;
+        if (!banded) return;
+        int h = c.height;
+        if (macro.hasSea() && h < SEA_LEVEL + 3) return;
+        int b = (int) Math.round(BAND_MAX * bandWeight(x, z));
+        if (b < 4) return;
+        int lo = h - b, hi = h + b; // inclusive
+        if (macro.hasSea()) lo = Math.max(lo, SEA_LEVEL + 2);
+        lo = Math.max(lo, MIN_Y + 8);
+        hi = Math.min(hi, MAX_Y - 1);
+        if (hi < lo) return;
+        c.bandLo = lo;
+        c.bandLen = hi - lo + 1;
+        double wx = grid.wrapX(x);
+        int top = Integer.MIN_VALUE;
+        for (int y = hi; y >= lo; y--) {
+            double n = 0.65 * Noise.value(seed + 909, wx / 22, y / 15.0, z / 22.0)
+                    + 0.35 * Noise.value(seed + 910, wx / 9, y / 7.0, z / 9.0);
+            boolean solid = (h + 0.5 - y) / b + 0.85 * n > 0;
+            c.bandSolid[y - lo] = solid;
+            if (solid && top == Integer.MIN_VALUE) top = y;
+        }
+        // Local depth: blocks of solid between y and the nearest air above it (0 for an exposed top block).
+        int run = -1;
+        for (int y = hi; y >= lo; y--) {
+            int i = y - lo;
+            run = c.bandSolid[i] ? run + 1 : -1;
+            c.bandDepth[i] = run;
+        }
+        c.solidTop = top == Integer.MIN_VALUE ? lo - 1 : top;
+    }
+
+    /** Highest solid Y of column (x, z), cliff band included (where a player or a ship can stand). */
+    public int solidTop(int x, int z) {
+        Column c = new Column();
+        c.height = height(x, z);
+        carve(x, z, c);
+        return c.solidTop;
     }
 
     // ---------------------------------------------------------------- craters
@@ -288,7 +602,7 @@ public final class TerrainSampler {
      * Fills the layering of a column whose surface Y is {@code h}; {@code slope} is the larger height
      * step to a neighbouring column, used to bare rock on steep ground. Surface materials follow the
      * same macro fields the imager paints: deserts in the Hadley belts, polar caps, snow on the
-     * highest ground, dark maria, ice-moon lineae.
+     * highest ground, dark maria, ice-moon lineae. Clears any band ({@link #carve} adds it).
      */
     public void column(int x, int z, int h, int slope, Column c) {
         PlanetMacro.Sample m = SAMPLE.get();
@@ -299,6 +613,8 @@ public final class TerrainSampler {
     /** {@link #column(int, int, int, int, Column)} with the column's macro fields already sampled. */
     public void column(int x, int z, int h, int slope, Column c, PlanetMacro.Sample m) {
         c.height = h;
+        c.solidTop = h;
+        c.bandLen = 0;
         c.fluid = Material.AIR;
         c.fluidTop = h;
         c.iceCap = false;
@@ -375,14 +691,33 @@ public final class TerrainSampler {
         c.fillerDepth = fillerDepth;
     }
 
-    /** Material at world Y in a column filled by {@link #column}; bedrock floor 1–3 blocks thick. */
+    /**
+     * Material at world Y in a column filled by {@link #column} (and {@link #carve}); bedrock floor 1–3 blocks
+     * thick. Layers follow the depth below the nearest air above: without a band that is h − y; inside the band
+     * it is the carved local depth, and below the band it continues from the band's lowest block.
+     */
     public Material materialAt(Column c, int y, int x, int z) {
         if (y <= MIN_Y + bedrockDepth(x, z)) return Material.BEDROCK;
-        if (y > c.height) {
+        if (y > c.solidTop) {
+            if (y <= c.height) return Material.AIR; // carved off the top of the 2.5D column
             if (c.fluid != Material.AIR && y <= c.fluidTop) return c.iceCap && y == c.fluidTop ? Material.ICE : c.fluid;
             return Material.AIR;
         }
-        int depth = c.height - y;
+        return layer(c, depthBelowAir(c, y));
+    }
+
+    /** Depth of solid Y below the nearest air above it, or −1 when y is air inside the band. */
+    public static int depthBelowAir(Column c, int y) {
+        if (c.bandLen == 0) return c.height - y;
+        int i = y - c.bandLo;
+        if (i >= 0) return i < c.bandLen ? c.bandDepth[i] : -1;
+        // Below the band: continue from its lowest block (solid → its depth + distance; air → distance − 1).
+        return c.bandSolid[0] ? c.bandDepth[0] - i : -i - 1;
+    }
+
+    /** Layer material at a local depth (−1 = air). */
+    static Material layer(Column c, int depth) {
+        if (depth < 0) return Material.AIR;
         if (depth < c.topDepth) return c.top;
         if (depth < c.topDepth + c.fillerDepth) return c.filler;
         return c.under;

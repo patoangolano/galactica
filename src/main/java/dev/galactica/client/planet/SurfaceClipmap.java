@@ -859,7 +859,7 @@ public final class SurfaceClipmap {
         TerrainSampler.Material m = c.visible();
         double r, g, b;
         if (m == TerrainSampler.Material.WATER) {
-            double dep = smooth((TerrainSampler.SEA_LEVEL - h) / Math.max(1, 3 * terrain.amplitude()));
+            double dep = smooth((TerrainSampler.SEA_LEVEL - h) / Math.max(1, 1.5 * terrain.depthAmplitude()));
             r = lerp(dep, 0.020, 0.008);
             g = lerp(dep, 0.075, 0.025);
             b = lerp(dep, 0.110, 0.075);

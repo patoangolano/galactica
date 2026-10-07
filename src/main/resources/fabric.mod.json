@@ -32,6 +32,11 @@
     "bobby": "*",
     "modmenu": "*",
     "yet_another_config_lib_v3": "*",
-    "geckolib": ">=5.5.7 <5.6"
+    "geckolib": ">=5.5.7 <5.6",
+    "tectonic": ">=3.0.31",
+    "lithostitched": ">=2.0.4",
+    "terralith": "*",
+    "sodium-extra": "*",
+    "scalablelux": "*"
   }
 }
