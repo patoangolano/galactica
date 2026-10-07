@@ -47,8 +47,13 @@ public abstract class CameraShipMixin {
 
     @Inject(method = "alignWithEntity(F)V", at = @At("TAIL"))
     private void galactica$shipAttitude(float partialTicks, CallbackInfo ci) {
-        if (this.entity == null || !(this.entity.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != this.entity) {
+        if (this.entity == null || !(this.entity.getVehicle() instanceof Starship ship)) {
             ShipCamera.clearOrbit(); // a screenshot orbit never outlives the flight it was set for
+            return;
+        }
+        if (ship.getControllingPassenger() != this.entity) {
+            // Crew keep their own look, but in first person their eye rides the rotated seat like the pilot's.
+            if (!this.detached) this.setPosition(ship.riderEyePosition(this.entity, partialTicks, Mth.lerp(partialTicks, this.eyeHeightOld, this.eyeHeight)));
             return;
         }
         if (!this.detached) ShipCamera.clearOrbit();
@@ -64,7 +69,8 @@ public abstract class CameraShipMixin {
         this.matrixPropertiesDirty |= 3;
         if (this.detached) {
             // Aimed at the hull centre (StarshipRenderer.PIVOT_BLOCKS above the entity origin), framed by ShipCamera.
-            this.setPosition(ship.getPosition(partialTicks).add(0.0, StarshipRenderer.PIVOT_BLOCKS, 0.0));
+            Vector3f target = ship.getAttitude(partialTicks, new Quaternionf()).transform(ShipCamera.target(new Vector3f()));
+            this.setPosition(ship.getPosition(partialTicks).add(target.x, StarshipRenderer.PIVOT_BLOCKS + target.y, target.z));
             this.move(-ShipCamera.distance(), ShipCamera.lift(), 0.0F);
         } else {
             this.setPosition(ship.pilotEyePosition(this.entity, partialTicks, Mth.lerp(partialTicks, this.eyeHeightOld, this.eyeHeight)));

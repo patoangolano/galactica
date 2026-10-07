@@ -18,13 +18,19 @@ public final class ShipCamera {
     public static final float CHASE_LIFT = 1.1F;
 
     private static boolean orbiting;
-    private static float orbitYawDeg, orbitPitchDeg, orbitDistance = CHASE_DISTANCE;
+    private static float orbitYawDeg, orbitPitchDeg, orbitDistance = CHASE_DISTANCE, orbitTargetZ;
 
     /**
      * Orbits the third-person camera: {@code yawDeg} about the ship's up axis from the chase position (180 looks at
      * the nose from ahead), {@code pitchDeg} below the ship's horizon, {@code distance} blocks from the hull centre.
      */
     public static void orbit(float yawDeg, float pitchDeg, float distance) {
+        orbit(yawDeg, pitchDeg, distance, 0F);
+    }
+
+    /** As {@link #orbit(float, float, float)}, aimed at a point {@code targetZ} blocks along the nose from the hull centre. */
+    public static void orbit(float yawDeg, float pitchDeg, float distance, float targetZ) {
+        orbitTargetZ = targetZ;
         orbiting = true;
         orbitYawDeg = yawDeg;
         orbitPitchDeg = pitchDeg;
@@ -41,6 +47,11 @@ public final class ShipCamera {
         float yaw = orbiting ? orbitYawDeg : 0F;
         float down = orbiting ? orbitPitchDeg : CHASE_TILT_DEG;
         rotation.rotateY((float) Math.toRadians(yaw)).rotateX((float) Math.toRadians(-down));
+    }
+
+    /** The aim point in the body frame (blocks from the hull centre): the centre itself unless an orbit moved it. */
+    public static org.joml.Vector3f target(org.joml.Vector3f dest) {
+        return dest.set(0F, 0F, orbiting ? orbitTargetZ : 0F);
     }
 
     /** Distance from the hull centre along the view axis, blocks. */

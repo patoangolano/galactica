@@ -21,10 +21,13 @@ import net.minecraft.client.renderer.texture.OverlayTexture;
 final class CockpitRenderer {
     private CockpitRenderer() {}
 
-    /** The glass swatch of the atlas, as UV (gen_starship.py MATERIALS["glass"] × UV_K, over TEXTURE_SIZE). */
-    private static final float GLASS_U0 = 640F / 1024F, GLASS_U1 = 1024F / 1024F, GLASS_V0 = 416F / 1024F, GLASS_V1 = 576F / 1024F;
-    /** Vertex alpha on the glass texture (itself ~0.38 opaque, streaks ~0.6): a faint tint, never a fog. */
-    private static final int GLASS_TINT = 0x38D8E8FF;
+    /**
+     * One texel of plain glass (gen_starship.py MATERIALS["glass"] × UV_K: the swatch's top-left, off its reflection
+     * streaks), so the panes are a uniform faint tint: stretched streaks read as scratches across the whole view.
+     */
+    private static final float GLASS_U = 641.5F / 1024F, GLASS_V = 417.5F / 1024F;
+    /** Vertex colour on the glass texel (itself ~0.38 opaque): a faint cool tint, never a fog. */
+    private static final int GLASS_TINT = 0x50C8DCFF;
 
     static void submit(StarshipRenderState state, PoseStack pose, SubmitNodeCollector out) {
         int light = state.lightCoords;
@@ -75,11 +78,10 @@ final class CockpitRenderer {
     private static void quad(VertexConsumer buf, PoseStack.Pose pose, int light,
                              float ax, float ay, float az, float bx, float by, float bz,
                              float cx, float cy, float cz, float dx, float dy, float dz, float nx, float ny, float nz) {
-        // The whole glass swatch stretched over each pane: a faint gradient with a streak or two.
-        vertex(buf, pose, ax, ay, az, GLASS_U0, GLASS_V1, GLASS_TINT, light, nx, ny, nz);
-        vertex(buf, pose, bx, by, bz, GLASS_U1, GLASS_V1, GLASS_TINT, light, nx, ny, nz);
-        vertex(buf, pose, cx, cy, cz, GLASS_U1, GLASS_V0, GLASS_TINT, light, nx, ny, nz);
-        vertex(buf, pose, dx, dy, dz, GLASS_U0, GLASS_V0, GLASS_TINT, light, nx, ny, nz);
+        vertex(buf, pose, ax, ay, az, GLASS_U, GLASS_V, GLASS_TINT, light, nx, ny, nz);
+        vertex(buf, pose, bx, by, bz, GLASS_U, GLASS_V, GLASS_TINT, light, nx, ny, nz);
+        vertex(buf, pose, cx, cy, cz, GLASS_U, GLASS_V, GLASS_TINT, light, nx, ny, nz);
+        vertex(buf, pose, dx, dy, dz, GLASS_U, GLASS_V, GLASS_TINT, light, nx, ny, nz);
     }
 
     private static void vertex(VertexConsumer buf, PoseStack.Pose pose, float x, float y, float z, float u, float v,

@@ -561,13 +561,20 @@ public class Starship extends VehicleEntity {
     }
 
     /**
-     * The pilot's eye in world space: seat and eye height both rotate with the hull, so a rolled or inverted
-     * ship keeps the first-person view inside the canopy.
+     * A rider's eye in world space: the seat, and the eye's height above it (eye height less the attachment
+     * height), both rotate with the hull, so a rolled or inverted ship keeps the first-person view inside the canopy
+     * (the renderer turns the rider's body about the seat the same way).
      */
+    public Vec3 riderEyePosition(Entity rider, float partialTick, float eyeHeight) {
+        Vec3 attach = rider.getVehicleAttachmentPoint(this);
+        Vector3f seat = new Vector3f(getFirstPassenger() == rider ? PILOT_SEAT : PASSENGER_SEAT);
+        Vector3f eye = getAttitude(partialTick, new Quaternionf()).transform(seat.add((float) -attach.x, eyeHeight - (float) attach.y, (float) -attach.z));
+        return getPosition(partialTick).add(eye.x, PIVOT + eye.y, eye.z);
+    }
+
+    /** The pilot's eye in world space ({@link #riderEyePosition}). */
     public Vec3 pilotEyePosition(Entity pilot, float partialTick, float eyeHeight) {
-        Vector3f eye = getAttitude(partialTick, new Quaternionf()).transform(new Vector3f(PILOT_SEAT).add(0F, eyeHeight, 0F));
-        Vec3 attach = pilot.getVehicleAttachmentPoint(this);
-        return getPosition(partialTick).add(eye.x - attach.x, PIVOT + eye.y - attach.y, eye.z - attach.z);
+        return riderEyePosition(pilot, partialTick, eyeHeight);
     }
 
     // ---------------------------------------------------------------- damage
