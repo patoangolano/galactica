@@ -73,16 +73,26 @@ public final class AutoTest {
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
+        // The test world keeps the player wherever the last run ended (often a planet slot): start on Earth's Overworld.
+        // On a glass block 200 high over spawn (an ocean in this world): underwater vanilla draws no sky at all.
+        cmd(0, "execute in minecraft:overworld run forceload add 0 0");
+        cmd(100, "execute in minecraft:overworld run setblock 0 199 0 minecraft:glass");
+        cmd(5, "execute in minecraft:overworld run tp @s 0.5 200 0.5");
+        cmd(1, "setblock ~ ~-1 ~ minecraft:glass");
+        cmd(40, "execute in minecraft:overworld run forceload remove 0 0");
         // M6: the real night sky over the Overworld (Milky Way from Sol, real bright stars).
-        cmd(0, "time set midnight");
+        cmd(20, "time set midnight");
+        clearChat(5);
         look(60, 0, -60);   shot(5, "00a_earth_night_up");
         look(20, 90, -25);  shot(5, "00b_earth_night_east");
         look(20, 270, -25); shot(5, "00c_earth_night_west");
+        earthSun();
         cmd(5, "galactica kit"); // unsuited, life support (correctly) kills the test pilot in seconds
         cmd(10, "galactica launch");
         look(160, 90, 0);   shot(5, "01_earth_orbit_towards_gc");
         look(20, -90, 0);   shot(5, "02_earth_orbit_anticentre");
         lookAtNearest(20);  shot(5, "03_earth_orbit_sun");
+        evaArm();
         cmd(20, "galactica orbit Earth");
         lookAtBody(60, "Earth");   shot(5, "04_earth_close");
         cmd(20, "galactica orbit Moon");
@@ -213,7 +223,8 @@ public final class AutoTest {
         key(5, "keyShift", true);
         awaitShipOnGround(1, 2400);
         key(1, "keyShift", false);
-        shipOnGround(40, "Mars");
+        traceShip(40);
+        shipOnGround(1, "Mars");
         shipDiagnostics(1, "Mars landed");
         shot(20, "21a_mars_cockpit");
         landedExterior("21c_mars_ship_landed");
@@ -349,14 +360,139 @@ public final class AutoTest {
             boolean hullClear = dev.galactica.ship.Starship.hullClear(mc.level, ship.position(), ship.attitude());
             // The gap under the box centre only says how rough the site is: on a slope the hull rests on a probe (nose or
             // wing) over a ledge, so it is reported but does not fail the landing; resting, upright and clear does.
+            // Settled: at rest now, and it has not crept since the pilot let go (the trace window, 40 ticks).
+            double drift = traceStart == null ? Double.NaN : Math.hypot(ship.getX() - traceStart.x, ship.getZ() - traceStart.z);
             boolean ok = ship.onGround() && gap > -0.05 && !inside && hullClear && tilt < 35 && !onShip && mc.player.isAlive()
-                    && ship.getDeltaMovement().length() * 20 < 0.5;
+                    && ship.getDeltaMovement().length() * 20 < 0.05 && !(drift > 0.05);
             Galactica.LOG.info("[autotest] {} ship on ground on {}: onGround {}, box bottom {} over the footprint's top block {}, embedded {}, "
-                            + "hull probes clear {}, tilt {} deg, on another ship {}, speed {} m/s",
+                            + "hull probes clear {}, tilt {} deg, on another ship {}, speed {} m/s, horizontal drift since release {} blocks",
                     ok ? "PASS" : "FAIL", body, ship.onGround(), String.format(java.util.Locale.ROOT, "%.2f", gap), top, inside, hullClear,
                     String.format(java.util.Locale.ROOT, "%.0f", tilt), onShip,
-                    String.format(java.util.Locale.ROOT, "%.2f", ship.getDeltaMovement().length() * 20));
+                    String.format(java.util.Locale.ROOT, "%.2f", ship.getDeltaMovement().length() * 20),
+                    String.format(java.util.Locale.ROOT, "%.3f", drift));
         }));
+    }
+
+    /** Logs the ridden ship's velocity, position, ground contact and sneak every 2 ticks for {@code ticks} ticks, then moves on. */
+    /** The ridden ship's position when {@link #traceShip} began (the pilot had just let go). */
+    private static net.minecraft.world.phys.Vec3 traceStart;
+
+    private static void traceShip(int ticks) {
+        STEPS.add(new Step(1, () -> {
+            var mc0 = Minecraft.getInstance();
+            traceStart = mc0.player != null && mc0.player.getVehicle() instanceof dev.galactica.ship.Starship s0 ? s0.position() : null;
+            Consumer<Minecraft> previous = perTick;
+            int[] n = {0};
+            perTick = m -> {
+                previous.accept(m);
+                if (n[0] > ticks) return;
+                if (n[0]++ % 2 == 0 && m.player != null && m.player.getVehicle() instanceof dev.galactica.ship.Starship s) {
+                    var d = s.getDeltaMovement().scale(20);
+                    Galactica.LOG.info(String.format(java.util.Locale.ROOT,
+                            "[autotest] ship trace t=%d v=(%.2f, %.2f, %.2f) m/s onGround %s pos (%.2f, %.2f, %.2f) shift %s",
+                            n[0] - 1, d.x, d.y, d.z, s.onGround(), s.getX(), s.getY(), s.getZ(), m.options.keyShift.isDown()));
+                }
+            };
+        }));
+        STEPS.add(new Step(ticks, () -> perTick = m -> {}));
+    }
+
+    /**
+     * The Overworld Sun drawn by the mod (Sol's disc and glare, {@link dev.galactica.client.earthsky.EarthSun}) instead
+     * of vanilla's square: at noon overhead, low over the western horizon (reddened by airmass), and hidden by rain.
+     */
+    private static void earthSun() {
+        cmd(5, "weather clear");
+        cmd(5, "time set noon");
+        // The saved world may still be raining: vanilla fades rain out over ~100 ticks after "weather clear".
+        STEPS.add(new Step(1, () -> {
+            holdLeft = 300;
+            hold = () -> Minecraft.getInstance().level == null || Minecraft.getInstance().level.getRainLevel(1F) < 0.01F;
+        }));
+        clearChat(5);
+        look(40, 0, -89.9f);
+        shot(5, "00d_earth_sun_noon");
+        earthSunProbe(1, "noon");
+        look(5, 0, -60);
+        shot(5, "00d2_earth_sun_noon_glare");
+        // Sunset: advance the clock until vanilla's sun is ~2 degrees above the horizon, then look at it.
+        cmd(5, "time set 11000");
+        STEPS.add(new Step(20, () -> {
+            holdLeft = 400;
+            hold = () -> {
+                Minecraft mc = Minecraft.getInstance();
+                Float deg = mc.gameRenderer.mainCamera().attributeProbe().getValue(net.minecraft.world.attribute.EnvironmentAttributes.SUN_ANGLE, 1F);
+                if (deg == null) return true;
+                double a = Math.toRadians(deg);
+                double alt = Math.toDegrees(Math.asin(Math.cos(a)));
+                // Vanilla's sun direction R_y(-90) R_x(a) (0, 1, 0) = (-sin a, cos a, 0).
+                double x = -Math.sin(a), y = Math.cos(a);
+                aim((float) Math.toDegrees(Math.atan2(-x, 0)), (float) -Math.toDegrees(Math.atan2(y, Math.abs(x))) - 4f);
+                if (alt <= 2.0) {
+                    Galactica.LOG.info("[autotest] sunset: sun angle {} deg, altitude {} deg", deg, String.format(java.util.Locale.ROOT, "%.2f", alt));
+                    return true;
+                }
+                mc.player.connection.sendCommand("time add " + (alt > 6 ? 40 : 8));
+                return false;
+            };
+        }));
+        clearChat(1);
+        shot(20, "00e_earth_sun_sunset");
+        earthSunProbe(1, "sunset");
+        cmd(5, "time set noon");
+        cmd(5, "weather rain");
+        clearChat(5);
+        look(200, 0, -60);
+        shot(5, "00f_earth_sun_rain");
+        earthSunProbe(1, "rain");
+        cmd(5, "weather clear");
+    }
+
+    private static void earthSunProbe(int wait, String label) {
+        STEPS.add(new Step(wait, () -> {
+            boolean drawn = dev.galactica.client.earthsky.EarthSun.lastDrawn();
+            float[] f = dev.galactica.client.earthsky.EarthSun.lastFilter();
+            float fade = dev.galactica.client.earthsky.EarthSun.lastFade();
+            boolean ok = switch (label) {
+                case "noon" -> drawn && f[0] > 0.95f && f[1] > 0.95f && f[2] > 0.95f && fade > 0.95f;
+                case "sunset" -> drawn && f[0] > 0.5f && f[2] < 0.7f * f[0];
+                default -> fade < 0.1f; // rain: vanilla hides its sun with rainBrightness, and so does ours
+            };
+            Galactica.LOG.info("[autotest] {} Earth sun {}: drawn {} ({})", ok ? "PASS" : "FAIL", label, drawn,
+                    dev.galactica.client.earthsky.EarthSun.lastProbe());
+        }));
+    }
+
+    /**
+     * EVA in space: the first-person arm (empty hand) and the body in third person lit by the Sun
+     * ({@link dev.galactica.client.ship.ShipEnvironment#evaLight}, {@link dev.galactica.client.eva.SpaceLighting}).
+     */
+    private static void evaArm() {
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().player.getInventory().setSelectedSlot(8)));
+        lookAtNearest(5);
+        STEPS.add(new Step(5, () -> {
+            var p = Minecraft.getInstance().player;
+            aim(p.getYRot() + 25f, p.getXRot() + 25f); // the Sun up and to the left, the arm lit from ahead
+        }));
+        shot(10, "03a_eva_arm_sunlit");
+        STEPS.add(new Step(5, () -> {
+            var p = Minecraft.getInstance().player;
+            int light = dev.galactica.client.ship.ShipEnvironment.evaLight(p, 1F);
+            var dir = dev.galactica.client.eva.SpaceLighting.appliedDirection();
+            boolean ok = light >= 0 && (light >>> 20 & 15) >= 10 && dir != null;
+            Galactica.LOG.info("[autotest] {} EVA starlight: block {} sky {}, level lights toward {}", ok ? "PASS" : "FAIL",
+                    light < 0 ? -1 : light >>> 4 & 15, light < 0 ? -1 : light >>> 20 & 15, dir);
+        }));
+        STEPS.add(new Step(5, () -> {
+            var p = Minecraft.getInstance().player;
+            aim(p.getYRot() + 155f, 10f); // the Sun behind: the arm's night side, ambient floor only
+        }));
+        shot(10, "03b_eva_arm_shadow");
+        lookAtNearest(5);
+        camera(5, net.minecraft.client.CameraType.THIRD_PERSON_FRONT);
+        shot(20, "03c_eva_third_person_sunlit");
+        camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().player.getInventory().setSelectedSlot(0)));
     }
 
     /** Levels the piloted ship (no pitch or roll, heading kept), on both sides like {@link #aimShipAtNadir}. */
@@ -416,9 +552,17 @@ public final class AutoTest {
         STEPS.add(new Step(wait, () -> {
             holdLeft = maxTicks;
             int[] ticks = {0};
+            boolean[] traced = {false};
             hold = () -> {
                 var mc = Minecraft.getInstance();
                 if (ticks[0]++ % 20 == 0) clearDerelicts(mc);
+                // Per-tick movement phases (Starship.traceTicks) from 40 blocks above the terrain through touchdown.
+                if (!traced[0] && mc.player != null && mc.player.getVehicle() instanceof dev.galactica.ship.Starship t
+                        && t.getY() - mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+                        net.minecraft.util.Mth.floor(t.getX()), net.minecraft.util.Mth.floor(t.getZ())) < 40) {
+                    traced[0] = true;
+                    dev.galactica.ship.Starship.traceTicks = 80;
+                }
                 // Wings-level autopilot until touchdown: the pilot's client owns the attitude, so a stray mouse move
                 // during the long fall (the machine is shared) cannot leave the hull on its side or back.
                 if (dev.galactica.client.ship.ShipClient.piloted(mc) instanceof dev.galactica.ship.Starship p && !p.onGround()) {

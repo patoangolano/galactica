@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import dev.galactica.client.earthsky.EarthSky;
+import dev.galactica.client.earthsky.EarthSun;
 import net.minecraft.client.renderer.SkyRenderer;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import net.minecraft.world.level.MoonPhase;
@@ -33,6 +34,13 @@ public abstract class EarthSkyMixin {
     @Inject(method = "render", at = @At("HEAD"))
     private void galactica$prepareEarthSky(GpuBufferSlice skyFog, SkyRenderState state, CallbackInfo ci) {
         EarthSky.prepare();
+        EarthSun.prepare(state);
+    }
+
+    /** Vanilla's sun pose, inside its pass: the mod's Sun (Sol's plasma disc and glare) instead of the square sprite. */
+    @Inject(method = "renderSun", at = @At("HEAD"), cancellable = true)
+    private void galactica$earthSun(RenderPass renderPass, float rainBrightness, PoseStack poseStack, CallbackInfo ci) {
+        if (EarthSun.render(renderPass, poseStack)) ci.cancel();
     }
 
     /** Behind the sun and moon, with the stars' pose: the Milky Way band. */

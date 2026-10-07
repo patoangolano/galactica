@@ -172,4 +172,44 @@ class ShipFlightModelTest {
         assertEquals((MAIN_ACCEL + Math.sqrt(3) * RCS_ACCEL) * TICK, maxDeltaVPerTick(true, 0), 1e-12);
         assertEquals(Math.sqrt(3) * RCS_ACCEL * TICK, maxDeltaVPerTick(false, 0), 1e-12);
     }
+
+    private static final Vector3d MARS_G = new Vector3d(0, -3.721, 0);
+
+    @Test
+    void parkedShipSettlesOnItsGearInsteadOfHovering() {
+        Quaterniond q = new Quaterniond();
+        Vector3d v = new Vector3d(3.0, 0, 2.0); // touched down sliding at 3.6 m/s
+        Controls idle = new Controls(0, 0, 0, 0, 0, true);
+        for (int i = 0; i < 40; i++) {
+            step(q, v, idle, MARS_G, 400, TICK, true);
+            v.y = Math.max(0, v.y); // the ground stops the fall
+        }
+        assertEquals(0.0, Math.hypot(v.x, v.z), 1e-12, "static friction holds it");
+        // Unlike flight assist, gravity is not cancelled: the hull presses on its gear (the ground stops it).
+        Vector3d w = new Vector3d();
+        step(q, w, idle, MARS_G, 400, TICK, true);
+        assertEquals(-3.721 * TICK, w.y, 1e-12);
+    }
+
+    @Test
+    void gearFrictionIsCoulomb() {
+        Vector3d v = new Vector3d(10, 0, 0);
+        gearFriction(v, MARS_G, TICK);
+        assertEquals(10 - GEAR_FRICTION * 3.721 * TICK, v.x, 1e-12);
+        Vector3d slow = new Vector3d(0.05, -1, 0);
+        gearFriction(slow, MARS_G, TICK);
+        assertEquals(0, slow.x, 1e-12);
+        assertEquals(-1, slow.y, 1e-12, "the fall is the ground's business");
+    }
+
+    @Test
+    void liftOrMainEngineStillTakesOff() {
+        Quaterniond q = new Quaterniond();
+        Vector3d v = new Vector3d();
+        step(q, v, new Controls(0, 1, 0, 0, 0, true), MARS_G, 400, TICK, true);
+        assertTrue(v.y > 0, "RCS up lifts off");
+        assertFalse(parked(new Controls(1, 0, 0, 0, 0, true), 400, true));
+        assertTrue(parked(new Controls(1, 0, 0, 0, 0, true), 0, true), "no fuel, no main engine");
+        assertFalse(parked(new Controls(0, 0, 0, 0, 0, true), 400, false));
+    }
 }

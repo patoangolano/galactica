@@ -109,6 +109,15 @@ public class Starship extends VehicleEntity {
     // Server-side bookkeeping.
     private @Nullable JumpTargetInfo pendingJump;
     private int lastReportTick, lastMainBurnTick = Integer.MIN_VALUE / 2;
+    /**
+     * Where a parked ship's gear holds it (x, z), while static friction holds: {@link #gearHolds} is set by
+     * {@link #pilotStep} / {@link #coastStep} when the gear stopped all sliding this tick, and the anchor is cleared as
+     * soon as anything asks the ship to move or it leaves the ground.
+     */
+    private @Nullable Vec3 gearAnchor;
+    private boolean gearHolds;
+    /** Dev autotest: ticks of per-phase movement logging left (pilot's client). */
+    public static int traceTicks;
     // Pilot's client: reports awaiting a possible server clamp.
     private final PilotReconciler reconciler = new PilotReconciler();
     // Client-side visual state (gear, canopy, gimbal), ticked for every ship the client sees.
@@ -351,9 +360,22 @@ public class Starship extends VehicleEntity {
             if (level().isClientSide()) pilotStep();
             else coastStep();
             Vec3 start = position();
-            move(MoverType.SELF, getDeltaMovement());
+            Vec3 v0 = getDeltaMovement();
+            move(MoverType.SELF, v0);
+            Vec3 moved = position();
+            boolean boxGround = onGround();
             resolveHullContact(start);
             if (onGround()) setDeltaMovement(getDeltaMovement().multiply(0.7, 1.0, 0.7)); // landing-skid friction
+            holdOnGear(start);
+            if (AUTOTEST && traceTicks > 0 && level().isClientSide()) {
+                traceTicks--;
+                Galactica.LOG.info(String.format(java.util.Locale.ROOT,
+                        "[autotest] ship tick %d start (%.3f, %.3f, %.3f) v (%.3f, %.3f, %.3f) m/s -> box move (%.3f, %.3f, %.3f) ground %s"
+                                + " -> final (%.3f, %.3f, %.3f) ground %s v (%.3f, %.3f, %.3f) m/s gear holds %s",
+                        tickCount, start.x, start.y, start.z, v0.x * 20, v0.y * 20, v0.z * 20, moved.x, moved.y, moved.z, boxGround,
+                        getX(), getY(), getZ(), onGround(), getDeltaMovement().x * 20, getDeltaMovement().y * 20, getDeltaMovement().z * 20,
+                        gearHolds));
+            }
         }
         if (!level().isClientSide()) serverStep();
         else visualTick();
@@ -401,7 +423,7 @@ public class Starship extends VehicleEntity {
     private void resolveHullContact(Vec3 start) {
         Level level = level();
         Vec3 end = position();
-        if (hullClear(level, end, attitude)) return;
+        if (sweptClear(level, start, end, attitude)) return;
         Vec3 base = start;
         if (!hullClear(level, base, attitude)) {
             if (hullClear(level, base, attitudeO)) {
@@ -420,21 +442,24 @@ public class Starship extends VehicleEntity {
         Vec3 d = end.subtract(start), v = getDeltaMovement();
         double vx = v.x, vy = v.y, vz = v.z;
         boolean touchdown = false, scraped = false;
-        Vec3 p = base, t = p.add(0, d.y, 0);
-        if (hullClear(level, t, attitude)) p = t;
-        else {
+        // Each axis goes as far as the probes allow (to the contact, not back to where the tick began: a hull
+        // arriving at 10 blocks a tick must come to rest on the ground, not hang 9 blocks above it).
+        Vec3 p = base;
+        double f = clearFraction(level, p, new Vec3(0, d.y, 0), attitude);
+        p = p.add(0, f * d.y, 0);
+        if (f < 1) {
             touchdown = d.y < 0;
             vy = 0;
         }
-        t = p.add(d.x, 0, 0);
-        if (hullClear(level, t, attitude)) p = t;
-        else {
+        f = clearFraction(level, p, new Vec3(d.x, 0, 0), attitude);
+        p = p.add(f * d.x, 0, 0);
+        if (f < 1) {
             vx = 0;
             scraped = true;
         }
-        t = p.add(0, 0, d.z);
-        if (hullClear(level, t, attitude)) p = t;
-        else {
+        f = clearFraction(level, p, new Vec3(0, 0, d.z), attitude);
+        p = p.add(0, 0, f * d.z);
+        if (f < 1) {
             vz = 0;
             scraped = true;
         }
@@ -448,6 +473,80 @@ public class Starship extends VehicleEntity {
             verticalCollision = true;
             setOnGround(true);
         }
+    }
+
+    /** Longest step between probe tests along a move: a probe point cannot skip a block edge in between. */
+    private static final double SWEEP_STEP = 0.4;
+
+    /** True if the probes stay clear all along the straight move from {@code from} to {@code to}. */
+    private static boolean sweptClear(Level level, Vec3 from, Vec3 to, Quaternionfc q) {
+        Vec3 d = to.subtract(from);
+        int n = Math.max(1, (int) Math.ceil(d.length() / SWEEP_STEP));
+        for (int i = 1; i <= n; i++) if (!hullClear(level, from.add(d.scale((double) i / n)), q)) return false;
+        return true;
+    }
+
+    /**
+     * Largest share (0..1) of {@code delta} the hull can move from {@code from} with its probes clear, to within
+     * 1/1024 of a swept stretch: the samples find the first blocked stretch, a bisection the contact inside it.
+     * {@code from} itself is assumed clear.
+     */
+    static double clearFraction(Level level, Vec3 from, Vec3 delta, Quaternionfc q) {
+        double len = delta.length();
+        if (len < 1e-9) return 1;
+        int n = Math.max(1, (int) Math.ceil(len / SWEEP_STEP));
+        double lo = 0;
+        for (int i = 1; i <= n; i++) {
+            double hi = (double) i / n;
+            if (hullClear(level, from.add(delta.scale(hi)), q)) {
+                lo = hi;
+                continue;
+            }
+            for (int k = 0; k < 10; k++) {
+                double mid = (lo + hi) / 2;
+                if (hullClear(level, from.add(delta.scale(mid)), q)) lo = mid;
+                else hi = mid;
+            }
+            return lo;
+        }
+        return 1;
+    }
+
+    /** Depth of the ground test under the box and the probes, blocks. */
+    private static final double CONTACT_DEPTH = 1.0 / 16;
+
+    /**
+     * Whether the hull rests on something right now: the box or any probe would enter a block 1/16 block lower. A
+     * direct test, unlike {@code onGround()}, which only says whether the last move was stopped from below: a ship
+     * resting on a probe whose last tick of settling happened to stay clear still has its weight on the ground,
+     * and one that has lifted off by more than 1/16 block has none.
+     */
+    public boolean restingContact() {
+        Vec3 down = position().add(0, -CONTACT_DEPTH, 0);
+        return !level().noCollision(this, getBoundingBox().move(0, -CONTACT_DEPTH, 0)) || !hullClear(level(), down, attitude);
+    }
+
+    /**
+     * Static friction: a parked ship whose gear stopped all sliding this tick ({@link #gearHolds}) keeps its place on
+     * the ground. Its horizontal position is pinned to where the gear first gripped, so nothing below the friction
+     * limit (probe resolution on a ledge, a late velocity correction from the server) can make it creep; settling
+     * under gravity still happens. A larger shift (a real push) moves the anchor with it.
+     */
+    private void holdOnGear(Vec3 start) {
+        if (!gearHolds || !restingContact()) {
+            gearAnchor = null;
+            return;
+        }
+        if (gearAnchor == null) gearAnchor = new Vec3(start.x, 0, start.z);
+        double dx = getX() - gearAnchor.x, dz = getZ() - gearAnchor.z;
+        if (dx * dx + dz * dz > 0.25 * 0.25) {
+            gearAnchor = new Vec3(getX(), 0, getZ());
+        } else if (dx != 0 || dz != 0) {
+            Vec3 held = new Vec3(gearAnchor.x, getY(), gearAnchor.z);
+            if (hullClear(level(), held, attitude) && level().noCollision(this, getBoundingBox().move(-dx, 0, -dz))) setPos(held);
+        }
+        Vec3 v = getDeltaMovement();
+        setDeltaMovement(0, v.y, 0);
     }
 
     @Override
@@ -470,7 +569,11 @@ public class Starship extends VehicleEntity {
         Quaterniond q = new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w);
         Vector3d v = toMetres(getDeltaMovement());
         Vector3fc g = gravity();
-        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK);
+        // Weight on the gear: touching now (box or probe within 1/16 block), not "touched within the last ticks",
+        // so a ship that hops off or rolls over a ledge is airborne at once and its flight assist takes over.
+        boolean grounded = onGround() || restingContact();
+        ShipFlightModel.step(q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK, grounded);
+        gearHolds = ShipFlightModel.parked(c, hydrogen(), grounded) && v.x == 0 && v.z == 0 && gravityIsVertical(g);
         attitude.set((float) q.x, (float) q.y, (float) q.z, (float) q.w);
         localThrottle = hydrogen() > 0 ? (float) c.thrust() : 0F;
         setDeltaMovement(v.x * ShipFlightModel.TICK, v.y * ShipFlightModel.TICK, v.z * ShipFlightModel.TICK);
@@ -483,8 +586,19 @@ public class Starship extends VehicleEntity {
         Vector3fc g = gravity();
         double k = ShipFlightModel.TICK * ShipFlightModel.TICK;
         double vy = onGround() && g.y() < 0 ? Math.max(0, d.y) : d.y;
-        setDeltaMovement(d.x + g.x() * k, vy + g.y() * k, d.z + g.z() * k);
+        Vector3d v = new Vector3d(d.x + g.x() * k, vy + g.y() * k, d.z + g.z() * k);
+        // An empty ship on the ground stays parked on its gear (in blocks per tick: friction scales with dt² here),
+        // with the same contact test as a piloted one, so one resting on a probe over a ledge holds too.
+        boolean grounded = onGround() || restingContact();
+        if (grounded) ShipFlightModel.gearFriction(v, new Vector3d(g.x(), g.y(), g.z()), k);
+        gearHolds = grounded && v.x == 0 && v.z == 0 && gravityIsVertical(g);
+        setDeltaMovement(v.x, v.y, v.z);
         entityData.set(DATA_THRUST, 0F);
+    }
+
+    /** The gear hold only makes sense with gravity along the block Y axis (planets), not in a ship's space frame. */
+    private static boolean gravityIsVertical(Vector3fc g) {
+        return g.y() < 0 && Math.abs(g.x()) + Math.abs(g.z()) < 1e-3 * -g.y();
     }
 
     private void serverStep() {
@@ -561,8 +675,14 @@ public class Starship extends VehicleEntity {
         Input in = pilot.getLastClientInput();
         boolean mainBurning = hydrogen() > 0 && (in.forward() || in.backward() || tickCount - lastMainBurnTick <= ticks + 1);
         double maxDv = ShipFlightModel.maxDeltaVPerTick(mainBurning, gravity().length()) * ticks * 1.1 + 0.5;
-        Vector3d dv = new Vector3d(v).sub(prev);
-        if (dv.length() > maxDv) v.set(prev).fma(maxDv / dv.length(), dv);
+        // Touching terrain, the pilot's collision may have stopped the ship along any axis: the ground takes
+        // 190 m/s off a hull in one tick, which no engine could. Collisions only remove velocity, so per axis the
+        // reference becomes the reported speed when it is smaller with the same sign, or zero when it reversed (a
+        // bounce or thrust away still counts against the engines). Without this the server kept the impact speed and
+        // its clamp handed it back to the pilot every tick (ShipCorrectionPayload) for seconds after touchdown.
+        Vector3d base = touchingTerrain() ? collisionBase(prev, v) : prev;
+        Vector3d dv = new Vector3d(v).sub(base);
+        if (dv.length() > maxDv) v.set(base).fma(maxDv / dv.length(), dv);
         if (v.length() > ShipFlightModel.MAX_SPEED) v.mul(ShipFlightModel.MAX_SPEED / v.length());
         // The pilot ignores the tracker's velocity echo, so a clamp has to be told explicitly.
         if (v.distance(velocity.x(), velocity.y(), velocity.z()) >= PilotReconciler.EPSILON)
@@ -576,6 +696,30 @@ public class Starship extends VehicleEntity {
         entityData.set(DATA_COUPLED, assist);
         setDeltaMovement(v.x * ShipFlightModel.TICK, v.y * ShipFlightModel.TICK, v.z * ShipFlightModel.TICK);
         syncRotationFields();
+    }
+
+    /** Per axis, what a collision could have left of {@code prev} given the reported {@code v}. */
+    static Vector3d collisionBase(Vector3d prev, Vector3d v) {
+        return new Vector3d(collided(prev.x, v.x), collided(prev.y, v.y), collided(prev.z, v.z));
+    }
+
+    private static double collided(double before, double after) {
+        if (Math.abs(after) >= Math.abs(before)) return before; // nothing removed on this axis: the engines' business
+        return Math.signum(after) == Math.signum(before) ? after : 0;
+    }
+
+    /**
+     * Server: whether the hull touches a block, box or probes, within {@link #CONTACT_DEPTH} in any direction (the
+     * pilot's reports arrive around the vehicle move, so a contact that just happened must still count).
+     */
+    boolean touchingTerrain() {
+        Level level = level();
+        if (!level.noCollision(this, getBoundingBox().inflate(CONTACT_DEPTH))) return true;
+        Vec3 p = position();
+        double e = CONTACT_DEPTH;
+        double[][] offsets = {{0, -e, 0}, {0, e, 0}, {e, 0, 0}, {-e, 0, 0}, {0, 0, e}, {0, 0, -e}};
+        for (double[] o : offsets) if (!hullClear(level, p.add(o[0], o[1], o[2]), attitude)) return true;
+        return false;
     }
 
     // ---------------------------------------------------------------- riding

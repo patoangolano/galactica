@@ -12,6 +12,7 @@
     "ship.EntityRenderStateShipMixin",
     "ship.LivingRendererShipMixin",
     "earthsky.EarthSkyMixin",
+    "eva.LightingAccessor",
     "planet.LoadingScreenMixin"
   ],
   "injectors": {

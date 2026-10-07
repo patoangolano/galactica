@@ -111,6 +111,15 @@ public final class StarDiscRenderer {
      */
     public static boolean draw(RenderPass pass, Matrix4f modelView, float dirX, float dirY, float dirZ,
                                double angularRadiusRad, StarVisual visual) {
+        return draw(pass, modelView, dirX, dirY, dirZ, angularRadiusRad, visual, WHITE);
+    }
+
+    /**
+     * As above, with a colour filter on everything drawn (disc, corona and halo; alpha unused): the shader
+     * multiplies its display colour by the {@code ColorModulator}, e.g. atmospheric extinction reddening a low Sun.
+     */
+    public static boolean draw(RenderPass pass, Matrix4f modelView, float dirX, float dirY, float dirZ,
+                               double angularRadiusRad, StarVisual visual, Vector4f filter) {
         Slot slot = SLOTS.get(visual);
         if (slot == null || slot.ready == null || slot.angularRadius != angularRadiusRad || !VfxQuad.ready()) return false;
         CompiledRenderPipeline pipe = VfxPipelines.compiledOrNull(PIPELINE);
@@ -129,7 +138,7 @@ public final class StarDiscRenderer {
         Matrix4f mv = new Matrix4f(modelView).mul(VfxQuad.placement(dir.x, dir.y, dir.z, right.x, right.y, right.z,
                 north.x, north.y, north.z, SHELL_RADIUS, half));
 
-        GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(mv, WHITE);
+        GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(mv, filter);
         pass.pushDebugGroup(() -> "Galactica star disc");
         pass.setPipeline(pipe);
         pass.setUniform("DynamicTransforms", transforms);
