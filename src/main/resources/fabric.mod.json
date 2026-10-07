@@ -15,7 +15,8 @@
   },
   "mixins": [
     {"config": "galactica.client.mixins.json", "environment": "client"},
-    "galactica.planet.mixins.json"
+    "galactica.planet.mixins.json",
+    "galactica.nav.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${fabric_loader_version}",

@@ -52,6 +52,7 @@ public final class Galactica implements ModInitializer {
         dev.galactica.content.GalacticaTab.init();
         dev.galactica.survival.LifeSupport.init();
         dev.galactica.planet.PlanetEntry.init();
+        dev.galactica.nav.FloatingOrigin.init();
 
         // The galaxy map's chosen star feeds the hyperdrive; without one it jumps to the nearest star.
         dev.galactica.ship.Hyperdrive.setTargetSource(p -> {

@@ -50,6 +50,9 @@ public final class SkyManager {
 
     private static final SkyManager INSTANCE = new SkyManager();
 
+    /** Dev autotest hook: sees the camera's galactic position once per rendered frame. Null in normal play. */
+    public static java.util.function.@org.jspecify.annotations.Nullable Consumer<GalacticPos> frameProbe;
+
     public static SkyManager get() {
         return INSTANCE;
     }
@@ -107,6 +110,7 @@ public final class SkyManager {
         if (nav == null) nav = NavState.initial();
         Vec3 cam = mc.gameRenderer.mainCamera().position();
         viewer = Frames.playerPos(nav, cam.x, cam.y, cam.z);
+        if (frameProbe != null) frameProbe.accept(viewer);
 
         int width = skyWidth();
         if (!skyBusy && (skyRequestedAt == null || width != skyRequestedWidth

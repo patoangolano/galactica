@@ -38,7 +38,7 @@ public record NavState(GalacticPos origin, double speed, double maxSpeed, double
         return new NavState(origin, speed, maxSpeed, t);
     }
 
-    private static final StreamCodec<ByteBuf, GalacticPos> POS_STREAM = StreamCodec.composite(
+    public static final StreamCodec<ByteBuf, GalacticPos> POS_STREAM = StreamCodec.composite(
             ByteBufCodecs.LONG, GalacticPos::ax, ByteBufCodecs.LONG, GalacticPos::ay, ByteBufCodecs.LONG, GalacticPos::az,
             ByteBufCodecs.DOUBLE, GalacticPos::ox, ByteBufCodecs.DOUBLE, GalacticPos::oy, ByteBufCodecs.DOUBLE, GalacticPos::oz,
             GalacticPos::new);
