@@ -71,6 +71,24 @@ public final class GalacticaCommands {
                 .then(Commands.literal("goto").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("star", StringArgumentType.greedyString()).executes(GalacticaCommands::gotoStar)))
                 .then(Commands.literal("system").executes(GalacticaCommands::system))
+                .then(Commands.literal("target").then(Commands.argument("name", StringArgumentType.greedyString())
+                        .executes(GalacticaCommands::target)))
+                .then(Commands.literal("autopilot")
+                        .then(Commands.literal("orbit").executes(c -> {
+                            dev.galactica.nav.autopilot.AutopilotServer.engage(c.getSource().getPlayerOrException(),
+                                    dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT);
+                            return 1;
+                        }))
+                        .then(Commands.literal("land").executes(c -> {
+                            dev.galactica.nav.autopilot.AutopilotServer.engage(c.getSource().getPlayerOrException(),
+                                    dev.galactica.nav.autopilot.AutopilotState.Mode.LAND);
+                            return 1;
+                        }))
+                        .then(Commands.literal("off").executes(c -> {
+                            dev.galactica.nav.autopilot.AutopilotServer.disengage(c.getSource().getPlayerOrException(),
+                                    "hud.galactica.autopilot.off.requested");
+                            return 1;
+                        })))
                 .then(Commands.literal("land")
                         .then(Commands.argument("body", StringArgumentType.greedyString())
                                 .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(c ->
@@ -214,6 +232,33 @@ public final class GalacticaCommands {
         }
         dev.galactica.ship.Hyperdrive.arriveAt(p, s);
         say(c, "Arrived at " + s.name() + " (" + s.spectralType() + ")");
+        return 1;
+    }
+
+    /** Locks a navigation target by name (TargetSearch), or clears it with "clear". */
+    private static int target(CommandContext<CommandSourceStack> c) throws CommandSyntaxException {
+        ServerPlayer p = c.getSource().getPlayerOrException();
+        String name = StringArgumentType.getString(c, "name");
+        if (name.equalsIgnoreCase("clear")) {
+            dev.galactica.nav.target.NavTargets.clear(p);
+            say(c, "Navigation target cleared");
+            return 1;
+        }
+        var found = dev.galactica.nav.target.TargetSearch.search(Galactica.GALAXY, name, NavServer.neighbourhood(p).systemStar(here(p)), 1);
+        if (found.isEmpty()) {
+            c.getSource().sendFailure(Component.translatable("nav.galactica.search.none", name));
+            return 0;
+        }
+        var t = found.getFirst();
+        // The same validation as a map request: the server names the object from its own galaxy.
+        var v = dev.galactica.nav.target.NavTargetRules.validate(Galactica.GALAXY, t.kind(), t.starId(), t.sector(), t.index(),
+                t.bodyId(), t.deepSkyId());
+        if (v == null) {
+            c.getSource().sendFailure(Component.translatable("nav.galactica.target.refused"));
+            return 0;
+        }
+        dev.galactica.nav.target.NavTargets.lock(p, v);
+        say(c, "Navigation target: " + v.name());
         return 1;
     }
 

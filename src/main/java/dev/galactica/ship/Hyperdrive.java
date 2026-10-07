@@ -62,6 +62,20 @@ public final class Hyperdrive {
                 String.format("%.2f", ly), DriveRules.exoticCost(ly)));
     }
 
+    /**
+     * The autopilot's jump order: the same range and exotic-matter rules and the same spool as J, toward the next star
+     * of its chain ({@code AutopilotServer}). Never aborts a spool already running. True when the spool started.
+     */
+    public static boolean autopilotJump(Starship ship, ServerPlayer pilot, JumpTargetInfo t) {
+        if (pilot.level().dimension() != Galactica.SPACE || ship.isSpooling() || ship.getControllingPassenger() != pilot) return false;
+        double ly = distanceLy(pilot, t);
+        if (!DriveRules.canJump(ly, ship.exotic())) return false;
+        ship.beginSpool(t);
+        pilot.sendOverlayMessage(Component.translatable("hud.galactica.hyperjump.spooling", t.name(),
+                String.format("%.2f", ly), DriveRules.exoticCost(ly)));
+        return true;
+    }
+
     /** End of spool: re-check (fuel can be pulled out mid-spool), pay, arrive, bring the crew along. */
     static void complete(Starship ship, ServerPlayer pilot, JumpTargetInfo t) {
         double ly = distanceLy(pilot, t);

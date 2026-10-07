@@ -9,6 +9,7 @@
     "ship.EntityTurnShipMixin",
     "ship.EntityLightShipMixin",
     "ship.LocalPlayerShipInputMixin",
+    "nav.KeyboardInputAutopilotMixin",
     "ship.EntityRenderStateShipMixin",
     "ship.LivingRendererShipMixin",
     "earthsky.EarthSkyMixin",

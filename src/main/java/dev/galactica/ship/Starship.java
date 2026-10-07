@@ -655,6 +655,14 @@ public class Starship extends VehicleEntity {
         return r.isFinite() ? r : new Vector3d();
     }
 
+    /**
+     * Pilot's client: the velocity (m/s, world frame) of the block frame relative to its anchor body, rebases in flight
+     * included ({@link #assistReference}); the autopilot adds the hull's own velocity to steer by the real motion.
+     */
+    public Vector3d frameReference() {
+        return assistReference();
+    }
+
     /** Nobody at the controls (server): free fall plus whatever velocity it had. */
     private void coastStep() {
         Vec3 d = getDeltaMovement();

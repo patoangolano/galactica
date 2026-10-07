@@ -49,6 +49,7 @@ public final class Galactica implements ModInitializer {
         dev.galactica.discovery.Discovery.init();
         dev.galactica.ship.ShipEntities.init();
         dev.galactica.nav.JumpTargets.init();
+        dev.galactica.nav.target.NavTargets.init();
         dev.galactica.content.GalacticaTab.init();
         dev.galactica.survival.LifeSupport.init();
         dev.galactica.planet.PlanetEntry.init();
@@ -71,6 +72,8 @@ public final class Galactica implements ModInitializer {
 
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, selection) -> GalacticaCommands.register(dispatcher));
         ServerTickEvents.END_SERVER_TICK.register(NavServer::tick);
+        // After the frame step: the autopilot judges its phase on the position NavServer just wrote.
+        ServerTickEvents.END_SERVER_TICK.register(dev.galactica.nav.autopilot.AutopilotServer::tick);
         LOG.info("Galactica: {} pc of procedural Milky Way ready (seed {})", 60_000, Long.toHexString(Frames.GALAXY_SEED));
     }
 }

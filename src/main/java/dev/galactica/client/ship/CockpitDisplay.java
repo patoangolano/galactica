@@ -150,6 +150,8 @@ public final class CockpitDisplay {
                 .append('|').append(Math.round(ship.hull())).append('|').append(ship.gearExtension(1F) > 0.5F)
                 .append('|').append(Math.round(Math.abs(ship.throttle()) * 100F))
                 .append('|').append(Math.round(att[0])).append('|').append(Math.round(Math.toDegrees(att[1])));
+        String[] tgt = targetLine();
+        b.append('|').append(tgt[0]).append('|').append(tgt[1]);
         // A painted ball moves with every tenth of a degree; a GPU ball leaves the canvas still.
         if (!gpuBall) b.append('|').append(Math.round(att[0] * 10)).append('|').append(Math.round(att[1] * 1000));
         return b.toString();
@@ -173,6 +175,31 @@ public final class CockpitDisplay {
         return new String[] {"SPD", String.format(Locale.ROOT, "%.1f M/S", speed)};
     }
 
+    /**
+     * The target row: name and distance (truncated to the display), and on the right the autopilot's phase or the ETA.
+     * The display's 5x7 font has no lower case: everything is upper-cased by {@link #text}.
+     */
+    private static String[] targetLine() {
+        var r = dev.galactica.client.nav.TargetReadout.current();
+        if (r == null) return new String[] {"NONE", ""};
+        String name = r.target().name();
+        if (name.length() > 8) name = name.substring(0, 8);
+        String left = name + " " + dev.galactica.client.nav.TargetReadout.distanceText(Math.max(0, r.surface())).replace(",", "");
+        String right;
+        if (r.state().engaged()) right = "AP " + r.state().phase().name();
+        else right = r.eta() >= 0 ? "ETA " + shortDuration(r.eta()) : "";
+        return new String[] {left, right};
+    }
+
+    /** "42S", "3M05S", "2H10M", "5.2D": an ETA in the display's eight cells. */
+    private static String shortDuration(double s) {
+        if (!Double.isFinite(s)) return "--";
+        if (s < 60) return String.format(Locale.ROOT, "%.0fS", s);
+        if (s < 3600) return String.format(Locale.ROOT, "%dM%02dS", (int) (s / 60), (int) (s % 60));
+        if (s < 86400) return String.format(Locale.ROOT, "%dH%02dM", (int) (s / 3600), (int) (s % 3600 / 60));
+        return s < 86400 * 999 ? String.format(Locale.ROOT, "%.1fD", s / 86400) : "LONG";
+    }
+
     /** An apsis for the display: kilometres above the surface, "ESC" or "IMP". */
     private static String apsisShort(double m) {
         if (!Double.isFinite(m)) return "ESC";
@@ -188,7 +215,7 @@ public final class CockpitDisplay {
         text(BALL_CX + 6, H - 40, String.format(Locale.ROOT, "R%+.0f", Math.toDegrees(att[1])), TEXT);
         line(BALL_CX + BALL_R + 18, 12, BALL_CX + BALL_R + 18, H - 12, FRAME);
 
-        int x = BALL_CX + BALL_R + 36, y = 16, row = 33, val = x + 90, barX = x + 380, barW = 230;
+        int x = BALL_CX + BALL_R + 36, y = 12, row = 29, val = x + 90, barX = x + 380, barW = 230;
         boolean assist = ship.coupled();
         text(x, y, "MODE", DIM);
         text(val, y, assist ? "ASSIST" : "FREE", assist ? GOOD : AMBER);
@@ -222,6 +249,11 @@ public final class CockpitDisplay {
         text(val, y, gear ? "DOWN" : "UP", gear ? GOOD : DIM);
         text(val + 200, y, String.format(Locale.ROOT, "THR %d%%", Math.round(Math.abs(ship.throttle()) * 100F)),
                 Math.abs(ship.throttle()) > 0.01F ? AMBER : DIM);
+        y += row;
+        String[] tgt = targetLine();
+        text(x, y, "TGT", DIM);
+        text(val, y, tgt[0], tgt[0].equals("NONE") ? DIM : 0xFFFFD54F);
+        if (!tgt[1].isEmpty()) text(val + 330, y, tgt[1], tgt[1].startsWith("AP") ? GOOD : DIM);
     }
 
     /**
