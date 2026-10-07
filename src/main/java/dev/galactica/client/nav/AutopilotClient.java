@@ -54,6 +54,7 @@ public final class AutopilotClient {
     private static boolean suppressed, warping, burning, stageTouchdown;
     private static int engagedTicks;
     private static double mouseAccum;
+    private static final boolean AUTOTEST = Boolean.getBoolean("galactica.autotest");
     /** Mouse counts within a second that take control back (0.15° each, as Entity.turn scales them). */
     private static final double MOUSE_OVERRIDE = 150;
     private static int mouseWindow;
@@ -123,6 +124,8 @@ public final class AutopilotClient {
     /** From {@code Entity.turn} of the local player: true swallows the movement (small jitter); a real one disengages. */
     public static boolean onMouse(double dx, double dy) {
         if (override == null) return false;
+        // Dev autotest: the desk's mouse is not the test's pilot (the scripted override uses a key mapping instead).
+        if (AUTOTEST) return true;
         mouseAccum += Math.abs(dx) + Math.abs(dy);
         // A deliberate movement (over ~20° of turn within a second), not a nudge of the desk.
         if (mouseAccum > MOUSE_OVERRIDE && engagedTicks > 10) {

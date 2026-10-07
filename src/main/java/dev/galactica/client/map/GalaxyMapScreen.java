@@ -59,6 +59,11 @@ public class GalaxyMapScreen extends Screen {
     private static final int TEXT = 0xFFD8E4FF, DIM = 0xFF8C9AB8, ACCENT = 0xFF7FE0FF, TARGET = 0xFFFFD54F, WARN = 0xFFFF7A6E,
             PANEL = 0xE8000814, OK = 0xFF7FFFB0;
     private static final int PANEL_W = 250, MARGIN = 6;
+    /**
+     * Dev autotest: the camera only moves when the script moves it. The run shares a desktop with whoever is at the
+     * machine, and a stray scroll or key on the focused window moved the views it checks.
+     */
+    private static final boolean AUTOTEST = Boolean.getBoolean("galactica.autotest");
     /** Kept across openings, like a chart left open at the same page. */
     private static @Nullable MapCamera keptCamera;
     /** The first opening frames the player's surroundings (done in init, once the screen knows the client). */
@@ -158,7 +163,7 @@ public class GalaxyMapScreen extends Screen {
         long now = System.nanoTime();
         double dt = Math.min(0.1, (now - lastNanos) / 1e9);
         lastNanos = now;
-        if (search == null || !search.isFocused()) {
+        if (!AUTOTEST && (search == null || !search.isFocused())) {
             double f = 0, s = 0, l = 0;
             if (InputConstants.isKeyDown(InputConstants.KEY_W)) f += 1;
             if (InputConstants.isKeyDown(InputConstants.KEY_S)) f -= 1;
@@ -684,7 +689,7 @@ public class GalaxyMapScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent e, double dx, double dy) {
-        if (dragButton < 0) return super.mouseDragged(e, dx, dy);
+        if (dragButton < 0 || AUTOTEST) return super.mouseDragged(e, dx, dy);
         dragDistance += Math.abs(dx) + Math.abs(dy);
         double s = guiScale;
         if (dragButton == 0) camera.orbit(dx * s, dy * s);
@@ -701,7 +706,7 @@ public class GalaxyMapScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        camera.zoom(scrollY);
+        if (!AUTOTEST) camera.zoom(scrollY);
         return true;
     }
 
