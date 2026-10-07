@@ -78,6 +78,18 @@ public final class AutoTest {
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
+        if ("ships".equals(MODE) || "prefabs".equals(MODE)) {
+            // Block-built ships alone (runAutotestShips), or only the prefab deploys and screenshots.
+            cmd(0, "clear");
+            if ("ships".equals(MODE)) BuiltShipAutoTest.run();
+            else {
+                cmd(5, "galactica kit");
+                BuiltShipAutoTest.prefabs();
+            }
+            STEPS.add(new Step(40, () -> Minecraft.getInstance().stop()));
+            ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+            return;
+        }
         if ("soi".equals(MODE)) {
             // The orbital frame alone (OrbitalFrame): the four SOI checks, from a fresh login.
             cmd(0, "clear");
@@ -306,6 +318,8 @@ public final class AutoTest {
         STEPS.add(new Step(40, () -> Minecraft.getInstance().player.connection.sendCommand("galactica ground")));
         look(80, 30, 5);    shot(5, "24_venus_ground");
         soi();
+        // Block-built ships (BuiltShipAutoTest): build, assemble, fly, space, jump, Mars, disassemble, prefabs.
+        BuiltShipAutoTest.run();
         if (PERF) perfScenes(true);
         STEPS.add(new Step(60, () -> Minecraft.getInstance().stop()));
         ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
@@ -475,7 +489,7 @@ public final class AutoTest {
         }));
     }
 
-    private static void camera(int wait, net.minecraft.client.CameraType type) {
+    static void camera(int wait, net.minecraft.client.CameraType type) {
         STEPS.add(new Step(wait, () -> Minecraft.getInstance().options.setCameraType(type)));
     }
 
@@ -540,7 +554,7 @@ public final class AutoTest {
      * above the highest column of its 6×6 footprint, and not embedded in blocks), with the crew alive and aboard.
      * Logs PASS or FAIL.
      */
-    private static void shipOnGround(int wait, String body) {
+    static void shipOnGround(int wait, String body) {
         STEPS.add(new Step(wait, () -> {
             Minecraft mc = Minecraft.getInstance();
             var ship = mc.player != null && mc.player.getVehicle() instanceof dev.galactica.ship.Starship s ? s : null;
@@ -564,7 +578,7 @@ public final class AutoTest {
             // Resting on terrain, not on another ship (the heightmap does not see entities).
             boolean onShip = !mc.level.getEntitiesOfClass(dev.galactica.ship.Starship.class, box.expandTowards(0, -2, 0),
                     s -> s != ship).isEmpty();
-            boolean hullClear = dev.galactica.ship.Starship.hullClear(mc.level, ship.position(), ship.attitude());
+            boolean hullClear = ship.hullClearAt(mc.level, ship.position(), ship.attitude());
             // The gap under the box centre only says how rough the site is: on a slope the hull rests on a probe (nose or
             // wing) over a ledge, so it is reported but does not fail the landing; resting, upright and clear does.
             // Settled: at rest now, and it has not crept since the pilot let go (the trace window, 40 ticks).
@@ -584,7 +598,7 @@ public final class AutoTest {
     /** The ridden ship's position when {@link #traceShip} began (the pilot had just let go). */
     private static net.minecraft.world.phys.Vec3 traceStart;
 
-    private static void traceShip(int ticks) {
+    static void traceShip(int ticks) {
         STEPS.add(new Step(1, () -> {
             var mc0 = Minecraft.getInstance();
             traceStart = mc0.player != null && mc0.player.getVehicle() instanceof dev.galactica.ship.Starship s0 ? s0.position() : null;
@@ -703,7 +717,7 @@ public final class AutoTest {
     }
 
     /** Levels the piloted ship (no pitch or roll, heading kept), on both sides like {@link #aimShipAtNadir}. */
-    private static void levelShip(int wait) {
+    static void levelShip(int wait) {
         STEPS.add(new Step(wait, () -> {
             Minecraft mc = Minecraft.getInstance();
             if (mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship ship)) return;
@@ -742,7 +756,7 @@ public final class AutoTest {
     }
 
     /** A third-person shot of the landed ship from ahead and above, then back to first person. */
-    private static void landedExterior(String name) {
+    static void landedExterior(String name) {
         camera(40, net.minecraft.client.CameraType.THIRD_PERSON_BACK);
         STEPS.add(new Step(5, () -> dev.galactica.client.ship.ShipCamera.orbit(150, 20, 18F)));
         shot(40, name);
@@ -767,7 +781,7 @@ public final class AutoTest {
      * (then logs FAIL). Meanwhile keeps the wings level and clears derelict ships from earlier runs around the landing
      * site every second.
      */
-    private static void awaitShipOnGround(int wait, int maxTicks) {
+    static void awaitShipOnGround(int wait, int maxTicks) {
         STEPS.add(new Step(wait, () -> {
             holdLeft = maxTicks;
             int[] ticks = {0};
@@ -799,7 +813,7 @@ public final class AutoTest {
      * player's vehicle is the instance the client level holds under its id: a stale copy would leave the camera
      * and the cockpit on a hull nobody draws.
      */
-    private static void shipDiagnostics(int wait, String label) {
+    static void shipDiagnostics(int wait, String label) {
         STEPS.add(new Step(wait, () -> {
             Minecraft mc = Minecraft.getInstance();
             if (mc.player == null || mc.level == null) return;
@@ -820,7 +834,7 @@ public final class AutoTest {
     }
 
     /** Presses or releases a key mapping inside the game (no OS input). */
-    private static void key(int wait, String mapping, boolean down) {
+    static void key(int wait, String mapping, boolean down) {
         STEPS.add(new Step(wait, () -> {
             var o = Minecraft.getInstance().options;
             var k = switch (mapping) {

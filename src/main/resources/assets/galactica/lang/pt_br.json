@@ -314,5 +314,6 @@
   "message.galactica.ship.disassemble.airborne": "Pouse a nave antes",
   "message.galactica.ship.disassemble.tilted": "Nivele a nave antes (até 25°)",
   "message.galactica.ship.disassemble.blocked": "%4$s em %1$s %2$s %3$s está no caminho",
-  "hud.galactica.hyperjump.no_drive": "Sem hiperpropulsor a bordo: construa um Núcleo do Hiperpropulsor na nave"
+  "hud.galactica.hyperjump.no_drive": "Sem hiperpropulsor a bordo: construa um Núcleo do Hiperpropulsor na nave",
+  "message.galactica.ship.no_room": "Não há espaço para essa nave ali"
 }

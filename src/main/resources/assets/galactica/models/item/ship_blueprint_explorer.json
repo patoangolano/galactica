@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "galactica:item/ship_blueprint_explorer"
+  }
+}

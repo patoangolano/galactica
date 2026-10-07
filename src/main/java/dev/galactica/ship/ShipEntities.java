@@ -44,6 +44,8 @@ public final class ShipEntities {
             if (entity instanceof ShipStructure s) s.sendBlocksTo(player);
         });
         dev.galactica.ship.build.ShipPartBlocks.init();
+        dev.galactica.ship.build.ShipBlueprintItem.init();
+        dev.galactica.ship.build.ShipBuildCommands.init();
         ServerPlayNetworking.registerGlobalReceiver(ShipControlPayload.TYPE, (msg, ctx) -> {
             if (ctx.player().level().getEntity(msg.entityId()) instanceof Starship ship && ship.getControllingPassenger() == ctx.player()) {
                 ship.acceptPilotReport(ctx.player(), msg.seq(), msg.attitude(), msg.velocity(), msg.coupled(), msg.rebase());

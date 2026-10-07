@@ -211,6 +211,14 @@ loom {
             vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=soi'
             programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
         }
+        // Block-built ships alone (AutoTest "ships" mode; the default run ends with them too).
+        autotestShips {
+            client()
+            configName = 'Galactica Autotest (built ships)'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=ships'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
         showcase {
             client()
             configName = 'Galactica Showcase take'

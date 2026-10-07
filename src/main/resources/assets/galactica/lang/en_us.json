@@ -314,5 +314,6 @@
   "message.galactica.ship.disassemble.airborne": "Land the ship first",
   "message.galactica.ship.disassemble.tilted": "Level the ship first (within 25°)",
   "message.galactica.ship.disassemble.blocked": "%4$s at %1$s %2$s %3$s is in the way",
-  "hud.galactica.hyperjump.no_drive": "No hyperdrive aboard: build a Hyperdrive Core into the ship"
+  "hud.galactica.hyperjump.no_drive": "No hyperdrive aboard: build a Hyperdrive Core into the ship",
+  "message.galactica.ship.no_room": "No room for that ship there"
 }

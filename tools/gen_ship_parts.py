@@ -327,6 +327,12 @@ horizontal("ship_helm", {"parent": "minecraft:block/block", "ambientocclusion": 
                                                             "east": {"texture": "#metal", "cullface": "east"}}),
                          ]})
 
+for cls in ("kestrel", "shuttle", "freighter", "explorer"):
+    name = "ship_blueprint_" + cls
+    write_json(os.path.join(A, "models/item", name + ".json"),
+               {"parent": "minecraft:item/generated", "textures": {"layer0": "galactica:item/" + name}})
+    item_def(name, "galactica:item/" + name)
+
 # --- loot tables, tags, recipes -------------------------------------------------------------------------------
 BLOCKS = ["ship_helm", "ship_crew_seat", "ship_thruster", "ship_rcs", "ship_hydrogen_tank", "ship_hyperdrive_core",
           "ship_landing_gear", "ship_hull_plating"]
@@ -401,6 +407,7 @@ LANG = {
         "message.galactica.ship.disassemble.tilted": "Level the ship first (within 25°)",
         "message.galactica.ship.disassemble.blocked": "%4$s at %1$s %2$s %3$s is in the way",
         "hud.galactica.hyperjump.no_drive": "No hyperdrive aboard: build a Hyperdrive Core into the ship",
+        "message.galactica.ship.no_room": "No room for that ship there",
     },
     "pt_br": {
         "block.galactica.ship_helm": "Leme da Nave",
@@ -434,6 +441,7 @@ LANG = {
         "message.galactica.ship.disassemble.tilted": "Nivele a nave antes (até 25°)",
         "message.galactica.ship.disassemble.blocked": "%4$s em %1$s %2$s %3$s está no caminho",
         "hud.galactica.hyperjump.no_drive": "Sem hiperpropulsor a bordo: construa um Núcleo do Hiperpropulsor na nave",
+        "message.galactica.ship.no_room": "Não há espaço para essa nave ali",
     },
 }
 for lang, keys in LANG.items():
