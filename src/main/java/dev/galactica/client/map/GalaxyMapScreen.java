@@ -59,6 +59,10 @@ public class GalaxyMapScreen extends Screen {
     private static final int TEXT = 0xFFD8E4FF, DIM = 0xFF8C9AB8, ACCENT = 0xFF7FE0FF, TARGET = 0xFFFFD54F, WARN = 0xFFFF7A6E,
             PANEL = 0xE8000814, OK = 0xFF7FFFB0;
     private static final int PANEL_W = 250, MARGIN = 6;
+    /** The info panel's scale (narrow GUIs, e.g. scale 3 at 1600 px, shrink it rather than cover half the map). */
+    private float panelScale = 1F;
+    /** Panel width and the bottom of its text box this frame, in GUI units. */
+    private int panelW = PANEL_W, panelBottom = MARGIN;
     /**
      * Dev autotest: the camera only moves when the script moves it. The run shares a desktop with whoever is at the
      * machine, and a stray scroll or key on the focused window moved the views it checks.
@@ -121,7 +125,9 @@ public class GalaxyMapScreen extends Screen {
         search.setHint(Component.translatable("map.galactica.search.hint"));
         search.setResponder(this::runSearch);
         addRenderableWidget(search);
-        int bx = width - PANEL_W - MARGIN, bw = (PANEL_W - 4) / 2, by = height - MARGIN - 20 * 3 - 4;
+        panelScale = (float) Math.clamp(width / 640.0, 0.6, 1.0);
+        panelW = Math.round(PANEL_W * panelScale);
+        int bx = width - panelW - MARGIN, bw = (panelW - 4) / 2, by = height - MARGIN - 20 * 3 - 4;
         lockButton = addRenderableWidget(Button.builder(Component.translatable("map.galactica.button.lock"), b -> lockSelected())
                 .bounds(bx, by, bw, 18).build());
         clearButton = addRenderableWidget(Button.builder(Component.translatable("map.galactica.button.clear"), b -> clearTarget())
@@ -133,7 +139,7 @@ public class GalaxyMapScreen extends Screen {
                     b.setMessage(modeLabel());
                 }).bounds(bx + bw + 4, by + 20, bw, 18).build());
         addRenderableWidget(Button.builder(Component.translatable("map.galactica.button.home"), b -> home())
-                .bounds(bx, by + 40, PANEL_W, 18).build());
+                .bounds(bx, by + 40, panelW, 18).build());
         lastNanos = System.nanoTime();
     }
 
@@ -238,7 +244,7 @@ public class GalaxyMapScreen extends Screen {
 
         // Hover under the cursor (the map area, not the panel).
         hovered = null;
-        if (mouseX < width - PANEL_W - MARGIN * 2 || mouseY < MARGIN) {
+        if (!overInterface(mouseX, mouseY, 1, 1)) {
             List<MapPicking.Hit<MapObject>> hits = new ArrayList<>(scene.drawn.size());
             for (MapScene.Drawn d : scene.drawn) {
                 if (d.object().kind() == MapObject.Kind.PLAYER) continue;
@@ -303,7 +309,8 @@ public class GalaxyMapScreen extends Screen {
 
     /** True when a box would fall on the panel, the buttons, or the search box and hints. */
     private boolean overInterface(double x, double y, int w, int h) {
-        boolean panel = x + w > width - PANEL_W - MARGIN - 2;
+        boolean right = x + w > width - panelW - MARGIN - 2;
+        boolean panel = right && (y < panelBottom + 2 || y + h > height - MARGIN - 20 * 3 - 6);
         boolean topLeft = x < MARGIN + 240 && y < MARGIN + 34 + 5 * 10 + Math.min(results.size(), 8) * 11;
         boolean bottomLeft = x < MARGIN + 330 && y + h > height - MARGIN - 20;
         return panel || topLeft || bottomLeft;
@@ -385,16 +392,22 @@ public class GalaxyMapScreen extends Screen {
         }
         int h = 8;
         for (Row r : rows) h += r.height();
-        int x = width - PANEL_W - MARGIN, y = MARGIN;
-        int bottom = height - MARGIN - 20 * 3 - 8;
-        g.fill(x, y, x + PANEL_W, Math.min(bottom, y + h), PANEL);
-        g.fill(x, y, x + 2, Math.min(bottom, y + h), ACCENT);
-        int yy = y + 5;
+        // Drawn in its own scaled space, anchored at the top right corner.
+        int bottom = (int) ((height - MARGIN - 20 * 3 - 8 - MARGIN) / panelScale);
+        int boxH = Math.min(bottom, h);
+        panelBottom = MARGIN + Math.round(boxH * panelScale);
+        g.pose().pushMatrix();
+        g.pose().translate(width - MARGIN - panelW, MARGIN);
+        g.pose().scale(panelScale, panelScale);
+        g.fill(0, 0, PANEL_W, boxH, PANEL);
+        g.fill(0, 0, 2, boxH, ACCENT);
+        int yy = 5;
         for (Row r : rows) {
             if (yy + 10 > bottom) break;
-            if (r.text() != null) g.text(font, r.text(), x + 6, yy, r.colour(), false);
+            if (r.text() != null) g.text(font, r.text(), 6, yy, r.colour(), false);
             yy += r.height();
         }
+        g.pose().popMatrix();
     }
 
     private record Row(Component text, int colour, int height) {
@@ -673,7 +686,7 @@ public class GalaxyMapScreen extends Screen {
         if (super.mouseClicked(e, doubleClick)) return true;
         if (search != null) search.setFocused(false);
         setFocused(null);
-        if (e.x() >= width - PANEL_W - MARGIN * 2 && e.y() >= MARGIN) return false;
+        if (overInterface(e.x(), e.y(), 1, 1)) return false;
         if (doubleClick && e.button() == 0 && hovered != null) {
             selected = hovered;
             focus(hovered);

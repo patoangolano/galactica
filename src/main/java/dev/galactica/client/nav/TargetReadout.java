@@ -69,7 +69,7 @@ public record TargetReadout(NavTarget target, double distance, double surface, d
         boolean viaJump = false;
         double eta = ap.engaged() ? ap.eta() : -1;
         if (!ap.engaged()) {
-            var leg = AutopilotLegs.leg(t, r, space ? SkyManager.get().neighbourhood().systemStar(here) : null);
+            var leg = AutopilotLegs.leg(t, r, SkyManager.get().neighbourhood().systemStar(here)); // off space, here is where the craft re-enters it
             Starship ship = mc.player.getVehicle() instanceof Starship s ? s : null;
             double ly = dist / Units.LIGHT_YEAR;
             if (!leg.last() && ship != null && DriveRules.canJump(ly, ship.exotic())) {
