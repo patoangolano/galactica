@@ -37,7 +37,7 @@ public final class OriginShiftAutoTest {
     private static int shipId = -1;
     private static double worstRatio;
     private static GalacticPos start, lastFrame;
-    private static long lastFrameNs;
+    private static double lastFrameTime;
     private static Vec3 lastLocal;
     private static final ArrayDeque<String> RECENT = new ArrayDeque<>();
 
@@ -84,8 +84,8 @@ public final class OriginShiftAutoTest {
         root.setDeltaMovement(velocity);
         ticks++;
         if ("ship".equals(phase) && !(p.getVehicle() instanceof Starship s && s.getId() == shipId)) {
-            mountFailures++;
-            Galactica.LOG.warn("[autotest] origin-recentre {}: tick {} pilot not aboard ship {} (vehicle {})", phase, ticks, shipId, p.getVehicle());
+            if (mountFailures++ < 5)
+                Galactica.LOG.warn("[autotest] origin-recentre {}: tick {} pilot not aboard ship {} (vehicle {})", phase, ticks, shipId, p.getVehicle());
         }
         Vec3 local = root.position();
         GalacticPos viewer = SkyManager.get().viewer();
@@ -111,15 +111,17 @@ public final class OriginShiftAutoTest {
     /** Once per rendered frame with the camera's galactic position (SkyManager). */
     private static void frame(GalacticPos viewer) {
         if (!active || ticks < 10) return;
-        long now = System.nanoTime();
+        // Game time of this frame: the camera is interpolated between the last two ticks by exactly this partial
+        // tick, so the motion allowed since the previous frame is velocity x elapsed game time (no wall-clock jitter).
+        double now = ticks + Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false);
         if (start == null) start = viewer;
         if (lastFrame != null) {
             frames++;
             double[] d = viewer.metresFrom(lastFrame);
             double dist = Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-            double dtTicks = (now - lastFrameNs) / 5.0e7;
+            double dtTicks = Math.max(0.0, now - lastFrameTime);
             double speed = velocity.length();
-            double allowed = speed * Math.max(1.0, dtTicks) * 1.5 + 2.0;
+            double allowed = speed * dtTicks * 1.25 + 3.0;
             worstRatio = Math.max(worstRatio, dist / allowed);
             if (dist > allowed) {
                 frameFailures++;
@@ -135,7 +137,7 @@ public final class OriginShiftAutoTest {
             }
         }
         lastFrame = viewer;
-        lastFrameNs = now;
+        lastFrameTime = now;
     }
 
     private static String fmt(Vec3 v) {

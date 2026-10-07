@@ -6,7 +6,13 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
@@ -42,6 +48,12 @@ public final class FloatingOrigin {
     public static final double LIMIT = 1024.0;
     /** A shift the client never acknowledged (mod missing, connection stalled) stops translating after this. */
     private static final int ACK_TIMEOUT_TICKS = 100;
+    /** Start holding the landing chunks this many blocks before the limit (several seconds at full ship speed). */
+    private static final double PRELOAD_MARGIN = 128.0;
+
+    /** Keeps the chunks around block 0 loaded and entity-ticking while a craft approaches the limit (like a pearl). */
+    public static final TicketType LANDING = Registry.register(BuiltInRegistries.TICKET_TYPE, Galactica.id("origin_landing"),
+            new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE));
 
     private record Pending(int seq, Vec3 delta, int sentAt) {}
 
@@ -50,6 +62,7 @@ public final class FloatingOrigin {
 
     /** Call once from {@code Galactica.onInitialize}. */
     public static void init() {
+        if (LANDING == null) throw new IllegalStateException("origin landing ticket type not registered");
         PayloadTypeRegistry.clientboundPlay().register(OriginShiftPayload.TYPE, OriginShiftPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(OriginShiftAckPayload.TYPE, OriginShiftAckPayload.CODEC);
         ServerPlayNetworking.registerGlobalReceiver(OriginShiftAckPayload.TYPE, (msg, ctx) -> acknowledge(ctx.player(), msg.seq()));
@@ -75,11 +88,23 @@ public final class FloatingOrigin {
      */
     public static @Nullable Vec3 shiftNeeded(ServerPlayer p) {
         Entity root = p.getRootVehicle();
-        if (Math.abs(root.getX()) <= LIMIT && Math.abs(root.getY()) <= LIMIT && Math.abs(root.getZ()) <= LIMIT) return null;
+        double far = Math.max(Math.abs(root.getX()), Math.max(Math.abs(root.getY()), Math.abs(root.getZ())));
+        if (far <= LIMIT - PRELOAD_MARGIN) return null;
+        // The craft always lands next to block 0: keep those chunks loaded and entity-ticking from a little before
+        // the limit. A vehicle moved into a chunk that is not loaded yet stops being tracked at all (vanilla removes
+        // it from every client, the pilot included), so the shift waits until the landing chunks are ready.
+        ServerLevel level = p.level();
+        level.getChunkSource().addTicketAndLoadWithRadius(LANDING, ChunkPos.ZERO, 2);
+        if (far <= LIMIT) return null;
         for (ServerPlayer rider : riders(root)) {
             if (PENDING.containsKey(rider.getUUID()) || ((OriginShiftable) rider.connection).galactica$awaitingTeleport()) return null;
         }
-        return new Vec3(-Math.round(root.getX()), -Math.round(root.getY()), -Math.round(root.getZ()));
+        Vec3 d = new Vec3(-Math.round(root.getX()), -Math.round(root.getY()), -Math.round(root.getZ()));
+        if (!level.isPositionEntityTicking(BlockPos.containing(root.position().add(d)))) return null;
+        for (Entity e : root.getIndirectPassengers()) {
+            if (!level.isPositionEntityTicking(BlockPos.containing(e.position().add(d)))) return null;
+        }
+        return d;
     }
 
     /** The galactic origin after folding in a block shift {@code d} (the origin moves opposite to the blocks). */
