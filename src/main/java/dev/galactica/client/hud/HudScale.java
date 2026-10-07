@@ -25,6 +25,18 @@ public final class HudScale {
         return s;
     }
 
+    /**
+     * Pushes the pose scaled by the setting, lowered so a panel {@code panelWidth} GUI units wide
+     * (unscaled) spans at most the fraction {@code maxShare} of the screen width; returns the factor used.
+     */
+    public static float pushFitted(GuiGraphicsExtractor g, int panelWidth, double maxShare) {
+        double setting = GalacticaConfigs.get().hudScale();
+        float s = (float) ConfigEffects.fitScale(setting, panelWidth, g.guiWidth() * maxShare);
+        g.pose().pushMatrix();
+        g.pose().scale(s, s);
+        return s;
+    }
+
     public static void pop(GuiGraphicsExtractor g) {
         g.pose().popMatrix();
     }

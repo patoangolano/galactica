@@ -51,12 +51,33 @@ public final class ConfigEffects {
         return (int) Math.floor(guiExtent / scale);
     }
 
+    /**
+     * HUD scale for a panel {@code panelExtent} units wide (at scale 1) that must stay within
+     * {@code available} units: the {@code hudScale} setting, lowered until the panel fits, but never
+     * below 1 (or the setting, when that is smaller) so a large panel on a small screen is not shrunk
+     * below its normal size by the clamp.
+     */
+    public static double fitScale(double setting, double panelExtent, double available) {
+        if (!(setting > 0)) return 1.0;
+        if (!(panelExtent > 0) || panelExtent * setting <= available) return setting;
+        return Math.max(Math.min(setting, 1.0), available / panelExtent);
+    }
+
     // ---------------------------------------------------------------- effects
 
     /** Visible entry plasma after the user's {@code entryEffects} factor (0 switches it off). */
     public static double entryGlow(double physicalGlow, double entryEffects) {
         double f = Math.max(0.0, Math.min(1.0, entryEffects));
         return Math.max(0.0, physicalGlow) * f;
+    }
+
+    /**
+     * Whether one plasma ember survives the {@code entryEffects} factor, for a uniform {@code roll} in
+     * [0, 1): the ember count scales by the factor and 0 drops every ember.
+     */
+    public static boolean keepEmber(double entryEffects, double roll) {
+        double f = Math.max(0.0, Math.min(1.0, entryEffects));
+        return roll < f;
     }
 
     /** Segments along each exhaust plume strip; 0 when exhaust is off. MEDIUM is the shipped 12. */

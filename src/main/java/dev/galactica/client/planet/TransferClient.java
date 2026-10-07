@@ -218,8 +218,10 @@ public final class TransferClient {
         // Dying ends any approach: the respawn that follows is not a transfer.
         if (armedUntil != 0 && (mc.player.isDeadOrDying() || System.nanoTime() >= armedUntil)) disarm();
         if (mc.isPaused()) return;
-        double glow = glow(); // embers follow the entryEffects setting too
-        if (glow < 0.05) return;
+        // Off at entryEffects 0. Below that, the count follows the physical glow and the ember provider
+        // thins every ember (own and server-sent observer embers alike) by the setting, so it applies once.
+        if (glow() < 0.05) return;
+        double glow = TransferClient.glow;
         Entity root = mc.player.getRootVehicle();
         RandomSource rnd = mc.level.getRandom();
         int n = (int) Math.ceil(glow * 7);

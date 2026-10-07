@@ -65,7 +65,10 @@ public final class NavHud {
         lines.add(new Line("Warp " + NavServer.formatSpeed(nav.speed()), nav.speed() > 0 ? WARP : DIM));
         if (HudScale.legend()) lines.add(new Line("[Sprint] warp   [Sneak] brake   /galactica", DIM));
 
-        HudScale.push(g);
+        // The ship HUD sits unscaled on the right (from about 3/4 of the width), so the scaled nav panel is
+        // kept left of it instead of running off screen at large hudScale values.
+        int panelRight = 4 + panelWidth(mc.font, lines) + 10;
+        HudScale.pushFitted(g, panelRight, MAX_RIGHT);
         try {
             draw(g, mc.font, lines, nav);
         } finally {
@@ -73,9 +76,17 @@ public final class NavHud {
         }
     }
 
-    private static void draw(GuiGraphicsExtractor g, Font font, List<Line> lines, NavState nav) {
+    /** Fraction of the screen width the scaled nav panel may reach (the ship HUD starts near 0.75). */
+    private static final double MAX_RIGHT = 0.72;
+
+    private static int panelWidth(Font font, List<Line> lines) {
         int w = 0;
         for (Line l : lines) w = Math.max(w, font.width(l.text));
+        return w;
+    }
+
+    private static void draw(GuiGraphicsExtractor g, Font font, List<Line> lines, NavState nav) {
+        int w = panelWidth(font, lines);
         int h = lines.size() * 11 + 6;
         g.fill(4, 4, 4 + w + 10, 4 + h, 0x90000814);
         g.fill(4, 4, 6, 4 + h, ACCENT);

@@ -15,6 +15,7 @@ public final class GalacticaClient implements ClientModInitializer {
         dev.galactica.client.planet.PlanetClient.initClient();
         dev.galactica.client.discovery.DiscoveryClient.initClient();
         dev.galactica.client.exotic.ExoticOverlay.initClient();
+        dev.galactica.client.sky.SkyTextures.initClient();
         dev.galactica.client.earthsky.EarthSky.initClient();
         dev.galactica.deepsky.DeepSky.initClient(dev.galactica.nav.Frames.GALAXY_SEED);
         dev.galactica.client.vfx.star.StarDiscRenderer.initClient();

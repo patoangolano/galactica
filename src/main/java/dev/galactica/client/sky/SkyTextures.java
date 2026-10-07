@@ -19,12 +19,39 @@ public final class SkyTextures {
 
     /**
      * Galaxy textures replaced by a resize (sky quality changed), each with the time it was retired.
-     * They are closed only after {@link #RETIRE_NANOS}: the exotic imager's worker may still be
-     * reading the old {@link NativeImage} through a {@code GalaxySampler} built a few frames earlier.
+     * Nothing on the CPU reads them any more (the exotic imager samples {@link #galaxySnapshot()}), so
+     * they wait only {@link #RETIRE_NANOS} for frames already submitted with them, then the client tick
+     * closes them; a disconnect closes them all. Render thread only.
      */
     private record Retired(DynamicTexture texture, long at) {}
     private static final java.util.ArrayDeque<Retired> RETIRED = new java.util.ArrayDeque<>();
-    private static final long RETIRE_NANOS = 30_000_000_000L;
+    private static final long RETIRE_NANOS = 1_000_000_000L;
+
+    /** The last uploaded bake as packed ARGB, width {@code w} (2:1); immutable once published. */
+    public record Snapshot(int[] argb, int w, int h) {}
+    private static volatile Snapshot snapshot;
+
+    /** Closes retired galaxy textures on the client tick, and all of them on disconnect. */
+    public static void initClient() {
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(mc -> closeRetired(false));
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register(
+                (handler, mc) -> mc.execute(() -> closeRetired(true)));
+    }
+
+    private static void closeRetired(boolean all) {
+        long now = System.nanoTime();
+        while (!RETIRED.isEmpty() && (all || now - RETIRED.peekFirst().at() > RETIRE_NANOS)) {
+            RETIRED.pollFirst().texture().close();
+        }
+    }
+
+    /**
+     * The last bake uploaded to the galaxy texture, for readers on other threads (the exotic imager's
+     * worker); {@code null} before the first bake. The array is the baker's own, never written again.
+     */
+    public static Snapshot galaxySnapshot() {
+        return snapshot;
+    }
 
     /** The baked Milky Way, created at the configured sky size; call outside any render pass. */
     public static DynamicTexture galaxy() {
@@ -41,7 +68,7 @@ public final class SkyTextures {
      */
     public static void uploadGalaxy(int[] argb) {
         long now = System.nanoTime();
-        while (!RETIRED.isEmpty() && now - RETIRED.peekFirst().at() > RETIRE_NANOS) RETIRED.pollFirst().texture().close();
+        closeRetired(false);
         int w = dev.galactica.config.ConfigEffects.equirectWidth(argb.length), h = argb.length / w;
         DynamicTexture t = galaxy();
         NativeImage img = t.getPixels();
@@ -52,6 +79,7 @@ public final class SkyTextures {
         }
         for (int i = 0; i < argb.length; i++) img.setPixel(i % w, i / w, argb[i]);
         t.upload();
+        snapshot = new Snapshot(argb, w, h);
     }
 
     /** Airy-like star image: Gaussian core plus a faint 1/r² wing so bright stars bloom a little. */

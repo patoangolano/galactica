@@ -73,7 +73,10 @@ public final class LifeSupportHud {
         if (s.has(LifeSupportStatus.F_HOT)) lines.add(new Line(I18n.get("hud.galactica.overheating"), ALERT));
         if (s.has(LifeSupportStatus.F_CRUSHED)) lines.add(new Line(I18n.get("hud.galactica.overpressure"), ALERT));
 
-        float scale = HudScale.push(g);
+        // Bottom-right, beside the hotbar: the scaled panel is kept right of the hotbar (182 wide, centred)
+        // so a large hudScale does not spread it over the hotbar, hearts and armour.
+        double room = g.guiWidth() - (g.guiWidth() / 2.0 + 91 + 4);
+        float scale = HudScale.pushFitted(g, panelWidth(mc.font, lines) + 14, room / g.guiWidth());
         try {
             // The 40 px clearance above the hotbar is in screen pixels, so it is not scaled with the panel.
             draw(g, mc.font, lines, s, hazard, HudScale.width(g, scale), HudScale.height(g, scale) - Math.round(40 / scale));
@@ -83,9 +86,14 @@ public final class LifeSupportHud {
     }
 
     /** The panel in HUD units: right edge at {@code sw}, bottom edge at {@code bottom}. */
-    private static void draw(GuiGraphicsExtractor g, Font font, List<Line> lines, LifeSupportStatus s, boolean hazard, int sw, int bottom) {
+    private static int panelWidth(Font font, List<Line> lines) {
         int w = 90;
         for (Line l : lines) w = Math.max(w, font.width(l.text));
+        return w;
+    }
+
+    private static void draw(GuiGraphicsExtractor g, Font font, List<Line> lines, LifeSupportStatus s, boolean hazard, int sw, int bottom) {
+        int w = panelWidth(font, lines);
         int h = lines.size() * 11 + 9;
         int x0 = sw - w - 14, y0 = bottom - h;
         g.fill(x0, y0, sw - 4, y0 + h, PANEL);

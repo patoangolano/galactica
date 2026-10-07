@@ -52,6 +52,29 @@ class ConfigEffectsTest {
     }
 
     @Test
+    void hudScaleIsLoweredToKeepThePanelOnScreen() {
+        assertEquals(1.5, ConfigEffects.fitScale(1.5, 200, 400), 1e-12, "fits: setting unchanged");
+        assertEquals(2.0, ConfigEffects.fitScale(2.0, 192, 384), 1e-12, "exactly fits");
+        double s = ConfigEffects.fitScale(2.0, 270, 384);
+        assertEquals(384.0 / 270, s, 1e-12);
+        assertTrue(270 * s <= 384 + 1e-9);
+        assertEquals(1.0, ConfigEffects.fitScale(2.0, 500, 384), "never shrunk below normal size by the clamp");
+        assertEquals(0.75, ConfigEffects.fitScale(0.75, 500, 384), "a setting below 1 is kept");
+        assertEquals(1.0, ConfigEffects.fitScale(0.0, 100, 384));
+    }
+
+    @Test
+    void embersThinWithEntryEffects() {
+        assertFalse(ConfigEffects.keepEmber(0.0, 0.0), "0 drops every ember, including observer embers");
+        assertTrue(ConfigEffects.keepEmber(1.0, 0.999));
+        assertTrue(ConfigEffects.keepEmber(0.5, 0.49));
+        assertFalse(ConfigEffects.keepEmber(0.5, 0.5));
+        int kept = 0;
+        for (int i = 0; i < 1000; i++) if (ConfigEffects.keepEmber(0.3, (i + 0.5) / 1000)) kept++;
+        assertEquals(300, kept);
+    }
+
+    @Test
     void entryEffectsScaleTheGlow() {
         assertEquals(0.8, ConfigEffects.entryGlow(0.8, 1.0));
         assertEquals(0.4, ConfigEffects.entryGlow(0.8, 0.5), 1e-12);
