@@ -41,8 +41,34 @@ public final class SkyTonemap {
         for (int i = 0; i < n; i++) lum[i] = luminance(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
         Arrays.sort(lum);
         double median = lum[n / 2];
-        double p99 = Math.max(1e-12, lum[Math.min(n - 1, (int) (n * 0.99))]);
-        return new SkyTonemap(1.0 / p99, 0.75 * median);
+        return new SkyTonemap(1.0 / Math.max(1e-12, anchor(lum, n)), 0.75 * median);
+    }
+
+    /**
+     * The luminance exposure is anchored to, from {@code n} sorted samples: the sky's 99th
+     * percentile, or the 95th percentile of the pixels the galaxy actually covers, whichever is
+     * brighter. Inside the disk the band covers most of the sky and the two agree (the p99 wins).
+     * Seen from outside, from the halo or intergalactic space, the galaxy is a small patch of a
+     * black sky: the sky's p99 then falls on its faint outskirts and the whole disc burned out to a
+     * flat white lens. Surface brightness does not depend on distance, so the covered pixels'
+     * own bright end keeps the exposure of an observer inside the disk. "Covered" means brighter
+     * than 10⁻³ of the near-maximum (p99.9).
+     */
+    public static double anchor(double[] sortedLum, int n) {
+        if (n <= 0) return 0;
+        double p99 = sortedLum[Math.min(n - 1, (int) (n * 0.99))];
+        double top = sortedLum[Math.min(n - 1, (int) (n * 0.999))];
+        double floor = 1e-3 * top;
+        // First covered sample (binary search in the sorted array).
+        int lo = 0, hi = n;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (sortedLum[mid] < floor) lo = mid + 1;
+            else hi = mid;
+        }
+        int covered = n - lo;
+        double p95Covered = covered > 0 ? sortedLum[Math.min(n - 1, lo + (int) (covered * 0.95))] : 0;
+        return Math.max(p99, p95Covered);
     }
 
     /** A tonemap with explicit parameters (exposure = 1 / the luminance shown near the knee). */

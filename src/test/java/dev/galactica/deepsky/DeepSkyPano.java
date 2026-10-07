@@ -342,7 +342,7 @@ public final class DeepSkyPano {
         double[] rl = new double[512 * 256];
         for (int p = 0; p < rl.length; p++) rl[p] = SkyTonemap.luminance(ref[p * 3], ref[p * 3 + 1], ref[p * 3 + 2]);
         java.util.Arrays.sort(rl);
-        double p99 = rl[(int) (rl.length * 0.99)];
+        double p99 = SkyTonemap.anchor(rl, rl.length);
         GalaxySkyBaker.compressHighlights(ref, 512, 256, true);
         // Same local adaptation as the game's bake, at this image's own pixel scale.
         GalaxySkyBaker.compressHighlights(buf, w, h, pix, !zoom, p99);
