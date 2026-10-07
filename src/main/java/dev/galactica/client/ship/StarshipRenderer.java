@@ -210,8 +210,8 @@ public class StarshipRenderer extends EntityRenderer<Starship, StarshipRenderSta
                 model.setupAnim(state);
                 PoseStack local = LIT_POSE;
                 local.last().set(p);
-                model.root().render(local, new ShadedVertexConsumer(buf, state.toStar, state.direct, state.tint, floor),
-                        FULL_BRIGHT, overlay, -1);
+                model.renderBaked(local, new ShadedVertexConsumer(buf, state.toStar, state.direct, state.tint, floor),
+                        FULL_BRIGHT, overlay);
             });
         } else {
             out.submitModel(model, state, pose, TEXTURE, light, OverlayTexture.NO_OVERLAY, state.outlineColor);

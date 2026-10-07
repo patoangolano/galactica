@@ -41,6 +41,9 @@ public final class Perf {
     public static long draws, bufferWrites, bufferWriteBytes, textureWrites, textureWriteBytes, buffersCreated,
             bufferCreateBytes, texturesCreated, renderPasses;
 
+    /** Empty galactica:space chunks not written to disk ({@code SpaceChunkSaveMixin}); counted in normal play too. */
+    public static final LongAdder spaceSavesSkipped = new LongAdder();
+
     public static long t0() {
         return on ? System.nanoTime() : 0L;
     }
@@ -58,6 +61,7 @@ public final class Perf {
         }
         draws = bufferWrites = bufferWriteBytes = textureWrites = textureWriteBytes = buffersCreated = bufferCreateBytes
                 = texturesCreated = renderPasses = 0;
+        spaceSavesSkipped.reset();
     }
 
     public static long nanos(S s) {

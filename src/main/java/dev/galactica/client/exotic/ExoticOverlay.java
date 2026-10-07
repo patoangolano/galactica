@@ -169,8 +169,8 @@ public final class ExoticOverlay {
         Neighbourhood nb = SkyManager.get().neighbourhood();
         Map<Long, Star> wanted = new LinkedHashMap<>();
         double ex = eye.xPc(), ey = eye.yPc(), ez = eye.zPc();
-        for (Star s : nb.nearbyStars(eye)) {
-            if (drawn(s.kind()) && s.distanceTo(ex, ey, ez) <= LOCAL_RADIUS_PC) wanted.put(s.id(), s);
+        for (Star s : remnants(nb.nearbyStars(eye))) {
+            if (s.distanceTo(ex, ey, ez) <= LOCAL_RADIUS_PC) wanted.put(s.id(), s);
         }
         for (Star s : ExoticCatalog.namedRemnants()) {
             if (s.distanceTo(ex, ey, ez) <= NAMED_RADIUS_PC) wanted.put(s.id(), s);
@@ -245,6 +245,23 @@ public final class ExoticOverlay {
     // ------------------------------------------------------------------ selection
 
     private record Placed(ExoticObject object, double[] forward, double distance) {}
+
+    /** The drawn kinds among the neighbourhood's stars, refiltered only when that (cached) list changes. */
+    private static List<Star> remnantSource, remnantList = List.of();
+
+    /**
+     * Scanning every neighbourhood star each frame (thousands in the bulge) was most of the overlay's cost; remnants
+     * are a few in a thousand, so the scan runs once per sector change instead.
+     */
+    private static List<Star> remnants(List<Star> all) {
+        if (all != remnantSource) {
+            List<Star> out = new ArrayList<>();
+            for (Star s : all) if (drawn(s.kind())) out.add(s);
+            remnantList = out;
+            remnantSource = all;
+        }
+        return remnantList;
+    }
 
     private static boolean drawn(StarKind k) {
         return k == StarKind.BLACK_HOLE || k == StarKind.NEUTRON_STAR;

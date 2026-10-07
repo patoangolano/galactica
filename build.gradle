@@ -101,6 +101,7 @@ dependencies {
     perfStack("maven.modrinth:entityculling:${perf_entityculling}")
     perfStack("maven.modrinth:c2me-fabric:${perf_c2me}")
     perfStack("maven.modrinth:krypton:${perf_krypton}")
+    perfStack("maven.modrinth:modernfix-mvus:${perf_modernfix}") // ModernFix-mVUS: the 26.x fork; upstream ModernFix stops at 1.21
 
     testImplementation(platform('org.junit:junit-bom:5.13.4'))
     testImplementation('org.junit.jupiter:junit-jupiter')
@@ -236,8 +237,8 @@ afterEvaluate {
     }
 }
 
-// Performance-mod stack (README "Desempenho"): Sodium, Lithium, FerriteCore, ImmediatelyFast, EntityCulling, C2ME and
-// Krypton for 26.3, on a "perf" source set only, so every other run keeps its classpath.
+// Performance-mod stack (README "Desempenho"): Sodium, Lithium, FerriteCore, ImmediatelyFast, EntityCulling, C2ME,
+// Krypton and ModernFix-mVUS for 26.3, on a "perf" source set only, so every other run keeps its classpath.
 //   ./gradlew runPlayPerf               manual play in runs/play with the whole stack
 //   ./gradlew runAutotestPerfStack      full autotest + benchmark in runs/client-perf (its mods/ must not hold Sodium)
 def perfStackSha512 = [
@@ -248,6 +249,7 @@ def perfStackSha512 = [
         'c5d8947cb022f8baed4bf17e38ca598c56b8049871e7e47fb462bcecc9bc01e7eb75290494199fcb1aa73f5e37f93a296211ba78c9dd2a5bff30d5eed497ebcc', // entityculling 1.11.2
         'b4fcf82bbe15bfa253e3ab6df4d6b64e800a2ccdb45d4ca2b8040da87f72033fed34f4f94016aac507596c78fddb18dba28c6642790181642cae46fae28b3a85', // c2me 0.4.2-alpha.0.89+26.3
         'd1d57ebd41395b75b01f130cd9503eb8d208212424a399ff9f367f50be8fbc1c6472442b33c686e777c3148f6a609520e8fb732c755157c358cb207fd4d1123a', // krypton 0.3.2
+        'b586434056107aac4ef86e9351d66170dac65a45a1e5f8bd48fb931b3012ab2431b16476eb9c256773339e2b4c60f6f3e90a4709180f700b2aea59ff607f4243', // modernfix-mvus 5.27.20-build.2
 ] as Set
 
 tasks.register('verifyPerfStack') {

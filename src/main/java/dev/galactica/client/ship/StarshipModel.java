@@ -1,5 +1,7 @@
 package dev.galactica.client.ship;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.galactica.Galactica;
 import dev.galactica.ship.ShipAnimator;
 import net.minecraft.client.model.EntityModel;
@@ -33,6 +35,8 @@ public class StarshipModel extends EntityModel<StarshipRenderState> {
     private static final float DEG = (float) (Math.PI / 180.0);
 
     private final ModelPart canopy, gearFront, gearLeft, gearRight, nozzleLeft, nozzleRight;
+    /** The static bones baked once; the ones {@link #setupAnim} moves or hides are walked live. */
+    private final BakedBones baked;
 
     public StarshipModel(ModelPart root) {
         super(root);
@@ -42,7 +46,14 @@ public class StarshipModel extends EntityModel<StarshipRenderState> {
         this.gearRight = root.getChild("gear_right");
         this.nozzleLeft = root.getChild("nozzle_left");
         this.nozzleRight = root.getChild("nozzle_right");
+        this.baked = new BakedBones(root, canopy, gearFront, gearLeft, gearRight, nozzleLeft, nozzleRight);
     }
+
+    /** Same vertices as {@code root().render(pose, out, light, overlay, -1)}, the static bones from {@link BakedBones}. */
+    public void renderBaked(PoseStack pose, VertexConsumer out, int light, int overlay) {
+        baked.render(pose, out, light, overlay);
+    }
+
 
     private static LayerDefinition layer(Consumer<net.minecraft.client.model.geom.builders.PartDefinition> parts) {
         MeshDefinition mesh = new MeshDefinition();

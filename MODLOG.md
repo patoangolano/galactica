@@ -60,3 +60,14 @@ Loader API (Fabric) + Mixins pontuais no render do céu. O núcleo científico (
 - Interior do cockpit em primeira pessoa: painel, consoles, manche lateral, manete, vidro interno e display ao vivo (ADI, velocidade, corpo/altitude, H2, exótica, casco, modo), pintado na CPU e enviado no fim do tick.
 - Tripulantes giram com a atitude do casco; o olho do piloto gira junto com o assento (corrige a câmera fora do cockpit com a nave invertida).
 - Revisão: tripulação sentada num poço oco na fuselagem (quadril em SEAT_Y, capacete 0,13 bloco abaixo do vidro, espinhas do canopy por fora); sondas de colisão do casco além da caixa (`ShipHullProbes`, geradas); desembarque com `DismountHelper`; câmera de perseguição puxada pelo terreno; display com pipeline próprio sem neblina, bola ADI por frame, repintura só quando muda, acima da hotbar; `ShipHud` some no cockpit.
+
+## Desempenho (2026-10-07)
+Pedido: "o jogo está muito pesado, otimize muito, e compatibilidade com Sodium e outros mods de desempenho".
+- Benchmark: `runAutotestPerf` (sem pacote), `runAutotestPerfStack` (pacote completo em `runs/client-perf`), `runAutotestPerfOnly`. 12 cenas de 10 s, incluindo `planet_chunkgen` (espectador sobre terreno de Marte nunca gerado). Por cena: FPS médio, 1% low, p50/p95/p99/máx, alocação, GC, draws/uploads por quadro, MSPT, tempo das seções do mod, amostragem de pilha com caminhos de chamada.
+- Ganhos (Sodium+Iris, main → final): espaço perto da Terra 143 → 2 276 FPS; mapa da galáxia 28 → 966 FPS (1% low 1,8 → 136); cruzeiro da nave 621 → 947 FPS (1% low 25 → 96, máx 556 → 96 ms, GC 1,3 s → 0,27 s em 10 s).
+- Otimizações: dimensão do espaço com 96 seções e view distance 10; origem flutuante vertical; malha do planeta próximo refeita fora da thread; cache da estrela mais próxima; buffers de céu em streaming; upload da galáxia em bloco; espaço vazio não é salvo (`SpaceChunkSaveMixin`); ossos fixos do casco montados uma vez (`BakedBones`, −33% CPU no casco); `ExoticOverlay` filtra remanescentes uma vez por setor (0,04–0,14 → 0,001–0,003 ms/quadro).
+- Pacote testado (hashes SHA-512 do Modrinth fixados em `verifyPerfStack`): Sodium 0.9.2, Lithium 0.26.2, FerriteCore 9.0.0, ImmediatelyFast 1.17.1, EntityCulling 1.11.2, C2ME 0.4.2-alpha.0.89, Krypton 0.3.2, ModernFix-mVUS 5.27.20-build.2 (o ModernFix original não tem 26.x). Autoteste completo PASS com e sem o pacote.
+
+## Gotchas (cont.)
+5. O C2ME faz `@Overwrite` de `ChunkMap.save` e tem seu próprio sistema de chunks: com ele, injeções em `save` não rodam. `SpaceChunkSaveMixin` usa `require = 0` e prioridade 1100; com o C2ME a economia de save do espaço simplesmente não se aplica.
+6. A amostragem de pilha por `Thread.getStackTrace` tem viés de safepoint: laços quentes aparecem como "self" do método do laço. Confirme com um microbenchmark (ex.: `BakedHullTest`) antes de concluir.

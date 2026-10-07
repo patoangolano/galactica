@@ -256,7 +256,8 @@ public final class AutoTest {
     /**
      * The benchmark scenes, each held still for 10 s after it settles ({@link PerfBench}): the Overworld by day
      * and by night under the real sky, space near Earth, warp, near Jupiter and Saturn, inside the bulge, a planet
-     * surface, the ship's cockpit (parked, then accelerating through floating-origin recentres) and the galaxy map.
+     * surface and fresh terrain being generated there, the ship's cockpit (parked, then accelerating through
+     * floating-origin recentres) and the galaxy map.
      * {@code fromSpace}: the run starts wherever the autotest left the player and first lands on Earth.
      */
     private static void perfScenes(boolean fromSpace) {
@@ -302,6 +303,16 @@ public final class AutoTest {
         cmd(60, "galactica ground");
         look(100, 30, 8);
         measure(60, "mars_surface");
+        // Fresh terrain: a spectator dropped over Martian ground no run has generated yet (a new offset every run),
+        // so the server generates, lights and sends the whole view area while it is measured (PLANET_CHUNK, mspt).
+        cmd(5, "gamemode spectator");
+        STEPS.add(new Step(5, () -> {
+            long offset = 40_000 + (System.currentTimeMillis() / 1000 % 500) * 2_000;
+            Minecraft.getInstance().player.connection.sendCommand("tp @s ~" + offset + " 300 ~");
+        }));
+        look(1, 30, 30);
+        measure(1, "planet_chunkgen");
+        cmd(5, "gamemode creative");
         cmd(5, "galactica launch");
         cmd(60, "galactica goto Sol");
         cmd(60, "galactica ship");

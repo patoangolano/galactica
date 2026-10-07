@@ -49,6 +49,38 @@ O governador do motor reduz a velocidade a metade da distância até a superfíc
 2. Coloque `galactica-<versão>.jar` em `mods/`.
 3. Opcional: Sodium e Iris 26.3 com qualquer shaderpack.
 
+## Desempenho
+
+Pacote recomendado (todos testados com o Galactica 26.3, autoteste completo PASS, versões do Modrinth):
+
+| Mod | Versão | Para quê |
+|---|---|---|
+| Sodium | 0.9.2+mc26.3 | renderização de chunks (o maior ganho de FPS) |
+| Lithium | 0.26.2+mc26.3 | tick do servidor e física |
+| FerriteCore | 9.0.0 | memória (estados de bloco e modelos) |
+| ImmediatelyFast | 1.17.1+26.3 | HUD, texto e entidades em lote |
+| EntityCulling | 1.11.2 | não desenha entidades escondidas atrás de blocos |
+| C2ME | 0.4.2-alpha.0.89+26.3 | geração de chunks em paralelo (alpha) |
+| Krypton | 0.3.2 | rede |
+| ModernFix-mVUS | 5.27.20-build.2 | memória e tempo de carregamento (fork do ModernFix para 26.x) |
+| Distant Horizons | 3.3.4 | terreno distante (opcional, pesado; integração própria, fora deste teste) |
+
+O ModernFix original não tem versão 26.x; o ModernFix-mVUS (fork com 26.3 no Modrinth) foi testado no lugar dele. Iris funciona junto; shaderpacks custam muito FPS por conta própria. Avisos esperados no log com o pacote: Lithium e ModernFix reescrevem o mesmo cache de temperatura de bioma (inofensivo) e o Sodium avisa que o consumidor de vértices do casco não usa o caminho rápido dele.
+
+Compatibilidade já feita no mod:
+
+- **EntityCulling**: naves e quem está dentro delas nunca são escondidas nem têm o tick pulado. A asa de uma nave pousada atrás de um morro aparecia, mas o casco sumia.
+- **Espaço**: a dimensão `galactica:space` agora tem 1 536 blocos de altura (era 4 064) e distância de visão de 10 chunks, que é o alcance em que uma nave já é rastreada. Antes, a cada recentragem da origem flutuante (a cada poucos segundos em velocidade de cruzeiro) o jogo gerava, enviava, salvava e montava cerca de 1 100 colunas de 254 seções. Isso travava o jogo e enchia a memória até dar `OutOfMemoryError` com `-Xmx4G`. Para mudar a distância: `-Dgalactica.spaceViewDistance=N` (2–32).
+- **Espaço vazio não vai para o disco**: um chunk de `galactica:space` só com ar, sem block entity e que nunca foi salvo cheio é regenerado em vez de salvo. Em cruzeiro a nave cruza ~400 colunas por segundo, e cada uma era serializada, comprimida e gravada à toa (o save também crescia a cada viagem). Chunks com qualquer bloco, ou que já foram salvos com blocos, são salvos normalmente. Com o C2ME, que reescreve o sistema de chunks, quem salva é ele e essa economia não se aplica.
+- **Casco da nave**: os ossos fixos do modelo são montados uma vez numa lista de vértices; só trem de pouso, canopy e bocais são percorridos a cada quadro (~33% menos CPU no casco, mesmos vértices, teste `BakedHullTest`).
+- Mundos antigos: blocos colocados no espaço abaixo de y −768 ou acima de y 767 deixam de existir. Naves e jogadores salvos fora dessa faixa voltam sozinhos na primeira recentragem, e no espaço ninguém morre no void.
+
+Desenvolvimento:
+
+- `./gradlew runAutotestPerf`: autoteste completo e depois o benchmark (linhas `[perf]` no log: FPS médio, 1% low, percentis, alocação, draw calls, uploads, MSPT, tempo por seção do mod, amostragem de pilha com os caminhos de chamada mais quentes, e uma cena `planet_chunkgen` que gera terreno novo em Marte). `runAutotestPerfOnly` roda só o benchmark.
+- `./gradlew runAutotestPerfStack`: o mesmo com o pacote acima, em `runs/client-perf` (copie o mundo de `runs/client` e deixe o Sodium fora de `mods/`, porque ele já vem do pacote).
+- `./gradlew runPlayPerf`: jogo manual em `runs/play` com o pacote. A tarefa `verifyPerfStack` confere o SHA-512 de cada jar contra o Modrinth antes de abrir.
+
 ## Desenvolvimento
 
 - Requisitos: JDK 25 (configurado em `gradle.properties`) e Gradle 9.7.1 via wrapper.

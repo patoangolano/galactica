@@ -144,6 +144,7 @@ public final class PerfBench {
                 sec.append(String.format(Locale.ROOT, " %s=%.3f", s, ms / per));
             }
         }
+        sec.append(String.format(Locale.ROOT, " spaceSavesSkipped=%d", Perf.spaceSavesSkipped.sum()));
         Galactica.LOG.info("[perf] scene={} sections (client ms/frame, server ms/tick, workers ms total/calls):{}", scene, sec);
         sampler.log(scene);
         SUMMARY.add(String.format(Locale.ROOT, "| %-18s | %7.1f | %7.1f | %6.2f | %6.2f | %6.2f | %7.1f | %6.0f | %6.2f | %6.2f |",
@@ -193,7 +194,7 @@ public final class PerfBench {
     private static final class Sampler extends Thread {
         private volatile boolean running = true;
         private final Map<String, Integer> renderSelf = new HashMap<>(), renderMod = new HashMap<>(),
-                serverSelf = new HashMap<>(), serverMod = new HashMap<>();
+                serverSelf = new HashMap<>(), serverMod = new HashMap<>(), renderPath = new HashMap<>(), serverPath = new HashMap<>();
         private int renderSamples, serverSamples;
 
         Sampler() {
@@ -216,11 +217,11 @@ public final class PerfBench {
                 Thread r = renderThread, s = serverThread;
                 if (r != null) {
                     renderSamples++;
-                    record(r.getStackTrace(), renderSelf, renderMod);
+                    record(r.getStackTrace(), renderSelf, renderMod, renderPath);
                 }
                 if (s != null && s.isAlive()) {
                     serverSamples++;
-                    record(s.getStackTrace(), serverSelf, serverMod);
+                    record(s.getStackTrace(), serverSelf, serverMod, serverPath);
                 }
                 try {
                     Thread.sleep(5);
@@ -230,17 +231,37 @@ public final class PerfBench {
             }
         }
 
-        private static void record(StackTraceElement[] st, Map<String, Integer> self, Map<String, Integer> mod) {
+        private static boolean platform(String c) {
+            return c.startsWith("java.") || c.startsWith("jdk.") || c.startsWith("sun.") || c.startsWith("org.lwjgl");
+        }
+
+        private static void record(StackTraceElement[] st, Map<String, Integer> self, Map<String, Integer> mod,
+                                   Map<String, Integer> path) {
             if (st.length == 0) return;
             // "Self" is the innermost game or mod frame: JDK and LWJGL frames (sleeps, GL calls) roll up into their caller.
             StackTraceElement top = st[0];
-            for (StackTraceElement e : st) {
-                String c = e.getClassName();
-                if (c.startsWith("java.") || c.startsWith("jdk.") || c.startsWith("sun.") || c.startsWith("org.lwjgl")) continue;
-                top = e;
+            int at = 0;
+            for (int i = 0; i < st.length; i++) {
+                if (platform(st[i].getClassName())) continue;
+                top = st[i];
+                at = i;
                 break;
             }
-            self.merge(frame(top), 1, Integer::sum);
+            String selfKey = frame(top);
+            self.merge(selfKey, 1, Integer::sum);
+            // The self frame with its first four distinct callers: who is behind a hot vanilla frame.
+            StringBuilder p = new StringBuilder(selfKey);
+            String last = selfKey;
+            int depth = 0;
+            for (int i = at + 1; i < st.length && depth < 4; i++) {
+                if (platform(st[i].getClassName())) continue;
+                String f = frame(st[i]);
+                if (f.equals(last)) continue;
+                p.append(" < ").append(f);
+                last = f;
+                depth++;
+            }
+            path.merge(p.toString(), 1, Integer::sum);
             Set<String> seen = new HashSet<>();
             for (StackTraceElement e : st) {
                 if (!e.getClassName().startsWith("dev.galactica") || e.getClassName().startsWith("dev.galactica.client.dev")) continue;
@@ -259,6 +280,18 @@ public final class PerfBench {
             Galactica.LOG.info("[perf] scene={} render galactica (incl): {}", scene, top(renderMod, renderSamples, 12));
             Galactica.LOG.info("[perf] scene={} server self: {}", scene, top(serverSelf, serverSamples, 10));
             Galactica.LOG.info("[perf] scene={} server galactica (incl): {}", scene, top(serverMod, serverSamples, 10));
+            Galactica.LOG.info("[perf] scene={} render paths: {}", scene, top(cpu(renderPath), renderSamples, 8));
+            Galactica.LOG.info("[perf] scene={} server paths: {}", scene, top(cpu(serverPath), serverSamples, 6));
+        }
+
+        /** Paths without the GL driver, the swap and the server's idle wait: the CPU work worth reading. */
+        private static Map<String, Integer> cpu(Map<String, Integer> m) {
+            Map<String, Integer> out = new HashMap<>();
+            m.forEach((k, v) -> {
+                if (k.startsWith("Gl") || k.startsWith("DirectStateAccess") || k.startsWith("MinecraftServer.waitForTasks")) return;
+                out.put(k, v);
+            });
+            return out;
         }
 
         private static String top(Map<String, Integer> m, int samples, int k) {
