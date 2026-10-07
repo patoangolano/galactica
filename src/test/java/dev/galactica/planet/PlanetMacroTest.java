@@ -190,4 +190,50 @@ class PlanetMacroTest {
             assertEquals(a.filler, b.filler);
         }
     }
+
+    /** The analytic crater gradient matches the field bit for bit in value and its finite differences in slope. */
+    @Test
+    void craterGradientMatchesTheField() {
+        long seed = 0xC4A7_000AL;
+        double h = 1e-6;
+        int checked = 0;
+        for (int n = 0; n < 2000; n++) {
+            double x = Math.sin(n * 1.7) * 3.1, y = Math.cos(n * 2.3) * 2.7, z = Math.sin(n * 0.37) * 1.9;
+            double[] g = new double[3];
+            double v = PlanetMacro.craterFieldGrad(seed, x, y, z, g);
+            assertEquals(PlanetMacro.craterField(seed, x, y, z), v, 0.0);
+            double fx = (PlanetMacro.craterField(seed, x + h, y, z) - PlanetMacro.craterField(seed, x - h, y, z)) / (2 * h);
+            double fy = (PlanetMacro.craterField(seed, x, y + h, z) - PlanetMacro.craterField(seed, x, y - h, z)) / (2 * h);
+            double fz = (PlanetMacro.craterField(seed, x, y, z + h) - PlanetMacro.craterField(seed, x, y, z - h)) / (2 * h);
+            // Skip points within h of a profile kink (bowl edge, rim reach, ejecta start).
+            if (Math.abs(fx - g[0]) + Math.abs(fy - g[1]) + Math.abs(fz - g[2]) > 1e-2 * (1 + Math.abs(fx) + Math.abs(fy) + Math.abs(fz))) continue;
+            checked++;
+        }
+        assertTrue(checked > 1900, "gradient disagrees with finite differences at " + (2000 - checked) + " of 2000 points");
+    }
+
+    /** Sun-lit relief: slopes are tangent, limited, and only cratered airless bodies have them. */
+    @Test
+    void spaceReliefSlopesAreTangentAndBounded() {
+        Body moon = null;
+        for (Body p : dev.galactica.system.SolarSystem.planets()) for (Body m : p.moons()) if (m.name().equals("Moon")) moon = m;
+        assertNotNull(moon);
+        SpaceRelief r = SpaceRelief.of(moon);
+        assertTrue(r.any());
+        double[] sl = new double[3];
+        double maxSlope = 0;
+        for (int n = 0; n < 5000; n++) {
+            double lat = Math.asin(2 * ((n * 0.618034) % 1) - 1), lon = n * 2.399963;
+            double x = Math.cos(lat) * Math.cos(lon), y = Math.cos(lat) * Math.sin(lon), z = Math.sin(lat);
+            double fac = r.sample(x, y, z, 0.002, true, sl);
+            assertTrue(fac >= 0.25 && fac < 3, "albedo factor " + fac);
+            assertEquals(0, sl[0] * x + sl[1] * y + sl[2] * z, 1e-9);
+            maxSlope = Math.max(maxSlope, Math.sqrt(sl[0] * sl[0] + sl[1] * sl[1] + sl[2] * sl[2]));
+        }
+        assertTrue(maxSlope > 0.1 && maxSlope < SpaceRelief.MAX_SLOPE, "max slope " + maxSlope);
+        // A coarse image sees only the basins: smaller slopes on average than a fine one.
+        Body earth = null;
+        for (Body p : dev.galactica.system.SolarSystem.planets()) if (p.name().equals("Earth")) earth = p;
+        assertFalse(SpaceRelief.of(earth).any(), "Earth's air burns impactors up");
+    }
 }

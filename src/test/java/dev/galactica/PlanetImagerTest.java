@@ -236,4 +236,20 @@ class PlanetImagerTest {
         ImageIO.write(sheet, "png", new File(dir, "sheet.png"));
         assertTrue(new File(dir, "sheet.png").length() > 0);
     }
+
+    /** Cost of one sprite repaint of the Moon (crater relief included), printed for the record. */
+    @Test
+    void moonSpriteRepaintCost() {
+        Body moon = null;
+        for (Body p : SolarSystem.planets()) for (Body m : p.moons()) if (m.name().equals("Moon")) moon = m;
+        assertNotNull(moon);
+        PlanetImager.View v = view(60, new double[]{0, 1, 0});
+        for (int n : new int[]{256, 512}) {
+            int[] px = new int[n * n];
+            PlanetImager.render(moon, v, n, px); // warm-up
+            long t0 = System.nanoTime();
+            for (int k = 0; k < 3; k++) PlanetImager.render(moon, v, n, px);
+            System.out.printf("Moon sprite %d^2: %.1f ms%n", n, (System.nanoTime() - t0) / 3e6);
+        }
+    }
 }
