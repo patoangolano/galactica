@@ -12,6 +12,12 @@ public abstract class EntityRenderStateShipMixin implements ShipRiderState {
     @Unique private final Quaternionf galactica$attitude = new Quaternionf();
     @Unique private boolean galactica$rides;
     @Unique private float galactica$seat;
+    @Unique private final float[] galactica$head = new float[2];
+
+    @Override
+    public float[] galactica$headTurn() {
+        return galactica$head;
+    }
 
     @Override
     public Quaternionf galactica$shipAttitude() {

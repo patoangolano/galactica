@@ -20,4 +20,11 @@ public interface ShipRiderState {
     float galactica$seatHeight();
 
     void galactica$setSeatHeight(float height);
+
+    /**
+     * Where the rider looks relative to the hull, degrees: {yaw, pitch} as vanilla's net head yaw and head pitch
+     * (as {@code yHeadRot - yBodyRot} with the body facing the nose; pitch positive looking down). Zero for the pilot,
+     * whose look is the nose.
+     */
+    float[] galactica$headTurn();
 }

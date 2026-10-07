@@ -20,116 +20,193 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
 import org.joml.Quaternionf;
+import org.joml.Quaternionfc;
 import org.joml.Vector3f;
+import org.joml.Vector3fc;
+import org.lwjgl.system.MemoryUtil;
 
 import java.util.Locale;
 
 /**
- * The cockpit's live display: an attitude indicator and the flight readouts, painted on the CPU into one
- * {@link #W}×{@link #H} texture and uploaded at the end of each client tick, while no render pass is open (creating
- * a {@link DynamicTexture} uploads too, so it is created here as well, never from a render callback). Text uses a
- * built-in 5×7 pixel font, so nothing depends on AWT or the font atlas. {@link CockpitRenderer} maps it onto the panel.
+ * The cockpit's live display: the flight readouts painted on the CPU into one {@link #W}×{@link #H} canvas, and an
+ * attitude indicator. Both textures are created and uploaded at the end of a client tick, while no render pass is
+ * open, and the canvas only when something on it changed. Text uses a built-in 5×7 pixel font, so nothing depends on
+ * AWT or the font atlas. {@link CockpitRenderer} maps the canvas onto the panel.
  *
- * <p>Readouts: flight-assist mode; speed (m/s, or the warp drive's speed); the nearest body and the distance to its
- * surface in space, or the body and height above ground on a planet; hydrogen, exotic matter (and its jump range),
- * hull; gear and throttle. The attitude indicator shows pitch and roll against the local vertical: away from the
- * nearest body's centre in space, world up on a planet.
+ * <p>The attitude ball moves at frame rate: the canvas leaves its window transparent, and {@link CockpitRenderer}
+ * draws a disc behind it from a static pitch tape ({@link #ADI_ID}), turned and shifted every frame by the
+ * interpolated attitude the camera itself uses. Under a shader pack (or if our display pipeline does not compile)
+ * the ball is painted into the canvas instead, at tick rate.
+ *
+ * <p>Readouts: flight-assist mode; speed (m/s, or the warp drive's speed); the nearest body or star and the distance
+ * to its surface in space, or the body and height above ground on a planet; hydrogen, exotic matter (and its jump
+ * range), hull; gear and throttle; pitch and roll under the ball. The ball shows pitch and roll against the local
+ * vertical: away from the nearest body's (or star's) centre in space while it is within 20 radii, world up on a
+ * planet.
  */
 public final class CockpitDisplay {
     private CockpitDisplay() {}
 
     public static final Identifier ID = Galactica.id("dynamic/cockpit_display");
-    /** Canvas size: 3:1, the panel display's aspect ({@link StarshipGeometry#SCREEN}). */
-    static final int W = 768, H = 256;
+    public static final Identifier ADI_ID = Galactica.id("dynamic/cockpit_adi");
+    /** Canvas size: 3.5:1, the panel display's aspect ({@link StarshipGeometry#SCREEN}). */
+    static final int W = 896, H = 256;
+    /** The attitude ball on the canvas: centre and radius, canvas pixels (y down), and its pitch scale. */
+    static final int BALL_CX = 118, BALL_CY = 106, BALL_R = 96;
+    static final float PX_PER_DEG = 3F;
+    /** The pitch tape: sky above the horizon, ground below, ±120° over its height (pitch ±90° plus the ball's radius), ladder every 10°. */
+    static final int TAPE_W = 256, TAPE_H = 1024;
+    static final float TAPE_PX_PER_DEG = TAPE_H / 240F;
 
     private static final int BG = 0xFF050C14, FRAME = 0xFF1C3442, TEXT = 0xFF9FF0FF, DIM = 0xFF4F8CA0, AMBER = 0xFFFFB234,
-            WARN = 0xFFFF4A3A, GOOD = 0xFF5CFF8A, SKY = 0xFF1E6FB0, GROUND = 0xFF7A4A22, WHITE = 0xFFF2F6FF;
+            WARN = 0xFFFF4A3A, GOOD = 0xFF5CFF8A, GROUND = 0xFF7A4A22, WHITE = 0xFFF2F6FF, CLEAR = 0x00000000;
 
-    private static DynamicTexture texture;
+    private static DynamicTexture texture, tape;
     private static final int[] PX = new int[W * H];
+    /** Everything the canvas shows, as text: the canvas is repainted and uploaded only when this changes. */
+    private static String shown = "";
+    /** Local vertical for the attitude ball, world (block) frame, set each tick. */
+    private static final Vector3f UP = new Vector3f(0, 1, 0);
+    /** Whether the renderer draws the ball (true) or the canvas carries it (false), as of the last tick. */
+    private static boolean gpuBall;
 
-    /** True once the texture exists (the renderer skips the display quad before that). */
+    /** True once the canvas exists (the renderer skips the display before that). */
     static boolean ready() {
         return texture != null;
+    }
+
+    /** True when the renderer must draw the ball behind the canvas (and the tape exists). */
+    static boolean ballOnGpu() {
+        return gpuBall && tape != null;
     }
 
     /** Client tick end: repaints and uploads while the local player rides a ship and looks out of it. */
     static void tick(Minecraft mc) {
         if (mc.player == null || !(mc.player.getVehicle() instanceof Starship ship) || mc.level == null) return;
         if (!mc.options.getCameraType().isFirstPerson()) return;
-        paint(mc, ship);
+        gpuBall = ShipRenderTypes.displayUsable();
+        if (tape == null) {
+            NativeImage img = new NativeImage(TAPE_W, TAPE_H, true);
+            paintTape(img);
+            tape = new DynamicTexture(() -> "galactica:cockpit_adi", img);
+            mc.getTextureManager().register(ADI_ID, tape);
+        }
+        String[] place = place(mc, ship, UP);
+        float[] att = angles(ship.getAttitude(1F, new Quaternionf()), UP, new float[2]);
+        String key = state(mc, ship, place, att);
+        if (texture != null && key.equals(shown)) return;
+        shown = key;
+        paint(mc, ship, place, att);
         if (texture == null) {
             texture = new DynamicTexture(() -> "galactica:cockpit_display", new NativeImage(W, H, true));
             mc.getTextureManager().register(ID, texture);
         }
         NativeImage img = texture.getPixels();
         if (img == null) return;
-        for (int y = 0; y < H; y++) {
-            int row = y * W;
-            for (int x = 0; x < W; x++) img.setPixel(x, y, PX[row + x]);
-        }
+        // One bulk copy into the RGBA image (ABGR as little-endian ints), not W·H setPixel calls.
+        var dst = MemoryUtil.memIntBuffer(img.getPointer(), W * H);
+        for (int i = 0; i < PX.length; i++) dst.put(i, abgr(PX[i]));
         texture.upload();
+    }
+
+    private static int abgr(int argb) {
+        return argb & 0xFF00FF00 | argb >> 16 & 0xFF | (argb & 0xFF) << 16;
+    }
+
+    /**
+     * Pitch (degrees, nose above the horizon positive) and roll (radians, right wing down positive) of attitude
+     * {@code q} against the vertical {@code up}, into {@code out}.
+     */
+    static float[] angles(Quaternionfc q, Vector3fc up, float[] out) {
+        Vector3f fwd = q.transform(new Vector3f(0, 0, 1)), shipUp = q.transform(new Vector3f(0, 1, 0)),
+                right = q.transform(new Vector3f(-1, 0, 0)); // +X is port, so starboard is −X
+        out[0] = (float) Math.toDegrees(Math.asin(Math.clamp(fwd.dot(up), -1F, 1F)));
+        out[1] = (float) Math.atan2(-right.dot(up), shipUp.dot(up));
+        return out;
+    }
+
+    /** The local vertical the ball was last measured against (render thread reads it, tick writes it). */
+    static Vector3fc up() {
+        return UP;
     }
 
     // ---------------------------------------------------------------- content
 
-    private static void paint(Minecraft mc, Starship ship) {
-        fill(0, 0, W, H, BG);
-        rectOutline(0, 0, W, H, 3, FRAME);
-        Vector3f up = new Vector3f(0, 1, 0);
-        String[] place = place(mc, ship, up);
-        attitude(ship, up, 128, 128, 112);
-        line(262, 12, 262, H - 12, FRAME);
+    private static String state(Minecraft mc, Starship ship, String[] place, float[] att) {
+        StringBuilder b = new StringBuilder(160);
+        b.append(gpuBall).append('|').append(ship.coupled()).append('|').append(ship.isSpooling() ? ship.spoolTicks() / 2 : -1)
+                .append('|').append(speedLine(mc, ship)[1]).append('|').append(place[0]).append(place[1])
+                .append('|').append(Math.round(ship.hydrogen() * 10)).append('|').append(ship.exotic())
+                .append('|').append(Math.round(ship.hull())).append('|').append(ship.gearExtension(1F) > 0.5F)
+                .append('|').append(Math.round(Math.abs(ship.throttle()) * 100F))
+                .append('|').append(Math.round(att[0])).append('|').append(Math.round(Math.toDegrees(att[1])));
+        // A painted ball moves with every tenth of a degree; a GPU ball leaves the canvas still.
+        if (!gpuBall) b.append('|').append(Math.round(att[0] * 10)).append('|').append(Math.round(att[1] * 1000));
+        return b.toString();
+    }
 
-        int x = 280, y = 16, row = 27;
-        boolean assist = ship.coupled();
-        text(x, y, "MODE", DIM);
-        text(x + 90, y, assist ? "ASSIST" : "FREE", assist ? GOOD : AMBER);
-        if (ship.isSpooling()) text(x + 240, y, String.format(Locale.ROOT, "JUMP %.1fS", ship.spoolTicks() / 20.0), AMBER);
-        y += row;
-        double speed = Math.sqrt(sq(ship.getX() - ship.xo) + sq(ship.getY() - ship.yo) + sq(ship.getZ() - ship.zo)) * 20.0;
+    private static String[] speedLine(Minecraft mc, Starship ship) {
         NavState nav = SkyManager.get().nav();
         if (mc.level.dimension() == Galactica.SPACE && nav != null && nav.speed() > 0) {
-            text(x, y, "WARP", DIM);
-            text(x + 90, y, NavServer.formatSpeed(nav.speed()), AMBER);
-        } else {
-            text(x, y, "SPD", DIM);
-            text(x + 90, y, String.format(Locale.ROOT, "%.1f M/S", speed), TEXT);
+            return new String[] {"WARP", NavServer.formatSpeed(nav.speed())};
         }
+        double speed = Math.sqrt(sq(ship.getX() - ship.xo) + sq(ship.getY() - ship.yo) + sq(ship.getZ() - ship.zo)) * 20.0;
+        return new String[] {"SPD", String.format(Locale.ROOT, "%.1f M/S", speed)};
+    }
+
+    private static void paint(Minecraft mc, Starship ship, String[] place, float[] att) {
+        fill(0, 0, W, H, BG);
+        rectOutline(0, 0, W, H, 3, FRAME);
+        ball(att);
+        text(BALL_CX - BALL_R, H - 40, String.format(Locale.ROOT, "P%+.0f", att[0]), TEXT);
+        text(BALL_CX + 6, H - 40, String.format(Locale.ROOT, "R%+.0f", Math.toDegrees(att[1])), TEXT);
+        line(BALL_CX + BALL_R + 18, 12, BALL_CX + BALL_R + 18, H - 12, FRAME);
+
+        int x = BALL_CX + BALL_R + 36, y = 16, row = 33, val = x + 90, barX = x + 380, barW = 230;
+        boolean assist = ship.coupled();
+        text(x, y, "MODE", DIM);
+        text(val, y, assist ? "ASSIST" : "FREE", assist ? GOOD : AMBER);
+        if (ship.isSpooling()) text(val + 200, y, String.format(Locale.ROOT, "JUMP %.1fS", ship.spoolTicks() / 20.0), AMBER);
+        y += row;
+        String[] speed = speedLine(mc, ship);
+        text(x, y, speed[0], DIM);
+        text(val, y, speed[1], "WARP".equals(speed[0]) ? AMBER : TEXT);
         y += row;
         text(x, y, place[0], DIM);
-        text(x + 90, y, place[1], TEXT);
+        text(val, y, place[1], TEXT);
         y += row;
         float h2 = ship.hydrogen();
         text(x, y, "H2", DIM);
-        text(x + 90, y, String.format(Locale.ROOT, "%.1f/%.0f", h2, Starship.MAX_HYDROGEN), h2 < 5 ? WARN : TEXT);
-        bar(x + 330, y + 3, 140, 14, h2 / Starship.MAX_HYDROGEN, h2 < 5 ? WARN : TEXT);
+        text(val, y, String.format(Locale.ROOT, "%.1f/%.0f", h2, Starship.MAX_HYDROGEN), h2 < 5 ? WARN : TEXT);
+        bar(barX, y + 3, barW, 14, h2 / Starship.MAX_HYDROGEN, h2 < 5 ? WARN : TEXT);
         y += row;
         text(x, y, "EXO", DIM);
-        text(x + 90, y, String.format(Locale.ROOT, "%d  %.0f LY", ship.exotic(), DriveRules.rangeLy(ship.exotic())), TEXT);
-        bar(x + 330, y + 3, 140, 14, ship.exotic() / (float) Starship.MAX_EXOTIC, 0xFFC08CFF);
+        text(val, y, String.format(Locale.ROOT, "%d  %.0f LY", ship.exotic(), DriveRules.rangeLy(ship.exotic())), TEXT);
+        bar(barX, y + 3, barW, 14, ship.exotic() / (float) Starship.MAX_EXOTIC, 0xFFC08CFF);
         y += row;
         float hull = ship.hull();
         int hullColour = hull < 25 ? WARN : hull < 60 ? AMBER : GOOD;
         text(x, y, "HULL", DIM);
-        text(x + 90, y, String.format(Locale.ROOT, "%d%%", Math.round(hull / Starship.MAX_HULL * 100F)), hullColour);
-        bar(x + 330, y + 3, 140, 14, hull / Starship.MAX_HULL, hullColour);
+        text(val, y, String.format(Locale.ROOT, "%d%%", Math.round(hull / Starship.MAX_HULL * 100F)), hullColour);
+        bar(barX, y + 3, barW, 14, hull / Starship.MAX_HULL, hullColour);
         y += row;
         text(x, y, "GEAR", DIM);
         boolean gear = ship.gearExtension(1F) > 0.5F;
-        text(x + 90, y, gear ? "DOWN" : "UP", gear ? GOOD : DIM);
-        text(x + 240, y, String.format(Locale.ROOT, "THR %d%%", Math.round(Math.abs(ship.throttle()) * 100F)),
+        text(val, y, gear ? "DOWN" : "UP", gear ? GOOD : DIM);
+        text(val + 200, y, String.format(Locale.ROOT, "THR %d%%", Math.round(Math.abs(ship.throttle()) * 100F)),
                 Math.abs(ship.throttle()) > 0.01F ? AMBER : DIM);
     }
 
     /**
      * The place line ({label, value}) and the local vertical for the attitude indicator, written into {@code up}:
-     * on a planet the body and the height above ground; in space the body whose surface is nearest and the distance
-     * to it, with up pointing away from its centre.
+     * on a planet the body and the height above ground; in space whichever surface is nearest, a planet's, a moon's
+     * or the star's photosphere, and the distance to it, with up pointing away from that body's centre while it is
+     * within 20 of its radii (otherwise the previous vertical stands, world up at first).
      */
     private static String[] place(Minecraft mc, Starship ship, Vector3f up) {
         Level level = mc.level;
         if (level.dimension() != Galactica.SPACE) {
+            up.set(0, 1, 0);
             Body body = SurfaceSkyOverlay.currentBody();
             String name = body != null ? body.name() : level.dimension() == Level.OVERWORLD ? "Earth" : "Surface";
             int ground = level.getHeight(Heightmap.Types.MOTION_BLOCKING, Mth.floor(ship.getX()), Mth.floor(ship.getZ()));
@@ -140,31 +217,33 @@ public final class CockpitDisplay {
         GalacticPos eye = sky.viewer();
         NavState nav = sky.nav();
         if (eye == null || nav == null) return new String[] {"NEAR", "--"};
-        Neighbourhood.Located best = null;
-        double bestAlt = Double.MAX_VALUE;
+        String bestName = null;
+        double bestAlt = Double.MAX_VALUE, bestRadius = 0;
         double[] bestDir = null;
+        var star = sky.neighbourhood().nearestStar(eye);
+        if (star != null) {
+            double[] g = Neighbourhood.starPos(star).metresFrom(eye);
+            bestAlt = Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) - star.radiusMetres();
+            bestName = star.name();
+            bestRadius = star.radiusMetres();
+            bestDir = g;
+        }
         for (Neighbourhood.Located l : sky.neighbourhood().locateBodies(eye, nav.timeSeconds())) {
             double[] g = l.pos().metresFrom(eye);
-            double d = Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
-            double alt = d - l.body().radiusMetres();
+            double alt = Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) - l.body().radiusMetres();
             if (alt < bestAlt) {
                 bestAlt = alt;
-                best = l;
+                bestName = l.body().name();
+                bestRadius = l.body().radiusMetres();
                 bestDir = g;
             }
         }
-        if (best == null) {
-            var star = sky.neighbourhood().nearestStar(eye);
-            if (star == null) return new String[] {"NEAR", "DEEP SPACE"};
-            double[] g = Neighbourhood.starPos(star).metresFrom(eye);
-            return new String[] {"NEAR", star.name() + " " + distance(Math.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]))};
-        }
-        // Up is away from the body's centre while it fills a sizeable part of the sky (within ~20 radii).
-        if (bestAlt < 20 * best.body().radiusMetres()) {
+        if (bestName == null) return new String[] {"NEAR", "DEEP SPACE"};
+        if (bestAlt < 20 * bestRadius) {
             double[] mc3 = Frames.galacticToMc(-bestDir[0], -bestDir[1], -bestDir[2]);
             up.set((float) mc3[0], (float) mc3[1], (float) mc3[2]).normalize();
         }
-        return new String[] {"NEAR", best.body().name() + " " + distance(Math.max(0, bestAlt))};
+        return new String[] {"NEAR", bestName + " " + distance(Math.max(0, bestAlt))};
     }
 
     private static String distance(double m) {
@@ -175,44 +254,57 @@ public final class CockpitDisplay {
         return String.format(Locale.ROOT, "%.2f PC", m / Units.PARSEC);
     }
 
-    /** Pitch-and-roll ball, drawn per pixel: sky above the horizon, ground below, a 10° ladder, the fixed symbol. */
-    private static void attitude(Starship ship, Vector3f up, int cx, int cy, int r) {
-        Quaternionf q = ship.getAttitude(1F, new Quaternionf());
-        Vector3f fwd = q.transform(new Vector3f(0, 0, 1)), shipUp = q.transform(new Vector3f(0, 1, 0)),
-                right = q.transform(new Vector3f(-1, 0, 0)); // +X is port, so starboard is −X
-        float pitch = (float) Math.toDegrees(Math.asin(Math.clamp(fwd.dot(up), -1F, 1F)));
-        float roll = (float) Math.atan2(-right.dot(up), shipUp.dot(up)); // right wing down is positive
-        // Horizon direction and its sky-side normal on screen (y down): a right roll tilts the horizon counter-clockwise.
+    /**
+     * The ball's window on the canvas: the bezel ring, the fixed aircraft symbol, and inside either a transparent
+     * hole (the renderer draws the moving ball behind it) or, without our pipeline, the ball itself at {@code att}.
+     */
+    private static void ball(float[] att) {
+        int cx = BALL_CX, cy = BALL_CY, r = BALL_R;
+        float roll = att[1];
         float hx = (float) Math.cos(roll), hy = (float) -Math.sin(roll), nx = (float) -Math.sin(roll), ny = (float) -Math.cos(roll);
-        float pxPerDeg = 3F;
-        float pitchPx = pitch * pxPerDeg;
+        float pitchPx = att[0] * PX_PER_DEG;
         for (int y = cy - r; y <= cy + r; y++) {
             for (int x = cx - r; x <= cx + r; x++) {
                 float dx = x - cx, dy = y - cy;
                 float d2 = dx * dx + dy * dy;
                 if (d2 > r * r) continue;
-                float s = dx * nx + dy * ny + pitchPx;      // distance above the horizon, px
-                float a = dx * hx + dy * hy;                 // along the horizon
-                int c = s > 0 ? shadeSky(s) : GROUND;
-                if (Math.abs(s) < 1.5F) c = WHITE;
-                else {
-                    float rung = s / (10F * pxPerDeg);
-                    float frac = Math.abs(rung - Math.round(rung)) * 10F * pxPerDeg;
-                    int width = Math.round(rung) % 3 == 0 ? 40 : 22;
-                    if (frac < 1.1F && Math.abs(a) < width) c = WHITE;
-                }
+                int c;
                 if (d2 > (r - 4) * (r - 4)) c = FRAME;
+                else if (gpuBall) c = CLEAR;
+                else c = tapeColour(dx * hx + dy * hy, dx * nx + dy * ny + pitchPx);
                 PX[y * W + x] = c;
             }
         }
-        // Fixed aircraft symbol: wings and centre dot, amber.
+        // Fixed aircraft symbol: wings and centre dot, amber, over the ball.
         fill(cx - 52, cy - 2, 34, 5, AMBER);
         fill(cx + 18, cy - 2, 34, 5, AMBER);
         fill(cx - 21, cy - 2, 5, 14, AMBER);
         fill(cx + 16, cy - 2, 5, 14, AMBER);
         fill(cx - 3, cy - 3, 7, 7, AMBER);
-        text(cx - 96, cy + r - 34, String.format(Locale.ROOT, "P%+.0f", pitch), TEXT);
-        text(cx + 30, cy + r - 34, String.format(Locale.ROOT, "R%+.0f", Math.toDegrees(roll)), TEXT);
+    }
+
+    /**
+     * The ball's colour at {@code along} canvas pixels along the horizon and {@code above} canvas pixels above it:
+     * sky shading upward, ground, the horizon line, and a pitch ladder every 10° (long rungs every 30°).
+     */
+    private static int tapeColour(float along, float above) {
+        if (Math.abs(above) < 1.5F) return WHITE;
+        float rung = above / (10F * PX_PER_DEG);
+        float frac = Math.abs(rung - Math.round(rung)) * 10F * PX_PER_DEG;
+        int width = Math.round(rung) % 3 == 0 ? 40 : 22;
+        if (frac < 1.1F && Math.abs(along) < width) return WHITE;
+        return above > 0 ? shadeSky(above) : GROUND;
+    }
+
+    /** The static pitch tape for the GPU ball: {@link #tapeColour} sampled in canvas units, ±120° top to bottom. */
+    private static void paintTape(NativeImage img) {
+        float k = PX_PER_DEG / TAPE_PX_PER_DEG; // canvas pixels per tape pixel
+        for (int y = 0; y < TAPE_H; y++) {
+            for (int x = 0; x < TAPE_W; x++) {
+                float along = (x + 0.5F - TAPE_W / 2F) * k, above = (TAPE_H / 2F - y - 0.5F) * k;
+                img.setPixel(x, y, tapeColour(along, above));
+            }
+        }
     }
 
     private static int shadeSky(float above) {

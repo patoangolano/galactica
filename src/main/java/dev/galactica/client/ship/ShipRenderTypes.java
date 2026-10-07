@@ -105,12 +105,37 @@ public final class ShipRenderTypes {
     public static final RenderType EXHAUST_TYPE = RenderType.create("galactica_exhaust_plume",
             RenderSetup.builder(EXHAUST).setOitPipelines(EXHAUST_OIT).createRenderSetup());
 
+    /**
+     * The cockpit display and its attitude ball: our {@code core/cockpit_display} shaders, opaque with alpha
+     * cut-outs, no lightmap and no fog (a backlit screen a block from the eye must not wash out in a planet's haze).
+     */
+    public static final RenderPipeline COCKPIT_DISPLAY = RenderPipeline.builder()
+            .withBindGroupLayout(BindGroupLayouts.PROJECTION)
+            .withBindGroupLayout(BindGroupLayouts.DYNAMIC_TRANSFORMS)
+            .withBindGroupLayout(BindGroupLayouts.SAMPLER0)
+            .withLocation(id("pipeline/cockpit_display"))
+            .withVertexShader(id("core/cockpit_display"))
+            .withFragmentShader(id("core/cockpit_display"))
+            .withVertexBinding(0, DefaultVertexFormat.POSITION_TEX_COLOR)
+            .withPrimitiveTopology(PrimitiveTopology.QUADS)
+            .withDepthStencilState(DepthStencilState.DEFAULT)
+            .withColorTargetState(ColorTargetState.DEFAULT)
+            .withCull(false)
+            .build();
+
+    public static final RenderType COCKPIT_DISPLAY_TYPE = RenderType.create("galactica_cockpit_display",
+            RenderSetup.builder(COCKPIT_DISPLAY).withTexture("Sampler0", CockpitDisplay.ID).createRenderSetup());
+
+    public static final RenderType COCKPIT_ADI_TYPE = RenderType.create("galactica_cockpit_adi",
+            RenderSetup.builder(COCKPIT_DISPLAY).withTexture("Sampler0", CockpitDisplay.ADI_ID).createRenderSetup());
+
     private static final Set<RenderPipeline> FAILED = Collections.newSetFromMap(new IdentityHashMap<>());
 
     /** Client init: precompile at resource reload, and forget failures after every reload. */
     public static void init() {
         RenderPipelines.registerOptional(HULL_LIT);
         RenderPipelines.registerOptional(EXHAUST);
+        RenderPipelines.registerOptional(COCKPIT_DISPLAY);
         // Precompiled so turning improved transparency on does not hitch on the first exhaust draw.
         RenderPipelines.registerOptional(EXHAUST_OIT.depthBoundsPipeline());
         RenderPipelines.registerOptional(EXHAUST_OIT.transmittancePipeline());
@@ -124,6 +149,15 @@ public final class ShipRenderTypes {
     /** True if the lit hull can draw; false falls back to the vanilla entity render type. */
     public static boolean hullUsable() {
         return compiles(HULL_LIT);
+    }
+
+    /**
+     * True if the cockpit display draws through {@link #COCKPIT_DISPLAY} (attitude ball per frame, no fog); false
+     * under a shader pack or if it failed to compile, when the ball is painted into the canvas at tick rate and the
+     * canvas drawn with the vanilla emissive entity type.
+     */
+    public static boolean displayUsable() {
+        return !IrisCompat.shaderPackActive() && compiles(COCKPIT_DISPLAY);
     }
 
     /** True if the exhaust can draw in the current transparency mode. */

@@ -143,12 +143,14 @@ public final class AutoTest {
         orientShip(5, 35, 30);       shot(10, "17_ship_boarded");
         // The cockpit interior in first person, close to the Sun (2 degrees in radius), the Sun high ahead-left
         // through the canopy; then rolled almost inverted, so the seat, glass and display ride the roll.
+        // With the HUD on, as a player flies: the display must read above the hotbar, hearts and armour.
         server(5, "park near the Sun (2 deg)", sp -> parkNearStar(sp, null, 2));
-        hud(40, false);
+        clearChat(40);
         orientShip(5, 30, 14);       shot(10, "17a_cockpit_sun");
         rollShip(5, 150);            shot(10, "17a2_cockpit_rolled");
         // The night side: the Sun behind and below, the cabin lit by its instrument glow.
         orientShip(5, 180, -40);     shot(10, "17a3_cockpit_shadow");
+        hud(5, false);
         cmd(5, "galactica goto Sol");
         // Exteriors without the HUD: the chase view with the Sun behind and above the camera, then a 3/4 front orbit.
         camera(40, net.minecraft.client.CameraType.THIRD_PERSON_BACK);
@@ -197,7 +199,10 @@ public final class AutoTest {
         cmd(20, "galactica goto Sol");
         STEPS.add(new Step(1, dev.galactica.client.planet.PlanetAutoTest::markDeaths));
         STEPS.add(new Step(10, () -> Minecraft.getInstance().player.connection.sendCommand("galactica land Mars")));
-        look(200, 0, -10);  shot(5, "20_mars_descent");
+        // The entry leaves the hull at whatever attitude it had in space's frame: level it (wings level, nose on the
+        // horizon) so it comes down on its gear, as a pilot would.
+        levelShip(20);
+        look(180, 0, -10);  shot(5, "20_mars_descent");
         STEPS.add(new Step(5, () -> dev.galactica.client.planet.PlanetAutoTest.checkLanded("Mars", 0.38)));
         shipDiagnostics(1, "Mars descent");
         // The ship falls ~1 400 blocks from the entry height: hold the script until it rests (at most 90 s).
@@ -329,11 +334,59 @@ public final class AutoTest {
             }
             double gap = ship.getY() - top;
             boolean inside = !mc.level.noCollision(ship, ship.getBoundingBox().deflate(0.05));
-            boolean ok = ship.onGround() && gap > -0.05 && gap < 1.5 && !inside && mc.player.isAlive();
-            Galactica.LOG.info("[autotest] {} ship on ground on {}: onGround {}, box bottom {} over the footprint's top block {}, embedded {}, speed {} m/s",
-                    ok ? "PASS" : "FAIL", body, ship.onGround(), String.format(java.util.Locale.ROOT, "%.2f", gap), top, inside,
+            // Upright: the hull's up axis within 35 degrees of the vertical (a slope, not a ship on its back).
+            org.joml.Vector3f up = ship.getAttitude(1F, new org.joml.Quaternionf()).transform(new org.joml.Vector3f(0, 1, 0));
+            double tilt = Math.toDegrees(Math.acos(Math.clamp(up.y, -1F, 1F)));
+            // Resting on terrain, not on another ship (the heightmap does not see entities).
+            boolean onShip = !mc.level.getEntitiesOfClass(dev.galactica.ship.Starship.class, box.expandTowards(0, -2, 0),
+                    s -> s != ship).isEmpty();
+            boolean hullClear = dev.galactica.ship.Starship.hullClear(mc.level, ship.position(), ship.attitude());
+            boolean ok = ship.onGround() && gap > -0.05 && gap < 1.5 && !inside && hullClear && tilt < 35 && !onShip && mc.player.isAlive();
+            Galactica.LOG.info("[autotest] {} ship on ground on {}: onGround {}, box bottom {} over the footprint's top block {}, embedded {}, "
+                            + "hull probes clear {}, tilt {} deg, on another ship {}, speed {} m/s",
+                    ok ? "PASS" : "FAIL", body, ship.onGround(), String.format(java.util.Locale.ROOT, "%.2f", gap), top, inside, hullClear,
+                    String.format(java.util.Locale.ROOT, "%.0f", tilt), onShip,
                     String.format(java.util.Locale.ROOT, "%.2f", ship.getDeltaMovement().length() * 20));
         }));
+    }
+
+    /** Levels the piloted ship (no pitch or roll, heading kept), on both sides like {@link #aimShipAtNadir}. */
+    private static void levelShip(int wait) {
+        STEPS.add(new Step(wait, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship ship)) return;
+            org.joml.Quaternionf q = new org.joml.Quaternionf().rotationY((float) Math.toRadians(-ship.getYRot()));
+            ship.setAttitude(q);
+            var srv = mc.getSingleplayerServer();
+            if (srv != null) {
+                java.util.UUID id = ship.getUUID();
+                srv.execute(() -> {
+                    for (var lvl : srv.getAllLevels()) {
+                        if (lvl.getEntity(id) instanceof dev.galactica.ship.Starship s) s.setAttitude(q);
+                    }
+                });
+            }
+            Galactica.LOG.info("[autotest] ship levelled (heading {})", ship.getYRot());
+        }));
+    }
+
+    /**
+     * Server side: removes unmanned starships within 96 blocks (horizontally) of the player's ship, so a landing
+     * cannot come to rest on a hull an earlier run left in this copy of the world.
+     */
+    private static void clearDerelicts(Minecraft mc) {
+        var srv = mc.getSingleplayerServer();
+        if (srv == null || mc.player == null) return;
+        java.util.UUID id = mc.player.getUUID();
+        srv.execute(() -> {
+            var sp = srv.getPlayerList().getPlayer(id);
+            if (sp == null || !(sp.getVehicle() instanceof dev.galactica.ship.Starship own)) return;
+            var area = own.getBoundingBox().inflate(96, 4096, 96);
+            for (var s : sp.level().getEntitiesOfClass(dev.galactica.ship.Starship.class, area, s -> s != own && s.getPassengers().isEmpty())) {
+                Galactica.LOG.info("[autotest] removed a derelict ship at {} (left by an earlier run)", s.position());
+                s.discard();
+            }
+        });
     }
 
     /** A third-person shot of the landed ship from ahead and above, then back to first person. */
@@ -345,13 +398,20 @@ public final class AutoTest {
         camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
     }
 
-    /** Holds the script (after {@code wait}) until the ridden ship is on the ground, for at most {@code maxTicks}. */
+    /**
+     * Holds the script (after {@code wait}) until the ridden ship is on the ground, for at most {@code maxTicks}
+     * (then logs FAIL). Meanwhile clears derelict ships from earlier runs around the landing site every second.
+     */
     private static void awaitShipOnGround(int wait, int maxTicks) {
         STEPS.add(new Step(wait, () -> {
             holdLeft = maxTicks;
+            int[] ticks = {0};
             hold = () -> {
                 var mc = Minecraft.getInstance();
-                return mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship s) || s.onGround();
+                if (ticks[0]++ % 20 == 0) clearDerelicts(mc);
+                boolean done = mc.player == null || !(mc.player.getVehicle() instanceof dev.galactica.ship.Starship s) || s.onGround();
+                if (!done && holdLeft == 0) Galactica.LOG.warn("[autotest] FAIL ship did not touch down within {} ticks", maxTicks);
+                return done;
             };
         }));
     }

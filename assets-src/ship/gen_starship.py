@@ -138,6 +138,12 @@ FUSELAGE = [
 # Cockpit well cut through the deck under the canopy: (z0, z1, half-width). Tandem seats: the pilot forward, a
 # passenger behind; the opening follows the canopy's own taper so the glass covers it from above.
 COCKPIT_WELL = [(2.0, 14.0, 3.1), (14.0, 18.6, 2.7)]
+# Seated hips (Starship.PILOT_SEAT / PASSENGER_SEAT, ShipDimensions.SEAT_Y), the cockpit floor under the crew's legs,
+# and the bottom of the floor plate: the well is hollow from FLOOR_BASE up to the deck, so the seated body sits in it
+# instead of in solid fuselage. The vanilla rider's head top is 8.16 units over the hips (8.54 with a helmet layer).
+SEAT_Y = -1.6
+FLOOR_TOP = SEAT_Y - 1.0
+FLOOR_BASE = FLOOR_TOP - 0.3
 
 
 def deck_with_well(name, x0, y0, z0, w, h, z1, mat):
@@ -163,7 +169,12 @@ for i, (z0, z1, hw, yb, yt, mat) in enumerate(FUSELAGE):
     # Stepped section: a full-width waist with narrower deck and belly plates, the cube-built way to bevel an edge.
     c = min(1.6, (yt - yb) * 0.22, hw * 0.35)
     if c >= 0.6:
-        box(f"fuse_{i}", "body", -hw, yb + c, z0, 2 * hw, yt - yb - 2 * c, z1 - z0, mat)
+        if any(cz0 < z1 and cz1 > z0 for (cz0, cz1, _h) in COCKPIT_WELL):
+            # The waist under the well: solid below the cockpit floor, side walls only above it.
+            box(f"fuse_{i}", "body", -hw, yb + c, z0, 2 * hw, FLOOR_BASE - (yb + c), z1 - z0, mat)
+            deck_with_well(f"fuse_{i}_wall", -hw, FLOOR_BASE, z0, 2 * hw, yt - c - FLOOR_BASE, z1, mat)
+        else:
+            box(f"fuse_{i}", "body", -hw, yb + c, z0, 2 * hw, yt - yb - 2 * c, z1 - z0, mat)
         deck_with_well(f"fuse_{i}_deck", -hw + c, yt - c, z0, 2 * (hw - c), c, z1, mat)
         box(f"fuse_{i}_belly", "body", -hw + c, yb, z0, 2 * (hw - c), c, z1 - z0, "slate_dark")
     else:
@@ -214,8 +225,9 @@ for i, (z0, z1, hw, yb, yt) in enumerate(CANOPY):
         box(f"canopy_bow_{i}", "canopy", -hw - 0.25, yt - 0.25, z0 - 0.3, 2 * hw + 0.5, 0.55, 0.6, "dark_metal")
         box(f"canopy_post_{i}_left", "canopy", hw - 0.15, yb, z0 - 0.3, 0.4, yt - yb, 0.6, "dark_metal")
         box(f"canopy_post_{i}_right", "canopy", -hw - 0.25, yb, z0 - 0.3, 0.4, yt - yb, 0.6, "dark_metal")
-box("canopy_spine", "canopy", -0.4, 7.85, 2.2, 0.8, 0.5, 6.0, "dark_metal")
-box("canopy_spine_fwd", "canopy", -0.4, 7.4, 8.0, 0.8, 0.5, 6.0, "dark_metal")
+# Spines ride on top of the glass (outside it), never through the crew's helmets.
+box("canopy_spine", "canopy", -0.4, 8.15, 2.2, 0.8, 0.5, 6.0, "dark_metal")
+box("canopy_spine_fwd", "canopy", -0.4, 7.75, 8.0, 0.8, 0.5, 6.0, "dark_metal")
 start = len(PARTS)
 box("canopy_rail_left", "canopy", 3.4, 3.7, 2.2, 0.6, 0.6, 21.3, "orange")
 mirror_from(start)
@@ -303,58 +315,88 @@ box("beacon_ventral", "body", -0.5, -7.4, -9.0, 1.0, 0.6, 1.0, "emi_orange")
 
 
 # ----------------------------------------------------------------------------------------------- cockpit (v4)
-# Tandem cockpit in the well: the pilot sits forward (hip at z 11), a passenger behind (z 4.6), both hips at
-# y -0.77 (Starship.PILOT_SEAT / PASSENGER_SEAT, 0.12 block under the hull centre after scaling). The floor is the
-# waist's top at y 2.9; with the eye at y 5.76 the glare shield (top 5.3) sits 5 degrees under the horizon and the
-# panel's display fills 11-26 degrees below it. Starboard side stick, port throttle (F-16 layout), so nothing stands
-# between the pilot and the display. The panel face is SCREEN_Z; the Java side draws the live display just in front.
-PILOT_Z, PASSENGER_Z, SEAT_Y = 11.0, 4.6, -0.77
-SCREEN = (-2.5, 2.5, 3.08, 4.75, 16.45)  # x0, x1, y0, y1, z: the instrument display rectangle, design units
-box("pit_floor", "cockpit", -3.0, 2.6, 2.0, 6.0, 0.3, 16.6, "cockpit_grey")
+# Tandem cockpit in the well: the pilot sits forward (hip at z 11), a passenger behind (z 4.6), both hips at SEAT_Y
+# (0.25 block under the hull centre after scaling) on cushions at that height, legs out over the floor (FLOOR_TOP).
+# The rider's eye is 6.53 units over the hips (y 4.93): the glare shield's far edge sits 2 degrees under the horizon
+# and the display fills 7.5-21.5 degrees below it, above the vanilla hotbar, hearts and armour rows at every auto GUI
+# scale (70 degree FOV). Port throttle, starboard side stick (F-16 layout), nothing between the pilot and the display.
+# The only frame in the forward view is the thin windscreen pillars at z 19; the canopy hoops are outside the glass.
+# The panel face is SCREEN_Z; the Java side draws the live display just in front.
+PILOT_Z, PASSENGER_Z = 11.0, 4.6
+EYE_Y = SEAT_Y + 6.528
+SCREEN = (-2.5, 2.5, 2.78, 4.21, 16.45)  # x0, x1, y0, y1, z: the instrument display rectangle, design units
+KEY_Y = 3.37  # console tops (forearm height)
+box("pit_floor", "cockpit", -3.0, FLOOR_BASE, 2.0, 6.0, 0.3, 16.6, "cockpit_grey")
 start = len(PARTS)
-box("pit_wall_aft_left", "cockpit", 2.85, 2.9, 2.0, 0.25, 1.6, 12.0, "cockpit_grey")
-box("pit_wall_fwd_left", "cockpit", 2.45, 2.9, 14.0, 0.25, 1.1, 4.6, "cockpit_grey")
+box("pit_wall_aft_left", "cockpit", 2.85, FLOOR_TOP, 2.0, 0.25, 4.4 - FLOOR_TOP, 12.0, "cockpit_grey")
+box("pit_wall_fwd_left", "cockpit", 2.45, FLOOR_TOP, 14.0, 0.25, 4.0 - FLOOR_TOP, 4.6, "cockpit_grey")
 box("pit_sill_aft_left", "cockpit", 2.85, 4.4, 2.0, 0.45, 0.35, 12.0, "dark_metal")
 box("pit_sill_fwd_left", "cockpit", 2.45, 4.0, 14.0, 0.45, 0.35, 4.6, "dark_metal")
-box("pit_post_left", "cockpit", 2.55, 4.35, 13.85, 0.3, 2.45, 0.3, "dark_metal")
-# Pilot seat: back, headrest, bolsters, cushion.
-box("seat_bolster_left", "cockpit", 1.7, 2.9, 9.3, 0.6, 1.7, 3.0, "seat")
-box("seat_pax_bolster_left", "cockpit", 1.7, 2.9, 2.8, 0.6, 1.7, 3.0, "seat")
-# Side console beside the pilot, with its key rows.
-box("console_left", "cockpit", 1.95, 2.9, 10.2, 0.9, 1.2, 3.8, "cockpit_grey")
-box("console_top_left", "cockpit", 2.05, 4.1, 10.4, 0.7, 0.1, 3.4, "panel_black")
+box("windscreen_pillar_left", "cockpit", 2.35, 3.6, 19.0, 0.25, 2.6, 0.3, "dark_metal")
+# Seat bolsters.
+box("seat_bolster_left", "cockpit", 1.7, SEAT_Y - 0.3, 9.3, 0.6, 2.0, 3.0, "seat")
+box("seat_pax_bolster_left", "cockpit", 1.7, SEAT_Y - 0.3, 2.8, 0.6, 2.0, 3.0, "seat")
+# Side console beside the pilot (an armrest at forearm height), with its key rows.
+box("console_left", "cockpit", 1.95, FLOOR_TOP, 10.2, 0.9, KEY_Y - 0.1 - FLOOR_TOP, 3.8, "cockpit_grey")
+box("console_top_left", "cockpit", 2.05, KEY_Y - 0.1, 10.4, 0.7, 0.1, 3.4, "panel_black")
 mirror_from(start)
-box("seat_back", "cockpit", -1.8, 2.9, 8.4, 3.6, 3.6, 0.9, "seat")
-box("seat_headrest", "cockpit", -1.3, 6.5, 8.5, 2.6, 0.9, 0.7, "seat")
-box("seat_cushion", "cockpit", -1.7, 2.9, 9.3, 3.4, 0.3, 3.0, "seat")
-box("seat_pax_cushion", "cockpit", -1.7, 2.9, 2.8, 3.4, 0.3, 3.0, "seat")
-box("seat_pax_back", "cockpit", -1.8, 2.9, 2.0, 3.6, 1.3, 0.8, "seat")
-# Passenger's repeater panel on the back of the pilot's seat.
-box("pax_panel", "cockpit", -1.4, 4.4, 8.15, 2.8, 1.2, 0.25, "panel_black")
-box("pax_panel_glow", "cockpit", -1.1, 5.05, 8.1, 2.2, 0.25, 0.05, "emi_cyan")
+box("seat_back", "cockpit", -1.8, SEAT_Y + 0.6, 8.4, 3.6, 3.8, 0.9, "seat")
+box("seat_headrest", "cockpit", -1.3, SEAT_Y + 5.0, 8.5, 2.6, 2.8, 0.7, "seat")
+box("seat_cushion", "cockpit", -1.7, SEAT_Y - 0.3, 9.3, 3.4, 0.3, 3.0, "seat")
+box("seat_pax_cushion", "cockpit", -1.7, SEAT_Y - 0.3, 2.8, 3.4, 0.3, 3.0, "seat")
+box("seat_pax_back", "cockpit", -1.8, SEAT_Y - 0.3, 2.0, 3.6, 4.9, 0.8, "seat")
+# Passenger's repeater panel on the back of the pilot's seat, at the passenger's eye line.
+box("pax_panel", "cockpit", -1.4, EYE_Y - 1.36, 8.15, 2.8, 1.2, 0.25, "panel_black")
+box("pax_panel_glow", "cockpit", -1.1, EYE_Y - 0.71, 8.1, 2.2, 0.25, 0.05, "emi_cyan")
 for row in range(3):
     for col in range(2):
         for side, sx in (("left", 1), ("right", -1)):
             mat = ("emi_amber", "emi_cyan", "emi_green")[(row + col + (side == "right")) % 3]
             x = 2.2 + 0.3 * col if sx > 0 else -(2.2 + 0.3 * col) - 0.2
-            box(f"console_key_{row}_{col}_{side}", "cockpit", x, 4.2, 10.8 + 0.8 * row + (1.2 if side == "left" else 0), 0.2, 0.06, 0.25, mat)
+            box(f"console_key_{row}_{col}_{side}", "cockpit", x, KEY_Y, 10.8 + 0.8 * row + (1.2 if side == "left" else 0), 0.2, 0.06, 0.25, mat)
 # Throttle quadrant (port).
-box("throttle_base", "cockpit", 2.25, 4.2, 11.0, 0.5, 0.3, 1.9, "dark_metal")
-box("throttle_lever", "cockpit", 2.4, 4.5, 12.1, 0.2, 0.85, 0.25, "metal")
-box("throttle_handle", "cockpit", 2.15, 5.3, 11.9, 0.7, 0.5, 0.7, "panel_black")
-box("throttle_button", "cockpit", 2.4, 5.8, 12.1, 0.2, 0.08, 0.25, "emi_red")
+box("throttle_base", "cockpit", 2.25, KEY_Y, 11.0, 0.5, 0.3, 1.9, "dark_metal")
+box("throttle_lever", "cockpit", 2.4, KEY_Y + 0.3, 12.1, 0.2, 0.85, 0.25, "metal")
+box("throttle_handle", "cockpit", 2.15, KEY_Y + 1.1, 11.9, 0.7, 0.5, 0.7, "panel_black")
+box("throttle_button", "cockpit", 2.4, KEY_Y + 1.6, 12.1, 0.2, 0.08, 0.25, "emi_red")
 # Side stick (starboard).
-box("stick_boot", "cockpit", -2.85, 4.2, 12.3, 0.7, 0.3, 0.8, "panel_black")
-box("stick_shaft", "cockpit", -2.6, 4.5, 12.58, 0.2, 0.6, 0.24, "metal")
-box("stick_grip", "cockpit", -2.75, 5.1, 12.4, 0.5, 0.75, 0.6, "panel_black")
-box("stick_trigger", "cockpit", -2.58, 5.45, 13.0, 0.16, 0.2, 0.08, "emi_red")
-# Instrument panel, display bezel and glare shield.
-box("panel", "cockpit", -2.6, 2.9, 16.6, 5.2, 2.05, 2.0, "cockpit_grey")
-box("panel_bezel", "cockpit", -2.6, 3.0, 16.5, 5.2, 1.85, 0.1, "dark_metal")
-box("glare_shield", "cockpit", -2.7, 4.95, 16.2, 5.4, 0.35, 2.4, "panel_black")
-box("caution_light", "cockpit", 2.1, 5.0, 16.15, 0.35, 0.15, 0.05, "emi_amber")
-box("warning_light", "cockpit", -2.45, 5.0, 16.15, 0.35, 0.15, 0.05, "emi_red")
-box("panel_strip", "cockpit", -2.0, 2.95, 16.45, 4.0, 0.06, 0.05, "emi_cyan")
+box("stick_boot", "cockpit", -2.85, KEY_Y, 12.3, 0.7, 0.3, 0.8, "panel_black")
+box("stick_shaft", "cockpit", -2.6, KEY_Y + 0.3, 12.58, 0.2, 0.6, 0.24, "metal")
+box("stick_grip", "cockpit", -2.75, KEY_Y + 0.9, 12.4, 0.5, 0.75, 0.6, "panel_black")
+box("stick_trigger", "cockpit", -2.58, KEY_Y + 1.25, 13.0, 0.16, 0.2, 0.08, "emi_red")
+# Instrument panel (down to the floor: the front of the footwell), display bezel and glare shield.
+SX0, SX1, SY0, SY1, SZ = SCREEN
+box("panel", "cockpit", -2.6, FLOOR_TOP, 16.6, 5.2, SY1 + 0.14 - FLOOR_TOP, 2.0, "cockpit_grey")
+box("panel_bezel", "cockpit", -2.6, SY0 - 0.1, 16.5, 5.2, SY1 - SY0 + 0.2, 0.1, "dark_metal")
+box("glare_shield", "cockpit", -2.7, SY1 + 0.14, 16.2, 5.4, 0.27, 2.4, "panel_black")
+box("caution_light", "cockpit", 2.1, SY1 + 0.2, 16.15, 0.35, 0.15, 0.05, "emi_amber")
+box("warning_light", "cockpit", -2.45, SY1 + 0.2, 16.15, 0.35, 0.15, 0.05, "emi_red")
+box("panel_strip", "cockpit", -2.0, SY0 - 0.08, 16.45, 4.0, 0.05, 0.05, "emi_cyan")
+
+
+def check_crew_clearance():
+    """Fails the run if a seated rider's head (with a helmet layer) touches anything opaque, or the torso and
+    hips touch the hull: the cockpit layout must hold for any change to the table above."""
+    def overlaps(p, lo, hi):
+        if p["rot"] is not None:
+            return False  # rotated parts are all far outside the cockpit (wings, fins, pods)
+        a = (p["x0"], p["y0"], p["z0"])
+        b = (p["x0"] + p["w"], p["y0"] + p["h"], p["z0"] + p["d"])
+        return all(a[k] < hi[k] - 1e-6 and b[k] > lo[k] + 1e-6 for k in range(3))
+    for z in (PILOT_Z, PASSENGER_Z):
+        head = ((-1.8, SEAT_Y + 5.16, z - 1.6), (1.8, SEAT_Y + 8.54, z + 1.6))
+        torso = ((-1.3, SEAT_Y, z - 0.8), (1.3, SEAT_Y + 5.16, z + 0.8))
+        for p in PARTS:
+            if MATERIALS[p["mat"]][1] != "glass" and overlaps(p, *head):
+                raise SystemExit(f"{p['name']} cuts the head of the rider at z {z}")
+            if p["group"] != "cockpit" and overlaps(p, *torso):
+                raise SystemExit(f"{p['name']} cuts the body of the rider at z {z}")
+        glass_top = min(c[4] for c in CANOPY if c[0] < z + 1.6 and c[1] > z - 1.6)
+        if glass_top - head[1][1] < 0.6:
+            raise SystemExit(f"helmet clearance under the glass at z {z}: {glass_top - head[1][1]:.2f} units")
+
+
+check_crew_clearance()
 
 
 # ================================================================================================= emission
@@ -710,6 +752,73 @@ def bbmodel(uv, tex_png):
     }
 
 
+# ============================================================================================ collision probes
+def part_corners(p):
+    """The eight corners of a part in design-scaled model pixels (body frame), its rotation applied about its pivot
+    (Blockbench order: x, then y, then z)."""
+    xs = (p["x0"], p["x0"] + p["w"])
+    ys = (p["y0"], p["y0"] + p["h"])
+    zs = (p["z0"], p["z0"] + p["d"])
+    rx, ry, rz = (math.radians(a) for a in (p["rot"] or (0, 0, 0)))
+    piv = p["pivot"] or GROUPS[p["group"]]
+    out = []
+    for x in xs:
+        for y in ys:
+            for z in zs:
+                v = [x - piv[0], y - piv[1], z - piv[2]]
+                v = [v[0], v[1] * math.cos(rx) - v[2] * math.sin(rx), v[1] * math.sin(rx) + v[2] * math.cos(rx)]
+                v = [v[0] * math.cos(ry) + v[2] * math.sin(ry), v[1], -v[0] * math.sin(ry) + v[2] * math.cos(ry)]
+                v = [v[0] * math.cos(rz) - v[1] * math.sin(rz), v[0] * math.sin(rz) + v[1] * math.cos(rz), v[2]]
+                out.append((v[0] + piv[0], v[1] + piv[1], v[2] + piv[2]))
+    return out
+
+
+PROBE_SECTORS = 24
+PROBE_MIN_RADIUS = 2.4  # blocks: nearer to the hull centre, the collision box itself covers the hull
+
+
+def hull_probes():
+    """Collision probes for the hull beyond the central box (Starship's terrain check): in each of PROBE_SECTORS
+    azimuth sectors of the body XZ plane, the farthest, the highest and the lowest of the outer corners (within 85 % of the
+    sector's farthest reach), over every fixed exterior part (gear and nozzles move, and stay inside the box)."""
+    pts = [c for p in PARTS if p["group"] == "body" for c in part_corners(p)]
+    blocks = [(x / 16, y / 16, z / 16) for (x, y, z) in pts]
+    chosen = []
+    for k in range(PROBE_SECTORS):
+        sec = [b for b in blocks if int((math.atan2(b[0], b[2]) + math.pi) / (2 * math.pi) * PROBE_SECTORS) % PROBE_SECTORS == k]
+        sec = [b for b in sec if math.hypot(b[0], b[2]) >= PROBE_MIN_RADIUS]
+        if not sec:
+            continue
+        reach = max(math.hypot(b[0], b[2]) for b in sec)
+        outer = [b for b in sec if math.hypot(b[0], b[2]) >= 0.85 * reach]
+        far = max(sec, key=lambda b: math.hypot(b[0], b[2]))
+        for b in (far, max(outer, key=lambda b: (b[1], math.hypot(b[0], b[2]))), min(outer, key=lambda b: (b[1], -math.hypot(b[0], b[2])))):
+            if b not in chosen:
+                chosen.append(b)
+    return chosen
+
+
+def java_probes(probes):
+    rows = ",\n            ".join("{" + ", ".join(f"{v:.3f}F" for v in b) + "}" for b in probes)
+    reach = max(math.sqrt(b[0] ** 2 + b[1] ** 2 + b[2] ** 2) for b in probes)
+    return f"""package dev.galactica.ship;
+
+/**
+ * Collision probes on the Kestrel's outer hull, generated by assets-src/ship/gen_starship.py (do not edit by hand).
+ * Body frame (+X port, +Y dorsal, +Z nose), blocks from the hull centre ({{@link ShipDimensions#PIVOT}} above the
+ * entity origin). The vanilla collision box is square and does not turn with the hull, so it covers only the
+ * fuselage and pods; these points stand for the nose, wings, fins and tail beyond it, the farthest, highest and lowest outer
+ * corner in each of {PROBE_SECTORS} azimuth sectors. {len(probes)} points, farthest {reach:.2f} blocks out.
+ */
+public final class ShipHullProbes {{
+    private ShipHullProbes() {{}}
+
+    public static final float[][] POINTS = {{
+            {rows}}};
+}}
+"""
+
+
 def main():
     uv = place_uvs()
     tex = Image.new("RGBA", (TEX, TEX), (0, 0, 0, 0))
@@ -731,6 +840,7 @@ def main():
     tex.save(buf, "PNG")
     (HERE / "starship.bbmodel").write_text(json.dumps(bbmodel(uv, buf.getvalue()), indent=1), encoding="utf-8")
     (ROOT / "src/main/java/dev/galactica/client/ship/StarshipGeometry.java").write_text(java_geometry(uv), encoding="utf-8")
+    (ROOT / "src/main/java/dev/galactica/ship/ShipHullProbes.java").write_text(java_probes(hull_probes()), encoding="utf-8")
     stale = HERE / "StarshipModel.parts.txt"
     if stale.exists():
         stale.unlink()

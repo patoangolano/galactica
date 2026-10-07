@@ -7,7 +7,11 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.joml.Vector3fc;
@@ -45,6 +49,31 @@ public abstract class CameraShipMixin {
 
     @Shadow protected abstract void setPosition(Vec3 position);
 
+    @Shadow public abstract Vec3 position();
+
+    /** Clearance kept between the pulled-in camera and the block it hit, blocks (vanilla keeps 0.1 plus its probe box). */
+    private static final double GALACTICA$CLIP_MARGIN = 0.3;
+
+    /**
+     * Pulls a chase or orbit camera in toward the ship when terrain lies between them, as vanilla's
+     * {@code getMaxZoom} does for the player: a block ray (visual shapes, so glass and leaves count as in vanilla)
+     * from the aim point, plus four rays offset ±0.1 across the view so the near plane does not clip into a wall
+     * the centre ray just missed. The ship's own hull is an entity and never stops the ray.
+     */
+    private static Vec3 galactica$clipToTerrain(Entity ship, Vec3 aim, Vec3 wanted) {
+        Vec3 span = wanted.subtract(aim);
+        double length = span.length();
+        if (length < 1e-3) return wanted;
+        double best = length;
+        for (int i = 0; i < 5; i++) {
+            Vec3 off = i == 0 ? Vec3.ZERO : new Vec3((i & 1) == 0 ? 0.1 : -0.1, (i & 2) == 0 ? 0.1 : -0.1, 0.0);
+            Vec3 from = aim.add(off), to = wanted.add(off);
+            BlockHitResult hit = ship.level().clip(new ClipContext(from, to, ClipContext.Block.VISUAL, ClipContext.Fluid.NONE, CollisionContext.empty()));
+            if (hit.getType() != HitResult.Type.MISS) best = Math.min(best, hit.getLocation().distanceTo(from) - GALACTICA$CLIP_MARGIN);
+        }
+        return best >= length ? wanted : aim.add(span.scale(Math.max(0.0, best) / length));
+    }
+
     @Inject(method = "alignWithEntity(F)V", at = @At("TAIL"))
     private void galactica$shipAttitude(float partialTicks, CallbackInfo ci) {
         if (this.entity == null || !(this.entity.getVehicle() instanceof Starship ship)) {
@@ -70,8 +99,10 @@ public abstract class CameraShipMixin {
         if (this.detached) {
             // Aimed at the hull centre (StarshipRenderer.PIVOT_BLOCKS above the entity origin), framed by ShipCamera.
             Vector3f target = ship.getAttitude(partialTicks, new Quaternionf()).transform(ShipCamera.target(new Vector3f()));
-            this.setPosition(ship.getPosition(partialTicks).add(target.x, StarshipRenderer.PIVOT_BLOCKS + target.y, target.z));
+            Vec3 aim = ship.getPosition(partialTicks).add(target.x, StarshipRenderer.PIVOT_BLOCKS + target.y, target.z);
+            this.setPosition(aim);
             this.move(-ShipCamera.distance(), ShipCamera.lift(), 0.0F);
+            this.setPosition(galactica$clipToTerrain(ship, aim, this.position()));
         } else {
             this.setPosition(ship.pilotEyePosition(this.entity, partialTicks, Mth.lerp(partialTicks, this.eyeHeightOld, this.eyeHeight)));
         }

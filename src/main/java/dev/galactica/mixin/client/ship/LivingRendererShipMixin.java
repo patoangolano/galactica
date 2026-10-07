@@ -25,9 +25,13 @@ public abstract class LivingRendererShipMixin {
     private void galactica$turnWithShip(LivingEntityRenderState state, PoseStack pose, float bodyRot, float entityScale, CallbackInfo ci) {
         ShipRiderState rider = (ShipRiderState) state;
         if (!rider.galactica$ridesShip()) return;
-        // The turn already carries the look: the pilot's pitch is the hull's, so a head pitched by it again would nod
-        // twice. Crew heads face along the hull too (their free look is a camera matter, not the model's).
-        state.xRot = 0F;
+        // The body faces the nose (below), so the head turns by the look in the hull's frame: zero for the pilot,
+        // whose look is the hull's (a head pitched by the hull's pitch again would nod twice); for crew, where they
+        // look, so other players see a passenger's head follow their view. Vanilla's own values here are relative to
+        // the rider's bodyRot, which the turn below overrides.
+        float[] head = rider.galactica$headTurn();
+        state.yRot = head[0];
+        state.xRot = head[1];
         float pivot = rider.galactica$seatHeight() / Math.max(1e-3F, entityScale);
         Quaternionf q = GALACTICA$TURN.set(rider.galactica$shipAttitude()).rotateY((float) Math.toRadians(bodyRot));
         pose.translate(0F, pivot, 0F);
