@@ -147,9 +147,12 @@ public final class TransferClient {
         glow = EntryHeating.glow(glow, instant, dt);
     }
 
-    /** Visible plasma strength, 0..1. */
+    /**
+     * Visible plasma strength, 0..1: the physical glow times the {@code entryEffects} setting, so every
+     * consumer (sheath, embers, screen vignette, HUD caption) dims together and 0 switches them off.
+     */
     public static double glow() {
-        return glow;
+        return dev.galactica.config.ConfigEffects.entryGlow(glow, dev.galactica.config.GalacticaConfigs.get().entryEffects());
     }
 
     /** Wall temperature normalised to the colour ramp: 900 K (dull red) → 3 500 K (white-violet). */
@@ -215,7 +218,10 @@ public final class TransferClient {
         // Dying ends any approach: the respawn that follows is not a transfer.
         if (armedUntil != 0 && (mc.player.isDeadOrDying() || System.nanoTime() >= armedUntil)) disarm();
         if (mc.isPaused()) return;
-        if (glow < 0.05) return;
+        // Off at entryEffects 0. Below that, the count follows the physical glow and the ember provider
+        // thins every ember (own and server-sent observer embers alike) by the setting, so it applies once.
+        if (glow() < 0.05) return;
+        double glow = TransferClient.glow;
         Entity root = mc.player.getRootVehicle();
         RandomSource rnd = mc.level.getRandom();
         int n = (int) Math.ceil(glow * 7);

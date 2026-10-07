@@ -85,8 +85,13 @@ class StarVisualTest {
         assertEquals(7, StarUniforms.PHASE);
         assertEquals(8, StarUniforms.SPOTS);
         StarVisual v = StarVisual.from(SUN);
-        Vec4Block b = StarUniforms.pack(v, 0.05, 0.5f, 12.5, new Vec4Block(StarUniforms.VEC4_COUNT));
+        Vec4Block b = StarUniforms.pack(v, 0.05, 0.5f, 12.5, dev.galactica.config.GalacticaConfig.Quality.MEDIUM,
+                new Vec4Block(StarUniforms.VEC4_COUNT));
         assertEquals(256, b.sizeBytes());
+        assertEquals(1f, b.get(StarUniforms.GEOM, 3), "StarGeom.w carries starPlasmaQuality (medium = 1)");
+        Vec4Block low = StarUniforms.pack(v, 0.05, 0.5f, 12.5, dev.galactica.config.GalacticaConfig.Quality.LOW,
+                new Vec4Block(StarUniforms.VEC4_COUNT));
+        assertEquals(0f, low.get(StarUniforms.GEOM, 3));
         assertEquals(0.5f, b.get(StarUniforms.COLOR, 3));
         assertEquals((float) v.limbA(), b.get(StarUniforms.LIMB, 0));
         assertEquals((float) v.cellsPerRadius(), b.get(StarUniforms.GRAN, 0));

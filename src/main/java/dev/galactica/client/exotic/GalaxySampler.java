@@ -1,21 +1,21 @@
 package dev.galactica.client.exotic;
 
-import com.mojang.blaze3d.platform.NativeImage;
 import dev.galactica.client.sky.SkyManager;
 import dev.galactica.client.sky.SkyTextures;
 import dev.galactica.exotic.ExoticImager;
 import dev.galactica.science.Blackbody;
 
 /**
- * Reads the baked Milky Way back from the CPU copy that {@link SkyTextures#galaxy()} keeps, so the
- * lens sprites show the same sky that is drawn behind them. Directions are Minecraft axes and map to
- * the equirectangular layout of {@code GalaxySkyBaker.equirectDirection}: u is the longitude around
- * +Y starting at −Z, v runs from the zenith to the nadir. Bilinear, sRGB decoded to linear.
+ * Reads the baked Milky Way back from the last bake uploaded to {@link SkyTextures#galaxy()} (its
+ * immutable {@link SkyTextures#galaxySnapshot() snapshot}), so the lens sprites show the same sky that is
+ * drawn behind them. Directions are Minecraft axes and map to the equirectangular layout of
+ * {@code GalaxySkyBaker.equirectDirection}: u is the longitude around +Y starting at −Z, v runs from the
+ * zenith to the nadir. Bilinear, sRGB decoded to linear.
  *
- * <p>Construct on the render thread (it may create the galaxy texture); {@link #sample} is then
- * called from the exotic imager's worker thread. That is safe because the galaxy
- * {@link NativeImage} is created once and never closed, and re-bakes overwrite it in place: a paint
- * racing a re-bake at worst mixes old and new sky for one image, which the 3 s halo refresh replaces.
+ * <p>Construct anywhere; {@link #sample} is called from the exotic imager's worker thread. The snapshot
+ * is a plain array that is never written again or closed, so a sky-quality change (which replaces the
+ * galaxy texture) cannot pull it out from under a queued job; that job simply paints the older sky,
+ * which the 3 s halo refresh replaces.
  */
 final class GalaxySampler implements ExoticImager.SkySampler {
     private static final float[] DECODE = new float[256];
@@ -27,18 +27,19 @@ final class GalaxySampler implements ExoticImager.SkySampler {
         }
     }
 
-    private final NativeImage img;
+    private final int[] argb;
     private final int w, h;
 
     GalaxySampler() {
-        img = SkyTextures.galaxy().getPixels();
-        w = img != null ? img.getWidth() : SkyManager.SKY_WIDTH;
-        h = img != null ? img.getHeight() : SkyManager.SKY_HEIGHT;
+        SkyTextures.Snapshot snap = SkyTextures.galaxySnapshot();
+        argb = snap != null ? snap.argb() : null;
+        w = snap != null ? snap.w() : SkyManager.skyWidth();
+        h = snap != null ? snap.h() : SkyManager.skyHeight();
     }
 
     @Override
     public void sample(double x, double y, double z, float[] out) {
-        if (img == null) {
+        if (argb == null) {
             out[0] = out[1] = out[2] = 0;
             return;
         }
@@ -54,10 +55,10 @@ final class GalaxySampler implements ExoticImager.SkySampler {
             int xi = Math.floorMod(x0 + (k & 1), w);
             int yi = Math.max(0, Math.min(h - 1, y0 + (k >> 1)));
             double wt = ((k & 1) == 0 ? 1 - tx : tx) * ((k >> 1) == 0 ? 1 - ty : ty);
-            int argb = img.getPixel(xi, yi);
-            out[0] += (float) (wt * DECODE[(argb >> 16) & 0xFF]);
-            out[1] += (float) (wt * DECODE[(argb >> 8) & 0xFF]);
-            out[2] += (float) (wt * DECODE[argb & 0xFF]);
+            int c = argb[yi * w + xi];
+            out[0] += (float) (wt * DECODE[(c >> 16) & 0xFF]);
+            out[1] += (float) (wt * DECODE[(c >> 8) & 0xFF]);
+            out[2] += (float) (wt * DECODE[c & 0xFF]);
         }
     }
 

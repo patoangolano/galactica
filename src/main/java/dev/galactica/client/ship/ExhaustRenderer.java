@@ -28,7 +28,6 @@ final class ExhaustRenderer {
     private static final float POD_X = 14F * PX, POD_Y = -0.5F * PX, THROAT_Z = -35F * PX, EXIT_FROM_THROAT = 6.8F * PX;
     /** Nozzle exit radius: the core plate's apothem, 4.4 px. */
     static final float EXIT_RADIUS = 4.4F * PX;
-    private static final int SEGMENTS = 12;
     /** Largest end-on disc, blocks: the integrated column is brightest within a few nozzle radii of the axis. */
     private static final float MAX_DISC_HALF = 1.5F;
     private static final float RCS_RADIUS = 0.06F, RCS_LENGTH = 0.7F, RCS_HALF_ANGLE_TAN = 0.32F;
@@ -41,8 +40,9 @@ final class ExhaustRenderer {
     private static final float[] PLANE_COS = {1F, 0.5F, -0.5F}, PLANE_SIN = {0F, (float) Math.sqrt(0.75), (float) Math.sqrt(0.75)};
     private static final int KIND_PLUME = 0, KIND_DISC = 1, KIND_GLOW = 2, KIND_RCS = 3, KIND_RCS_DISC = 4;
 
-    /** True if this ship has anything to draw this frame. */
+    /** True if this ship has anything to draw this frame (never with the exhaustQuality setting at Off). */
     static boolean active(StarshipRenderState s) {
+        if (dev.galactica.config.GalacticaConfigs.get().exhaustQuality() == dev.galactica.config.GalacticaConfig.ExhaustQuality.OFF) return false;
         return s.thrust > ExhaustPhysics.MIN_THROTTLE || s.spool > 0F || s.rcs != 0;
     }
 
@@ -143,8 +143,10 @@ final class ExhaustRenderer {
         int color = params(throttle, cells, kind, weight);
         float u = 4F * seed;
         Vector3f a = new Vector3f(), b = new Vector3f(), c = new Vector3f(), d = new Vector3f();
-        for (int i = 0; i < SEGMENTS; i++) {
-            float t0 = (float) i / SEGMENTS, t1 = (float) (i + 1) / SEGMENTS;
+        // Config: exhaustQuality picks the strip resolution (LOW 6, MEDIUM 12 as shipped, HIGH 20).
+        int segments = Math.max(1, dev.galactica.config.ConfigEffects.exhaustSegments(dev.galactica.config.GalacticaConfigs.get().exhaustQuality()));
+        for (int i = 0; i < segments; i++) {
+            float t0 = (float) i / segments, t1 = (float) (i + 1) / segments;
             float r0 = radius(plume, t0 * length), r1 = radius(plume, t1 * length);
             point(start, axis, across, t0 * length, -r0, a);
             point(start, axis, across, t0 * length, r0, b);

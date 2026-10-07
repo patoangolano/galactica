@@ -407,6 +407,10 @@ public final class TransferFx {
             @Override
             public Particle createParticle(SimpleParticleType type, ClientLevel level, double x, double y, double z,
                                            double dx, double dy, double dz, RandomSource random) {
+                // Every ember passes here, including the ones the server sends for other players' entries,
+                // so this is where the entryEffects setting thins them (0 drops them all).
+                double effects = dev.galactica.config.GalacticaConfigs.get().entryEffects();
+                if (!dev.galactica.config.ConfigEffects.keepEmber(effects, random.nextDouble())) return null;
                 return new Ember(level, x, y, z, dx, dy, dz, sprites);
             }
         }

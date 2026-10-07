@@ -62,11 +62,13 @@ public final class EarthSky {
     private EarthSky() {}
 
     /**
-     * Config flag {@code galactica.realNightSky}; default true. Read from the JVM system property of
-     * the same name at {@link #initClient()}; the integrator may also set it directly (turning it on
-     * later starts the bake on the next Overworld frame).
+     * Live switch, following the {@code realNightSky} setting ({@code config/galactica.json}, Mod Menu)
+     * at once: off falls back to vanilla stars on the next frame, on starts the bake on the next
+     * Overworld frame (or shows the already baked sky). The JVM property {@code -Dgalactica.realNightSky=false}
+     * vetoes it for the session, and so does a failed bake.
      */
     public static volatile boolean realNightSky = true;
+    private static volatile boolean vetoed;
     /**
      * Shift the stars through the year: the night side faces Orion in one season and Scorpius in
      * the other. Year length in Overworld days.
@@ -99,7 +101,9 @@ public final class EarthSky {
     private static boolean veilShown;
 
     public static void initClient() {
-        realNightSky = !"false".equalsIgnoreCase(System.getProperty("galactica.realNightSky", "true"));
+        vetoed = "false".equalsIgnoreCase(System.getProperty("galactica.realNightSky", "true"));
+        realNightSky = !vetoed && dev.galactica.config.GalacticaConfigs.get().realNightSky();
+        dev.galactica.config.GalacticaConfigs.onChange(cfg -> realNightSky = !vetoed && cfg.realNightSky());
         if (realNightSky) startBake();
     }
 
@@ -141,6 +145,7 @@ public final class EarthSky {
         if (!ready && pending.isDone()) {
             EarthSkyBake.Baked baked = pending.getNow(null);
             if (baked == null) {
+                vetoed = true;
                 realNightSky = false; // the bake threw: stay on vanilla stars for this session
                 return;
             }
