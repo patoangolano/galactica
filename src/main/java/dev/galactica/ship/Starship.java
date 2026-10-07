@@ -30,7 +30,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.world.phys.Vec3;
@@ -532,7 +531,7 @@ public class Starship extends VehicleEntity {
 
     /**
      * Keeps everyone aboard in the pilot's frame. NavServer calls this right after writing the pilot's NavState
-     * (warp step, floating-origin recentre): every other player aboard gets the same origin displacement plus
+     * (warp step, floating-origin recentre, see {@code FloatingOrigin}): every other player aboard gets the same origin displacement plus
      * the pilot's warp speed and clock, so the crew sees the same sky and arrives together. NavServer skips crew
      * in its own drive logic ({@link #isCrew}), so in space this is their only frame update.
      */
@@ -546,18 +545,6 @@ public class Starship extends VehicleEntity {
                         pilotNow.speed(), nav.maxSpeed(), pilotNow.timeSeconds()));
             }
         }
-    }
-
-    /**
-     * Floating-origin recentre for a pilot: NavServer folds {@code -delta} into the pilot's galactic origin and
-     * calls this instead of teleporting the player (a plain player teleport would dismount them). The ship moves
-     * by {@code delta} carrying all its riders; the crew's origins follow through {@link #carryCrew}, which
-     * NavServer calls with the same origin change.
-     */
-    public static void shiftWithOrigin(ServerPlayer p, Vec3 delta) {
-        if (!(p.getVehicle() instanceof Starship ship) || !(ship.level() instanceof ServerLevel level)) return;
-        ship.teleport(new TeleportTransition(level, ship.position().add(delta), ship.getDeltaMovement(),
-                ship.getYRot(), ship.getXRot(), TeleportTransition.DO_NOTHING));
     }
 
     /**

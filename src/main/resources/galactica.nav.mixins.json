@@ -1,0 +1,20 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.galactica.mixin.nav",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "ServerGamePacketListenerOriginMixin",
+    "TrackedEntityRiderMixin"
+  ],
+  "client": [
+    "ClientLevelCraftTickMixin",
+    "LevelExtractorCraftVisibleMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}

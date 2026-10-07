@@ -27,14 +27,14 @@ import java.util.UUID;
  * arrival, as in Elite's supercruise, while leaving a planet is unrestricted. Sneaking cuts the drive. While warping only the galactic origin moves;
  * the player's block position is untouched.
  *
- * <p><b>Floating origin.</b> Any player more than {@link #ORIGIN_LIMIT} blocks from block (0,0,0)
- * of their frame is moved back to it and the offset is folded into {@link NavState#origin()}, so
+ * <p><b>Floating origin.</b> A craft more than {@link #ORIGIN_LIMIT} blocks from block (0,0,0) of its
+ * frame is moved back to it and the offset is folded into {@link NavState#origin()} ({@link FloatingOrigin}), so
  * block coordinates stay small enough for float rendering and chunk loading anywhere in the galaxy.
  */
 public final class NavServer {
     private NavServer() {}
 
-    public static final double ORIGIN_LIMIT = 1024.0;
+    public static final double ORIGIN_LIMIT = FloatingOrigin.LIMIT;
     private static final double TICK_SECONDS = 0.05;
     private static final double SPOOL_MIN = 1.0e3;
     private static final double SPOOL_RATE = 1.15;
@@ -50,6 +50,7 @@ public final class NavServer {
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {
             boolean inSpace = p.level().dimension() == Galactica.SPACE;
             applyZeroG(p, inSpace);
+            FloatingOrigin.tick(p);
             dev.galactica.planet.PlanetEntry.tickSurface(p);
             if (inSpace) {
                 tickInSpace(p);
@@ -97,22 +98,13 @@ public final class NavServer {
             origin = origin.plusMetres(g[0] * step, g[1] * step, g[2] * step);
         }
 
-        // Floating origin: recentre the player and fold the offset into the galactic origin.
-        if (Math.abs(p.getX()) > ORIGIN_LIMIT || Math.abs(p.getY()) > ORIGIN_LIMIT || Math.abs(p.getZ()) > ORIGIN_LIMIT) {
-            double[] g = Frames.mcToGalactic(p.getX(), p.getY(), p.getZ());
-            origin = origin.plusMetres(g[0], g[1], g[2]);
-            if (p.getVehicle() instanceof dev.galactica.ship.Starship) {
-                // The ship carries its crew: move ship and passengers together.
-                if (dev.galactica.ship.Starship.isPiloting(p)) {
-                    dev.galactica.ship.Starship.shiftWithOrigin(p, new Vec3(-p.getX(), -p.getY(), -p.getZ()));
-                }
-            } else {
-                p.teleport(new TeleportTransition(p.level(), Vec3.ZERO, p.getDeltaMovement(), p.getYRot(), p.getXRot(),
-                        TeleportTransition.DO_NOTHING));
-            }
-        }
+        // Floating origin: bring the craft back near block 0 and fold the offset into the galactic origin. The shift
+        // reaches the riders' clients as one ordered event (FloatingOrigin), before the attachment sync below.
+        Vec3 shift = FloatingOrigin.shiftNeeded(p);
+        if (shift != null) origin = FloatingOrigin.fold(origin, shift);
 
         NavState next = new NavState(origin, speed, nav.maxSpeed(), t);
+        if (shift != null) FloatingOrigin.apply(p, shift, nav.origin(), next.origin());
         // Attachment writes are synced to the owner, so only write when something a client can see changed.
         if (speed != 0 || nav.speed() != 0 || !origin.equals(nav.origin()) || (p.tickCount % 20) == 0) {
             p.setAttached(Galactica.NAV, next);
