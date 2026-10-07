@@ -487,6 +487,8 @@ public final class PlanetEntry {
         }
 
         List<ServerPlayer> riders = ridersOf(p);
+        Galactica.LOG.info("Entry: {} into {} at y={} v={} (altitude {} m)", p.getName().getString(), body.name(),
+                y, velocity, altitude);
         // The arming packet must precede the respawn packet: same connection, same order.
         prepare(riders, dest.slot(), addr, lat, lon, dest.switchAltitude(), 0, true);
         ApproachTickets.release(p.getUUID());
@@ -717,6 +719,7 @@ public final class PlanetEntry {
         MinecraftServer server = p.level().getServer();
         ServerLevel space = server.getLevel(Galactica.SPACE);
         if (space == null) return;
+        Galactica.LOG.info("Take-off: {} from {} at y={} v={}", p.getName().getString(), r.body().name(), root.getY(), root.getDeltaMovement());
         List<ServerPlayer> riders = ridersOf(p);
         NavState nav = p.getAttachedOrCreate(Galactica.NAV);
         double t = nav.timeSeconds();
@@ -780,6 +783,7 @@ public final class PlanetEntry {
     private static void bareExit(ServerPlayer p) {
         ServerLevel space = p.level().getServer().getLevel(Galactica.SPACE);
         if (space == null) return;
+        Galactica.LOG.info("Bare exit: {} from recycled slot {}", p.getName().getString(), p.level().dimension().identifier());
         Entity root = p.getRootVehicle();
         List<ServerPlayer> riders = ridersOf(p);
         if (root != p && root instanceof LivingEntity mount) clearGravity(mount);

@@ -45,6 +45,11 @@ public final class PlanetAutoTest {
     public static boolean checkLanded(String bodyName, double expectedG) {
         Minecraft mc = Minecraft.getInstance();
         Body body = SurfaceSkyOverlay.currentBody();
+        // Earth is the Overworld itself: no slot, no overlay, vanilla gravity.
+        if (body == null && "Earth".equalsIgnoreCase(bodyName) && mc.level != null
+                && mc.level.dimension() == net.minecraft.world.level.Level.OVERWORLD) {
+            body = dev.galactica.system.SolarSystem.planets().stream().filter(b -> b.name().equals("Earth")).findFirst().orElse(null);
+        }
         double g = mc.player == null ? Double.NaN : mc.player.getAttributeValue(Attributes.GRAVITY) / VANILLA_GRAVITY;
         int died = deathsAtStart < 0 ? 0 : deaths() - deathsAtStart;
         boolean ok = body != null && body.name().equalsIgnoreCase(bodyName) && Math.abs(g - expectedG) < 0.005 && died == 0;
