@@ -80,6 +80,8 @@ public class Starship extends VehicleEntity {
     /** Seats in the body frame, blocks from the model pivot (0.75 above the entity origin). */
     private static final Vector3fc PILOT_SEAT = new Vector3f(0F, -0.45F, 0.75F), PASSENGER_SEAT = new Vector3f(0F, -0.45F, -0.55F);
     private static final double PIVOT = 0.75;
+    /** Dev autotest run: crew changes are logged. */
+    private static final boolean AUTOTEST = Boolean.getBoolean("galactica.autotest");
 
     /**
      * Downward gravity, m/s², for levels other than space (space uses {@link ShipGravity} in the pilot's frame).
@@ -495,6 +497,8 @@ public class Starship extends VehicleEntity {
     protected void removePassenger(Entity passenger) {
         boolean wasPilot = getControllingPassenger() == passenger;
         super.removePassenger(passenger);
+        if (AUTOTEST) Galactica.LOG.info("[autotest] ship {} lost {} {} ({})", getId(), wasPilot ? "pilot" : "passenger",
+                passenger.getName().getString(), level().isClientSide() ? "client" : "server");
         // The jump is the pilot's order: it dies with their leaving, even if the passenger slides into the seat.
         if (!level().isClientSide() && wasPilot && pendingJump != null) {
             cancelSpool();

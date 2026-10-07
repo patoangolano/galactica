@@ -55,6 +55,12 @@ public final class FloatingOrigin {
     public static final TicketType LANDING = Registry.register(BuiltInRegistries.TICKET_TYPE, Galactica.id("origin_landing"),
             new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE));
 
+    /** Follows a moving craft: its chunk and the one it reaches in {@link #LOOK_AHEAD_TICKS} ticks. */
+    public static final TicketType CRAFT = Registry.register(BuiltInRegistries.TICKET_TYPE, Galactica.id("craft"),
+            new TicketType(40L, TicketType.FLAG_LOADING | TicketType.FLAG_SIMULATION | TicketType.FLAG_KEEP_DIMENSION_ACTIVE));
+    private static final double LOOK_AHEAD_TICKS = 10;
+    private static final Map<UUID, Vec3> LAST_POS = new HashMap<>();
+
     private record Pending(int seq, Vec3 delta, int sentAt) {}
 
     private static final Map<UUID, Pending> PENDING = new HashMap<>();
@@ -66,12 +72,39 @@ public final class FloatingOrigin {
         PayloadTypeRegistry.clientboundPlay().register(OriginShiftPayload.TYPE, OriginShiftPayload.CODEC);
         PayloadTypeRegistry.serverboundPlay().register(OriginShiftAckPayload.TYPE, OriginShiftAckPayload.CODEC);
         ServerPlayNetworking.registerGlobalReceiver(OriginShiftAckPayload.TYPE, (msg, ctx) -> acknowledge(ctx.player(), msg.seq()));
-        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> PENDING.remove(handler.player.getUUID()));
-        ServerLifecycleEvents.SERVER_STOPPED.register(s -> PENDING.clear());
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            PENDING.remove(handler.player.getUUID());
+            LAST_POS.remove(handler.player.getUUID());
+        });
+        ServerLifecycleEvents.SERVER_STOPPED.register(s -> {
+            PENDING.clear();
+            LAST_POS.clear();
+        });
+    }
+
+    /**
+     * Keeps the chunks under a moving craft and on its path entity-ticking, the way a thrown ender pearl keeps its
+     * own chunk loaded. Right after a recentre the player's own view-distance ticket is still loading a whole new
+     * area nearest-first, and a ship flying 15 blocks per tick outran it: each time it crossed into a chunk not loaded
+     * yet, vanilla stopped tracking it and the pilot's client dropped the ship (and the pilot out of it) until the
+     * chunk arrived. Call every tick for the leader of a craft in space.
+     */
+    public static void keepCraftLoaded(ServerPlayer p) {
+        Entity root = p.getRootVehicle();
+        Vec3 now = root.position();
+        Vec3 before = LAST_POS.put(p.getUUID(), now);
+        if (before == null) return;
+        Vec3 step = now.subtract(before);
+        double len = step.length();
+        if (len < 0.5 || len > 64) return; // parked, or this tick's jump was a recentre or a teleport
+        ServerLevel level = p.level();
+        level.getChunkSource().addTicketAndLoadWithRadius(CRAFT, ChunkPos.containing(BlockPos.containing(now)), 2);
+        level.getChunkSource().addTicketAndLoadWithRadius(CRAFT, ChunkPos.containing(BlockPos.containing(now.add(step.scale(LOOK_AHEAD_TICKS)))), 2);
     }
 
     /** Per-tick housekeeping: forgets shifts that left space or were never acknowledged. */
     public static void tick(ServerPlayer p) {
+        if (p.level().dimension() != Galactica.SPACE) LAST_POS.remove(p.getUUID());
         Pending pending = PENDING.get(p.getUUID());
         if (pending == null) return;
         if (p.level().dimension() != Galactica.SPACE) {
@@ -94,7 +127,8 @@ public final class FloatingOrigin {
         // the limit. A vehicle moved into a chunk that is not loaded yet stops being tracked at all (vanilla removes
         // it from every client, the pilot included), so the shift waits until the landing chunks are ready.
         ServerLevel level = p.level();
-        level.getChunkSource().addTicketAndLoadWithRadius(LANDING, ChunkPos.ZERO, 2);
+        // Radius 3: entity-ticking for the 3 x 3 chunks around block 0 (a landing at -0.4 sits in chunk -1).
+        level.getChunkSource().addTicketAndLoadWithRadius(LANDING, ChunkPos.ZERO, 3);
         if (far <= LIMIT) return null;
         for (ServerPlayer rider : riders(root)) {
             if (PENDING.containsKey(rider.getUUID()) || ((OriginShiftable) rider.connection).galactica$awaitingTeleport()) return null;
@@ -135,6 +169,8 @@ public final class FloatingOrigin {
             e.yOld += d.y;
             e.zOld += d.z;
         }
+        LAST_POS.put(leader.getUUID(), root.position());
+        Galactica.LOG.debug("Origin shift for {}: {} blocks", leader.getName().getString(), d);
         double[] od = leaderNew.metresFrom(leaderOld);
         int now = leader.level().getServer().getTickCount();
         for (ServerPlayer rider : riders(root)) {

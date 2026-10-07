@@ -71,6 +71,7 @@ public final class NavServer {
         p.resetFallDistance();
         // Passengers ride in the pilot's frame; Starship.carryCrew moves their origin with the pilot's.
         if (dev.galactica.ship.Starship.isCrew(p)) return;
+        FloatingOrigin.keepCraftLoaded(p);
 
         GalacticPos here = Frames.playerPos(nav, p.getX(), p.getY(), p.getZ());
         double speed = nav.speed();
