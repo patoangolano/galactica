@@ -86,6 +86,7 @@ public final class PlanetImager {
         // up to three layers per pixel: depth, premultiplied rgb, alpha
         final double[] ld = new double[3], lr = new double[3], lg = new double[3], lb = new double[3], la = new double[3];
         final PlanetMacro.Sample macro = new PlanetMacro.Sample();
+        final double[] slope = new double[3];
     }
 
     private static final ThreadLocal<Scratch> SCRATCH = ThreadLocal.withInitial(Scratch::new);
@@ -186,6 +187,11 @@ public final class PlanetImager {
             shadowW = Math.min(0.5 * ps / ringMu0, 0.1);
         }
         double atmOuter = 1 + atmThick;
+        // Airless regolith: crater relief lit by the star (the same slopes the near renderer lights).
+        dev.galactica.planet.SpaceRelief relief = photo == Photometry.LUNAR && type.solidSurface
+                ? dev.galactica.planet.SpaceRelief.of(b) : null;
+        if (relief != null && !relief.any()) relief = null;
+        double[] slope = s.slope;
 
         for (int py = 0; py < size; py++) {
             double bb = ((py + 0.5) / size * 2 - 1) * ext;
@@ -204,6 +210,21 @@ public final class PlanetImager {
                     double qz = na * sR + nb * sU - z * sF;
                     shade(type, b, seed, macro, qx, qy, qz, true, s);
                     double mu0 = na * lR + nb * lU - z * lF, mu = z;
+                    if (relief != null) {
+                        // Pixel footprint on the sphere grows towards the limb as 1/μ.
+                        double fac = relief.sample(qx, qy, qz, ps / Math.max(0.2, z), false, 1 - 0.7 * s.macro.mare, slope);
+                        s.ar *= fac;
+                        s.ag *= fac;
+                        s.ab *= fac;
+                        // Lit normal n − slope, the slope taken from body-fixed (b1, b2, S) into (R, U, F).
+                        double gR = slope[0] * b1R + slope[1] * b2R + slope[2] * sR;
+                        double gU = slope[0] * b1U + slope[1] * b2U + slope[2] * sU;
+                        double gF = slope[0] * b1F + slope[1] * b2F + slope[2] * sF;
+                        double mR = na - gR, mU = nb - gU, mF = -z - gF;
+                        double mn = Math.sqrt(mR * mR + mU * mU + mF * mF);
+                        mu0 = (mR * lR + mU * lU + mF * lF) / mn;
+                        mu = -mF / mn;
+                    }
                     double direct;
                     if (mu0 <= 0) direct = 0;
                     else direct = switch (photo) {

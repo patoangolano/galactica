@@ -144,8 +144,13 @@ class OrbitalFrameTest {
     void warpCoMovesWithTheBody() {
         var earth = body("Earth", T0);
         GalacticPos here = earth.pos().plusMetres(5e7, 0, 0);
+        // Within the sphere the warp freezes the frame: no gravity, and the orbital speed is not braked away.
         OrbitalFrame.Advance a = OrbitalFrame.advance(nb, here, new double[] {7_000, 0, 0}, earth.body().id(), T0, DT, true);
-        assertArrayEquals(new double[3], a.frameVelocity(), "the warp bubble drops out at rest relative to the body");
+        assertArrayEquals(new double[] {7_000, 0, 0}, a.frameVelocity(), 1e-9, "the warp drive is not a brake");
+        // Warping in from the heliocentric frame drops out at rest relative to Earth, not 29.8 km/s off.
+        OrbitalFrame.Advance in = OrbitalFrame.advance(nb, here, new double[] {1_000, 0, 0}, OrbitalFrame.ANCHOR_STAR, T0, DT, true);
+        assertEquals(earth.body().id(), in.anchor());
+        assertArrayEquals(new double[3], in.frameVelocity(), "arrival matches the new dominant body");
     }
 
     @Test

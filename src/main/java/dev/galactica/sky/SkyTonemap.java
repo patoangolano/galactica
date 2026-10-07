@@ -41,8 +41,42 @@ public final class SkyTonemap {
         for (int i = 0; i < n; i++) lum[i] = luminance(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
         Arrays.sort(lum);
         double median = lum[n / 2];
-        double p99 = Math.max(1e-12, lum[Math.min(n - 1, (int) (n * 0.99))]);
-        return new SkyTonemap(1.0 / p99, 0.75 * median);
+        return new SkyTonemap(1.0 / Math.max(1e-12, anchor(lum, n)), 0.75 * median);
+    }
+
+    /**
+     * The luminance exposure is anchored to, from {@code n} sorted samples: the sky's 99th
+     * percentile, or the 95th percentile of the pixels the galaxy actually covers, whichever is
+     * brighter. Inside the disk the band covers most of the sky and the two agree (the p99 wins).
+     * Seen from outside, from the halo or intergalactic space, the galaxy is a small patch of a
+     * black sky: the sky's p99 then falls on its faint outskirts and the whole disc burned out to a
+     * flat white lens. Surface brightness does not depend on distance, so the covered pixels'
+     * own bright end keeps the exposure of an observer inside the disk. "Covered" means brighter
+     * than 10⁻³ of the near-maximum (p99.9).
+     *
+     * <p>The smaller the patch, the higher its percentile: p95 of the covered pixels while they
+     * fill a quarter of the sky or more, rising to p99 at 5 % and below. From the halo (~2 % of
+     * the sky) p95 put the whole bulge and inner disc on the highlight shoulder, a flat plateau
+     * a few levels below white that hid the dust lane; at p99 they stay on the logarithmic part
+     * and only the nucleus reaches the shoulder.
+     */
+    public static double anchor(double[] sortedLum, int n) {
+        if (n <= 0) return 0;
+        double p99 = sortedLum[Math.min(n - 1, (int) (n * 0.99))];
+        double top = sortedLum[Math.min(n - 1, (int) (n * 0.999))];
+        double floor = 1e-3 * top;
+        // First covered sample (binary search in the sorted array).
+        int lo = 0, hi = n;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (sortedLum[mid] < floor) lo = mid + 1;
+            else hi = mid;
+        }
+        int covered = n - lo;
+        double share = covered / (double) n;
+        double pct = 0.95 + 0.04 * Math.max(0, Math.min(1, (0.25 - share) / 0.20));
+        double pCovered = covered > 0 ? sortedLum[Math.min(n - 1, lo + (int) (covered * pct))] : 0;
+        return Math.max(p99, pCovered);
     }
 
     /** A tonemap with explicit parameters (exposure = 1 / the luminance shown near the knee). */

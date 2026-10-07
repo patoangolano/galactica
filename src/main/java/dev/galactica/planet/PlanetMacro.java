@@ -369,6 +369,49 @@ public final class PlanetMacro {
         return acc;
     }
 
+    /**
+     * {@link #craterField} with its gradient: returns the same value bit for bit and adds
+     * ∂field/∂(x, y, z) into {@code grad} (field-space units; scale by the frequency for unit-sphere
+     * coordinates). One pass over the 27 cells, so a lit relief costs about one extra evaluation.
+     */
+    public static double craterFieldGrad(long seed, double x, double y, double z, double[] grad) {
+        long cx = (long) Math.floor(x), cy = (long) Math.floor(y), cz = (long) Math.floor(z);
+        double acc = 0;
+        for (long i = cx - 1; i <= cx + 1; i++)
+            for (long j = cy - 1; j <= cy + 1; j++)
+                for (long k = cz - 1; k <= cz + 1; k++) {
+                    long h = SeedRng.mix(seed ^ (i * 0x8DA6B343L) ^ (j * 0xD8163841L) ^ (k * 0xCB1AB31FL));
+                    if ((h & 3) == 0) continue;
+                    double rad = 0.10 + 0.32 * sq(((h >>> 2) & 0x3F) / 63.0);
+                    double dx = x - (i + ((h >>> 8) & 0xFFFF) / 65536.0);
+                    double dy = y - (j + ((h >>> 24) & 0xFFFF) / 65536.0);
+                    double dz = z - (k + ((h >>> 40) & 0xFFFF) / 65536.0);
+                    double d2 = dx * dx + dy * dy + dz * dz, reach = rad * 2.2;
+                    if (d2 > reach * reach) continue;
+                    double dist = Math.sqrt(d2);
+                    double t = dist / rad;
+                    double dvdt = 0;
+                    if (t < 0.85) {
+                        acc -= 0.30 * (1 - sq(t / 0.85));
+                        dvdt += 0.30 * 2 * t / (0.85 * 0.85);
+                    }
+                    double rim = Math.exp(-sq((t - 1) / 0.12));
+                    acc += 0.25 * rim;
+                    dvdt += 0.25 * rim * (-2 * (t - 1) / (0.12 * 0.12));
+                    if (t > 1) {
+                        acc += 0.06 * (2.2 - t) / 1.2;
+                        dvdt -= 0.06 / 1.2;
+                    }
+                    if (dist > 1e-12) {
+                        double s = dvdt / (rad * dist);
+                        grad[0] += s * dx;
+                        grad[1] += s * dy;
+                        grad[2] += s * dz;
+                    }
+                }
+        return acc;
+    }
+
     // ---------------------------------------------------------------- helpers
 
     static double sq(double x) {

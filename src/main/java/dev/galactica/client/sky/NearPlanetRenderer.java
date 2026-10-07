@@ -54,10 +54,14 @@ import java.util.List;
  * is equally exact. Only front-facing ground is meshed (the cap within the horizon angle
  * acos(R/d)), since the shell projection would otherwise fold the far side onto the near.
  *
- * <p><b>Light.</b> Lambert ground (Lommel–Seeliger blend on airless regolith, as the imager) under
- * the star's blackbody colour, times the direct-sun transmittance. The view path is one over-blended
- * veil (Koschmieder's form): alpha 1 − T̄ and colour inscatter/(1 − T̄) from
- * {@link AtmosphereGradient#lookDown}, so the ground is attenuated once.
+ * <p><b>Light.</b> Lambert ground under the star's blackbody colour, times the direct-sun
+ * transmittance. The view path is one over-blended veil (Koschmieder's form): alpha 1 − T̄ and colour
+ * inscatter/(1 − T̄) from {@link AtmosphereGradient#lookDown}, so the ground is attenuated once.
+ * Airless bodies ({@link SurfaceClipmap#spaceLit}) are lit per texel instead: the clipmap relights
+ * its globe and levels for the true star and eye directions with the crater relief of
+ * {@link dev.galactica.planet.SpaceRelief} (Lommel–Seeliger regolith, as the imager), so the
+ * terminator falls where the star puts it and rims and crater floors catch and lose the light; the
+ * vertex colour then only carries the star's colour and the exposure.
  *
  * <p><b>Hand-over.</b> A body starts baking its clipmap once it passes {@link #BAKE_HALF_ANGLE}; it is
  * claimed from the sprite only above {@link #CLAIM_HALF_ANGLE}, only if it was the largest such body
@@ -108,6 +112,13 @@ public final class NearPlanetRenderer {
                 && sky != SurfaceAtmosphere.SkyClass.ORANGE;
     }
 
+    /** True when the last mesh drew the claimed body from its sun-lit images (autotest probe). */
+    public static boolean claimedLit() {
+        return claimed != null && builtLit;
+    }
+
+    private static boolean builtLit;
+
     /** Name of the body drawn as terrain in the last frame, or null (autotest probe). */
     public static String claimedName() {
         return claimed == null ? null : claimed.body().name();
@@ -131,6 +142,8 @@ public final class NearPlanetRenderer {
         if (claimed != null || halfAngle <= CLAIM_HALF_ANGLE || b.id() != winnerId) return false;
         SurfaceClipmap clip = SurfaceClipmap.current();
         if (clip == null || clip.body().id() != b.id() || clip.globe() == null) return false;
+        // An airless body is drawn only once its sun-lit globe exists (the unlit one has no relief).
+        if (clip.spaceLit() && clip.globeLit() == null) return false;
         claimed = c;
         return true;
     }
@@ -161,6 +174,7 @@ public final class NearPlanetRenderer {
         SurfaceClipmap clip = SurfaceClipmap.of(target.body());
         int minLevel = minLevel(x, clip);
         clip.request(x.subX, x.subZ, minLevel);
+        if (clip.spaceLit()) clip.requestLight(x.bodyFixedLight());
         clip.upload();
         if (claimed == null) return;
         if (!changed(x, clip, minLevel)) return;
@@ -257,6 +271,18 @@ public final class NearPlanetRenderer {
             return true;
         }
 
+        /** Star direction and eye position (in radii) in the body-fixed frame of the terrain. */
+        SurfaceClipmap.SpaceLight bodyFixedLight() {
+            double cs = Math.cos(spin), ss = Math.sin(spin);
+            double[] bx = new double[3], by = new double[3];
+            for (int k = 0; k < 3; k++) {
+                bx[k] = e1[k] * cs + e2[k] * ss;
+                by[k] = -e1[k] * ss + e2[k] * cs;
+            }
+            return new SurfaceClipmap.SpaceLight(dot(toStar, bx), dot(toStar, by), dot(toStar, pole),
+                    -dot(rel, bx) / radius, -dot(rel, by) / radius, -dot(rel, pole) / radius);
+        }
+
         /** Galactic unit normal of body-fixed latitude/longitude. */
         void normal(double lat, double lon, double[] out) {
             double a = lon + spin, c = Math.cos(lat), s = Math.sin(lat), ca = Math.cos(a) * c, sa = Math.sin(a) * c;
@@ -306,15 +332,20 @@ public final class NearPlanetRenderer {
             if (!x.atm.vacuum() && x.altitude < 1.5 * PlanetEntry.entryAltitude(b)) {
                 addPart(SKY_PARTS, vertex, dome(buf, x), SurfaceClipmap.white(), false);
             }
-            DynamicTexture globe = clip.globe();
+            // Airless: the sun-lit images, whose texels carry the light (mode 3); else the albedo images.
+            boolean lit = clip.spaceLit() && clip.globeLit() != null;
+            builtLit = lit;
+            DynamicTexture globe = lit ? clip.globeLit() : clip.globe();
             double horizon = Math.acos(Math.min(1, x.radius / x.d)) * 0.9995;
-            if (globe != null) addPart(PARTS, vertex, cap(buf, x, horizon, 0), globe, true);
+            if (globe != null) addPart(PARTS, vertex, cap(buf, x, horizon, lit ? 3 : 0), globe, true);
             // Each level fades into whatever is drawn under it; the bottom one only when the globe cap is there.
             boolean under = globe != null;
             for (int k = clip.coarsestUsable(); k >= Math.min(minLevel, SurfaceClipmap.LEVELS - 1); k--) {
                 SurfaceClipmap.Level l = clip.level(k);
                 if (!l.ready()) continue;
-                addPart(PARTS, vertex, level(buf, x, l, under), l.texture(), false);
+                DynamicTexture tex = lit ? l.litTexture() : l.texture();
+                if (tex == null) continue; // its lit image is still on the way
+                addPart(PARTS, vertex, level(buf, x, l, under, lit), tex, false);
                 under = true;
             }
             DynamicTexture clouds = clip.clouds();
@@ -368,7 +399,8 @@ public final class NearPlanetRenderer {
 
     /**
      * The visible cap around the sub-camera point. mode 0: ground from the globe (lit, path
-     * transmittance); 1: clouds (lit white, alpha from the texture); 2: airlight veil (untextured).
+     * transmittance); 1: clouds (lit white, alpha from the texture); 2: airlight veil (untextured);
+     * 3: ground from a sun-lit image (the texels carry the light).
      */
     private static int cap(BufferBuilder buf, Ctx x, double horizon, int mode) {
         double[] t1 = perpendicular(x.up), t2 = cross(x.up, t1);
@@ -404,7 +436,7 @@ public final class NearPlanetRenderer {
      * One clipmap level as a patch of the sphere; quads behind the horizon are skipped. {@code fade}
      * feathers its rim, for a level drawn over something (a coarser level or the globe cap).
      */
-    private static int level(BufferBuilder buf, Ctx x, SurfaceClipmap.Level l, boolean fade) {
+    private static int level(BufferBuilder buf, Ctx x, SurfaceClipmap.Level l, boolean fade, boolean lit) {
         float[][] q = new float[4][5];
         int[] c = new int[4];
         double[] nrm = new double[3];
@@ -429,7 +461,7 @@ public final class NearPlanetRenderer {
                     if (facing >= -1e-6 * x.d) visible = false;
                     q[k][3] = (float) fu;
                     q[k][4] = (float) fv;
-                    int col = surfaceVertex(x, nrm, q[k], 0, 0);
+                    int col = surfaceVertex(x, nrm, q[k], lit ? 3 : 0, 0);
                     c[k] = fade ? feather(col, fu, fv) : col;
                 }
                 if (!visible) continue;
@@ -503,7 +535,24 @@ public final class NearPlanetRenderer {
         for (int m = 0; m < 3; m++) p[m] = x.rel[m] + lift * nrm[m];
         double len = Math.sqrt(dot(p, p));
         for (int m = 0; m < 3; m++) v[m] = p[m] / len;
-        set(q, v, q[3], q[4], R_SHELL - mode * 0.2f);
+        set(q, v, q[3], q[4], R_SHELL - (mode == 3 ? 0 : mode) * 0.2f);
+        if (mode == 3) {
+            // Sun-lit image: the texel holds albedo × reflectance × exposure; add the star's colour, and
+            // on a thin-air body that still counts as airless here (Mars, 6 mbar with dust of optical
+            // depth ~0.5) the sunlight's path through that air, as mode 0 applies: it dims and reddens
+            // the ground towards the terminator. Taken at the smooth sphere's sun angle (the texel's
+            // relief only tilts the surface under the same air column), floored at a grazing sun so
+            // rims lit just past the terminator are not cut to black by the vertex interpolation.
+            double tr = x.starR * x.brightness, tg = x.starG * x.brightness, tb = x.starB * x.brightness;
+            if (!x.atm.vacuum()) {
+                double mu0 = Math.max(0.02, dot(nrm, x.toStar));
+                x.atm.sunTransmittance(mu0, x.sunT);
+                tr *= x.sunT[0];
+                tg *= x.sunT[1];
+                tb *= x.sunT[2];
+            }
+            return argb(enc(tr), enc(tg), enc(tb), 1);
+        }
         double mu0 = dot(nrm, x.toStar), mu = Math.max(1e-3, -dot(v, nrm)), cosScatter = dot(v, x.toStar);
         if (mode == 2) {
             // The view path as one over-blend: alpha 1 − T̄, colour inscatter/(1 − T̄) (Koschmieder's form).

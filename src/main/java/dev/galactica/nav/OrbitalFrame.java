@@ -28,9 +28,10 @@ import java.util.List;
  *
  * <p><b>Hand-over.</b> Crossing a sphere boundary re-expresses the frame velocity relative to the new dominant body
  * (v' = v + v_old − v_new, both body velocities heliocentric), so the inertial velocity is continuous. The warp
- * drive is the exception: while it moves, the warp bubble co-moves with the dominant body (frame velocity zero, no
- * gravity), so a craft drops out of warp at rest relative to the body it arrives at instead of with a planet's
- * orbital speed of difference. A teleport (commands, hyperjump) leaves the anchor unset, and the next tick adopts the
+ * drive is the exception at a boundary: a warp that carries the craft into another body's sphere drops it out at
+ * rest relative to that body instead of with a planet's orbital speed of difference. Within one sphere the warp
+ * bubble only freezes the frame (no gravity while it moves, the frame velocity kept as it was), so the drive is not a
+ * free brake: an orbit's 7.7 km/s is still there when the drive stops. A teleport (commands, hyperjump) leaves the anchor unset, and the next tick adopts the
  * dominant body at rest.
  *
  * <p><b>Krakensbane.</b> A ship's own block velocity is capped well under a chunk per tick; whatever a burn adds
@@ -145,7 +146,7 @@ public final class OrbitalFrame {
 
     /**
      * One tick of the frame of a craft at {@code here} (its galactic position at time t): picks the dominant body,
-     * hands the velocity over if it changed, applies its gravity (unless warping) and returns how far the origin moves:
+     * hands the velocity over if it changed (matching the new body when warping), applies its gravity (frozen while warping) and returns how far the origin moves:
      * the body's own displacement over the tick plus the frame velocity times dt.
      */
     public static Advance advance(Neighbourhood n, GalacticPos here, double[] vFrame, long anchor, double t, double dt, boolean warping) {
@@ -156,11 +157,13 @@ public final class OrbitalFrame {
             if (warping) v = new double[3];
             return new Advance(new double[] {v[0] * dt, v[1] * dt, v[2] * dt}, v, ANCHOR_STAR, null);
         }
-        if (warping || anchor == ANCHOR_UNSET || !finite(v)) {
+        if (anchor == ANCHOR_UNSET || !finite(v)) {
             v = new double[3];
         } else if (anchor != d.id()) {
+            // Warping into another body's sphere matches that body (supercruise drop-out); coasting keeps the
+            // inertial velocity.
             boolean known = anchor == ANCHOR_STAR || anchorPos(n, here, anchor, t) != null;
-            v = known ? handOver(v, anchorVelocity(n, here, anchor, t), anchorVelocity(n, here, d.id(), t)) : new double[3];
+            v = known && !warping ? handOver(v, anchorVelocity(n, here, anchor, t), anchorVelocity(n, here, d.id(), t)) : new double[3];
         }
         if (!warping) {
             double[] a = gravity(here.metresFrom(d.pos()), d.mu(), d.radius());

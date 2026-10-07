@@ -20,9 +20,18 @@ import net.minecraft.network.codec.StreamCodec;
  * @param frameVz     see {@code frameVx}
  * @param anchor      id of the body the frame co-moves with ({@link OrbitalFrame#ANCHOR_STAR}, or
  *                    {@link OrbitalFrame#ANCHOR_UNSET} until the next space tick adopts one)
+ * @param rebaseAck   sequence number of the last pilot report whose Krakensbane rebase the server has folded into the
+ *                    frame velocity: the pilot's client adds the rebases it sent after that one to the synced frame
+ *                    velocity, so flight assist measures against the frame as it will be, not one round trip old. Not
+ *                    persisted (report numbers restart with the client).
  */
 public record NavState(GalacticPos origin, double speed, double maxSpeed, double timeSeconds,
-                       double frameVx, double frameVy, double frameVz, long anchor) {
+                       double frameVx, double frameVy, double frameVz, long anchor, int rebaseAck) {
+
+    public NavState(GalacticPos origin, double speed, double maxSpeed, double timeSeconds,
+                    double frameVx, double frameVy, double frameVz, long anchor) {
+        this(origin, speed, maxSpeed, timeSeconds, frameVx, frameVy, frameVz, anchor, 0);
+    }
 
     public NavState(GalacticPos origin, double speed, double maxSpeed, double timeSeconds) {
         this(origin, speed, maxSpeed, timeSeconds, 0, 0, 0, OrbitalFrame.ANCHOR_UNSET);
@@ -34,19 +43,19 @@ public record NavState(GalacticPos origin, double speed, double maxSpeed, double
     }
 
     public NavState withOrigin(GalacticPos o) {
-        return new NavState(o, speed, maxSpeed, timeSeconds, frameVx, frameVy, frameVz, anchor);
+        return new NavState(o, speed, maxSpeed, timeSeconds, frameVx, frameVy, frameVz, anchor, rebaseAck);
     }
 
     public NavState withSpeed(double s) {
-        return new NavState(origin, s, maxSpeed, timeSeconds, frameVx, frameVy, frameVz, anchor);
+        return new NavState(origin, s, maxSpeed, timeSeconds, frameVx, frameVy, frameVz, anchor, rebaseAck);
     }
 
     public NavState withMaxSpeed(double s) {
-        return new NavState(origin, speed, s, timeSeconds, frameVx, frameVy, frameVz, anchor);
+        return new NavState(origin, speed, s, timeSeconds, frameVx, frameVy, frameVz, anchor, rebaseAck);
     }
 
     public NavState withTime(double t) {
-        return new NavState(origin, speed, maxSpeed, t, frameVx, frameVy, frameVz, anchor);
+        return new NavState(origin, speed, maxSpeed, t, frameVx, frameVy, frameVz, anchor, rebaseAck);
     }
 
     /** The frame's velocity relative to its anchor body, galactic m/s (a fresh array). */
@@ -55,7 +64,11 @@ public record NavState(GalacticPos origin, double speed, double maxSpeed, double
     }
 
     public NavState withFrame(double[] v, long anchorId) {
-        return new NavState(origin, speed, maxSpeed, timeSeconds, v[0], v[1], v[2], anchorId);
+        return new NavState(origin, speed, maxSpeed, timeSeconds, v[0], v[1], v[2], anchorId, rebaseAck);
+    }
+
+    public NavState withRebaseAck(int seq) {
+        return new NavState(origin, speed, maxSpeed, timeSeconds, frameVx, frameVy, frameVz, anchor, seq);
     }
 
     /** At rest relative to whatever body dominates where the next space tick finds the craft (teleports, arrivals). */
@@ -77,6 +90,7 @@ public record NavState(GalacticPos origin, double speed, double maxSpeed, double
             ByteBufCodecs.DOUBLE, NavState::frameVy,
             ByteBufCodecs.DOUBLE, NavState::frameVz,
             ByteBufCodecs.LONG, NavState::anchor,
+            ByteBufCodecs.VAR_INT, NavState::rebaseAck,
             NavState::new);
 
     public static final Codec<NavState> CODEC = RecordCodecBuilder.create(i -> i.group(
@@ -88,5 +102,5 @@ public record NavState(GalacticPos origin, double speed, double maxSpeed, double
             Codec.DOUBLE.optionalFieldOf("frame_vy", 0.0).forGetter(NavState::frameVy),
             Codec.DOUBLE.optionalFieldOf("frame_vz", 0.0).forGetter(NavState::frameVz),
             Codec.LONG.optionalFieldOf("anchor", OrbitalFrame.ANCHOR_UNSET).forGetter(NavState::anchor)
-    ).apply(i, NavState::new));
+    ).apply(i, (o, s, m, t, x, y, z, a) -> new NavState(o, s, m, t, x, y, z, a, 0)));
 }

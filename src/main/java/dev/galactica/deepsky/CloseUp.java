@@ -150,7 +150,7 @@ public final class CloseUp {
         double[] lum = new double[rw * rh];
         for (int p = 0; p < lum.length; p++) lum[p] = SkyTonemap.luminance(ref[p * 3], ref[p * 3 + 1], ref[p * 3 + 2]);
         java.util.Arrays.sort(lum);
-        double p99 = lum[(int) (lum.length * 0.99)];
+        double p99 = SkyTonemap.anchor(lum, lum.length);
         GalaxySkyBaker.compressHighlights(ref, rw, rh, true);
         SkyTonemap tm = SkyTonemap.fit(ref);
 

@@ -31,7 +31,8 @@ import java.util.UUID;
  * <p><b>Orbital frame.</b> Every tick the frame co-moves with the body whose sphere of influence the craft is in,
  * carries the craft's velocity relative to it and falls under its gravity ({@link OrbitalFrame}), so a planet no
  * longer runs away at its orbital speed once a craft leaves it, and a craft at the right speed orbits. While the warp
- * drive moves, the frame is at rest relative to that body.
+ * drive moves, the frame is frozen (no gravity, velocity kept), and a warp into another body's sphere arrives at rest
+ * relative to that body.
  *
  * <p><b>Floating origin.</b> A craft more than {@link #ORIGIN_LIMIT} blocks from block (0,0,0) of its
  * frame is moved back to it and the offset is folded into {@link NavState#origin()} ({@link FloatingOrigin}), so
@@ -134,7 +135,7 @@ public final class NavServer {
         if (shift != null) origin = FloatingOrigin.fold(origin, shift);
 
         double[] v = frame.frameVelocity();
-        NavState next = new NavState(origin, speed, nav.maxSpeed(), t, v[0], v[1], v[2], frame.anchor());
+        NavState next = new NavState(origin, speed, nav.maxSpeed(), t, v[0], v[1], v[2], frame.anchor(), nav.rebaseAck());
         if (shift != null) FloatingOrigin.apply(p, shift, nav.origin(), next.origin(), t);
         // Written (and synced to the owner) every tick: the frame co-moves with the planets and falls, so the origin and
         // the clock change every tick and must reach the client together. (Writing only on change used to leave the

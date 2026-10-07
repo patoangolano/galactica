@@ -152,8 +152,8 @@ public final class GalaxySkyBaker {
     public static final double ADAPT_GAMMA = 0.6;
 
     /**
-     * Local adaptation (dodging and burning) of an equirectangular HDR sky, anchored to its own
-     * 99th-percentile luminance. See {@link #compressHighlights(float[], int, int, double, boolean, double)}.
+     * Local adaptation (dodging and burning) of an equirectangular HDR sky, anchored to the same
+     * luminance as the exposure ({@link SkyTonemap#anchor}). See {@link #compressHighlights(float[], int, int, double, boolean, double)}.
      */
     public static void compressHighlights(float[] hdr, int w, int h, boolean equirect) {
         int n = w * h;
@@ -162,8 +162,7 @@ public final class GalaxySkyBaker {
         int m = 0;
         for (int p = 0; p < n; p += stride) lum[m++] = 0.2126 * hdr[p * 3] + 0.7152 * hdr[p * 3 + 1] + 0.0722 * hdr[p * 3 + 2];
         java.util.Arrays.sort(lum, 0, m);
-        double p99 = lum[Math.min(m - 1, (int) (m * 0.99))];
-        compressHighlights(hdr, w, h, 2 * Math.PI / w, equirect, p99);
+        compressHighlights(hdr, w, h, 2 * Math.PI / w, equirect, SkyTonemap.anchor(lum, m));
     }
 
     /**
@@ -501,13 +500,23 @@ public final class GalaxySkyBaker {
         int ei = 0, en = ev != null ? ev.count : 0;
         int kn = 0;
         double adz = Math.max(1e-6, Math.abs(dz));
-        double s0 = START_PC;
+        // The march covers only the chord of the ray through the galaxy's bounding cylinder. An
+        // observer outside the galaxy (the halo, intergalactic space) starts at the entry point, with
+        // the step growth restarted there, and every ray ends at the exit point: the old test
+        // "outside the cylinder and moving away from the plane" ended rays from an observer above
+        // the plane before they ever reached the galaxy, which cut the disc at the horizon line.
+        double[] chord = CHORD_TMP.get();
+        boolean hits = boundingChord(ox, oy, oz, dx, dy, dz, chord);
+        double sEntry = hits ? Math.max(START_PC, chord[0]) : END_PC;
+        double sExit = hits ? chord[1] : 0;
+        double s0 = sEntry;
+        double growFrom = sEntry - START_PC;
         // The smooth structural model varies on ≥ 100 pc scales, so it is re-evaluated only after the
         // ray has moved MODEL_SPACING_PC (or a fifth of the local height scale vertically); the noise
         // that carries the fine structure is still sampled at every step.
         double sModel = Double.NEGATIVE_INFINITY, zModel = 0;
         double mDisk = 0, mBulgeHalo = 0, mYoungFrac = 0, mDust = 0;
-        for (int i = 0; i < MAX_STEPS && s0 < END_PC; i++) {
+        for (int i = 0; i < MAX_STEPS && s0 < sExit; i++) {
             if (knots != null) {
                 while (kn < KN - 1 && s0 >= KNOTS[kn]) {
                     int a = off + kn++ * 4;
@@ -521,7 +530,12 @@ public final class GalaxySkyBaker {
             // Far from the plane only the smooth, dust-free thick disk and halo remain: steps may grow
             // up to 5x faster there (midpoint error on their exponential/power-law profiles stays < 1 %).
             double growth = GROWTH * (1 + 4 * smoothstep(800, 3000, Math.abs(zNow)));
-            double ds = Math.min(s0 * growth, 0.25 * Math.max(Math.abs(zNow), 100.0) / adz);
+            double ds = Math.min((s0 - growFrom) * growth, 0.25 * Math.max(Math.abs(zNow), 100.0) / adz);
+            // Nor more than a fifth of the distance to the Galactic Centre: the bulge (~400 pc) and the
+            // radial profile of the disk are resolved even by a ray that has travelled tens of kpc,
+            // e.g. from outside the galaxy (otherwise the bulge breaks into concentric bands).
+            double xNow = ox + dx * s0, yNow = oy + dy * s0;
+            ds = Math.min(ds, 0.2 * Math.max(Math.sqrt(xNow * xNow + yNow * yNow + zNow * zNow), 500.0));
             ds = Math.max(ds, 2.0);
             double s = s0 + 0.5 * ds;
             s0 += ds;
@@ -538,10 +552,7 @@ public final class GalaxySkyBaker {
                 ei++;
             }
             double x = ox + dx * s, y = oy + dy * s, z = oz + dz * s;
-            if (Math.abs(z) > 12_000 || x * x + y * y > 9.0e8) {
-                if (dz * z > 0) break; // leaving the galaxy for good
-                continue;
-            }
+            if (Math.abs(z) > BOUND_Z || x * x + y * y > BOUND_R * BOUND_R) continue; // the last step's overshoot
             if (s - sModel >= MODEL_SPACING_PC || Math.abs(z - zModel) > 0.2 * Math.max(Math.abs(z), 50.0)) {
                 double total = GalaxyModel.starDensity(x, y, z);
                 double bulge = GalaxyModel.bulgeDensity(x, y, z);
@@ -618,6 +629,41 @@ public final class GalaxySkyBaker {
         rgb[0] = r;
         rgb[1] = g;
         rgb[2] = b;
+    }
+
+    /** Bounding cylinder of everything the march integrates (pc): the model is empty outside it. */
+    static final double BOUND_R = GalaxyModel.RADIUS_LIMIT, BOUND_Z = 12_000.0;
+    private static final ThreadLocal<double[]> CHORD_TMP = ThreadLocal.withInitial(() -> new double[2]);
+
+    /**
+     * Distances [enter, exit] along the ray o + s·d (s ≥ 0, d a unit vector) inside the bounding
+     * cylinder r ≤ {@link #BOUND_R}, |z| ≤ {@link #BOUND_Z}. Returns false when the ray misses it.
+     */
+    static boolean boundingChord(double ox, double oy, double oz, double dx, double dy, double dz, double[] out) {
+        double t0 = 0, t1 = Double.POSITIVE_INFINITY;
+        // Slab |z| <= BOUND_Z.
+        if (Math.abs(dz) < 1e-12) {
+            if (Math.abs(oz) > BOUND_Z) return false;
+        } else {
+            double a = (-BOUND_Z - oz) / dz, b = (BOUND_Z - oz) / dz;
+            t0 = Math.max(t0, Math.min(a, b));
+            t1 = Math.min(t1, Math.max(a, b));
+        }
+        // Infinite cylinder x² + y² <= BOUND_R².
+        double qa = dx * dx + dy * dy, qb = ox * dx + oy * dy, qc = ox * ox + oy * oy - BOUND_R * BOUND_R;
+        if (qa < 1e-12) {
+            if (qc > 0) return false;
+        } else {
+            double disc = qb * qb - qa * qc;
+            if (disc < 0) return false;
+            double sq = Math.sqrt(disc);
+            t0 = Math.max(t0, (-qb - sq) / qa);
+            t1 = Math.min(t1, (-qb + sq) / qa);
+        }
+        if (!(t1 > t0)) return false;
+        out[0] = t0;
+        out[1] = t1;
+        return true;
     }
 
     private static double smoothstep(double e0, double e1, double v) {

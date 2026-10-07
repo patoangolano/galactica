@@ -83,6 +83,49 @@ public final class ShipEnvironment {
         return lightCoords(s.direct);
     }
 
+    /** Render-thread scratch for {@link #evaLight}. */
+    private static final StarshipRenderState EVA = new StarshipRenderState();
+
+    /**
+     * Light for an entity in open space, not aboard a ship (an EVA player's body and first-person arm), or -1 outside
+     * space: the same starlight route as a ship's crew, from the system's star at the entity's position, with the
+     * {@link #lightCoords} floor far from any star. Starlight is direct light only (there is no sky to scatter it), so
+     * an entity whose line to the star is blocked within {@link #EVA_SHADOW_REACH} blocks (inside a station, behind an
+     * asteroid) gets just the ambient floor; vanilla's block light (torches, lamps) still adds on top of it.
+     */
+    public static int evaLight(net.minecraft.world.entity.Entity entity, float partialTicks) {
+        Level level = entity.level();
+        if (level.dimension() != Galactica.SPACE) return -1;
+        var pos = entity.getPosition(partialTicks);
+        StarshipRenderState s = sampleSpace(level, pos.x, pos.y, pos.z, EVA);
+        if (s.direct > 0F && s.toStar.lengthSquared() > 0.5F && starBlocked(level, entity.getEyePosition(partialTicks), s.toStar)) s.direct = 0F;
+        return lightCoords(s.direct);
+    }
+
+    /** How far (blocks) a build can shade an EVA player from the star. */
+    public static final double EVA_SHADOW_REACH = 96.0;
+
+    private static boolean starBlocked(Level level, net.minecraft.world.phys.Vec3 eye, org.joml.Vector3fc toStar) {
+        net.minecraft.world.phys.Vec3 to = eye.add(toStar.x() * EVA_SHADOW_REACH, toStar.y() * EVA_SHADOW_REACH, toStar.z() * EVA_SHADOW_REACH);
+        var hit = level.clip(new net.minecraft.world.level.ClipContext(eye, to, net.minecraft.world.level.ClipContext.Block.VISUAL,
+                net.minecraft.world.level.ClipContext.Fluid.NONE, net.minecraft.world.phys.shapes.CollisionContext.empty()));
+        return hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS;
+    }
+
+    /** Fills the starlight fields of {@code state} (toStar, direct, tint) for a point in space; returns {@code state}. */
+    public static StarshipRenderState sampleSpace(Level level, double x, double y, double z, StarshipRenderState state) {
+        state.x = x;
+        state.y = y;
+        state.z = z;
+        state.starLit = true;
+        state.toStar.zero();
+        state.direct = 0F;
+        state.tint[0] = state.tint[1] = state.tint[2] = 1F;
+        state.ambientBar = 0F;
+        starLight(level, state);
+        return state;
+    }
+
     private static void starLight(Level level, StarshipRenderState state) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null) return;

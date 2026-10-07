@@ -30,9 +30,12 @@ public record OrbitReadout(String body, boolean star, double altitude, double sp
     public static @Nullable OrbitReadout current(Minecraft mc) {
         if (mc.player == null || mc.level == null || mc.level.dimension() != dev.galactica.Galactica.SPACE) return null;
         SkyManager mgr = SkyManager.get();
-        GalacticPos eye = mgr.viewer();
-        NavState nav = mgr.nav();
-        if (eye == null || nav == null || nav.speed() > 0) return null;
+        // The live attachment and the craft's own position, not the sky's per-frame cache: on the first tick back in
+        // space (take-off) no space frame has rendered yet, and that cache still held the state from before the entry.
+        NavState nav = mc.player.getAttached(dev.galactica.Galactica.NAV);
+        if (nav == null || nav.speed() > 0) return null;
+        Entity root = mc.player.getRootVehicle();
+        GalacticPos eye = Frames.playerPos(nav, root.getX(), root.getY(), root.getZ());
         double t = nav.timeSeconds();
         OrbitalFrame.Dominant d = OrbitalFrame.dominant(mgr.neighbourhood(), eye, t);
         if (d == null) return null;
@@ -46,7 +49,6 @@ public record OrbitReadout(String body, boolean star, double altitude, double sp
             v = OrbitalFrame.handOver(nav.frameVelocity(), OrbitalFrame.anchorVelocity(mgr.neighbourhood(), eye, nav.anchor(), t),
                     OrbitalFrame.anchorVelocity(mgr.neighbourhood(), eye, d.id(), t));
         }
-        Entity root = mc.player.getRootVehicle();
         double[] own = Frames.mcToGalactic((root.getX() - root.xo) * 20, (root.getY() - root.yo) * 20, (root.getZ() - root.zo) * 20);
         for (int i = 0; i < 3; i++) v[i] += own[i];
         double[] r = eye.metresFrom(d.pos());

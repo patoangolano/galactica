@@ -25,11 +25,13 @@ import java.util.Locale;
  * tick (its block position plus the synced galactic origin, against Earth's position at the synced clock) and logs
  * one {@code [autotest] PASS|FAIL} line:
  * <ul>
- *   <li>{@link #orbit}: a ship given circular speed at 400 km keeps its altitude within ±5 % for a minute;</li>
+ *   <li>{@link #orbit}: a ship given circular speed at 400 km keeps its altitude within ±5 % for a minute, on a conic
+ *       whose apsides stay within ±2 % and whose energy drifts under 0.1 %;</li>
  *   <li>{@link #approach}: from 2,000 km, flying at Earth (main engine, or the warp drive) brings the altitude down
- *       and ends in the entry switch within a time limit — the reported bug was Earth receding as one flew at it;</li>
- *   <li>{@link #takeOff}: a ship climbing out of the Overworld and left alone stays near Earth (falls back and
- *       re-enters, or at least stays bounded) instead of watching Earth run away at 29.8 km/s;</li>
+ *       and ends in the entry switch within a time limit, the player and ship surviving it — the reported bug was Earth
+ *       receding as one flew at it;</li>
+ *   <li>{@link #takeOff}: a ship climbing out of the Overworld and left alone (assist off) coasts ballistically under
+ *       Earth's g and falls back instead of watching Earth run away at 29.8 km/s;</li>
  *   <li>{@link #evaFall}: a suited player at rest 1,000 km up falls toward Earth at ½ g t².</li>
  * </ul>
  */
@@ -157,32 +159,53 @@ public final class SoiAutoTest {
 
     private static String readout(Minecraft mc) {
         OrbitReadout o = OrbitReadout.current(mc);
-        return o == null ? "no readout" : String.format(Locale.ROOT, "HUD: %s alt %s v %s Pe %s Ap %s", o.body(), km(o.altitude()),
-                OrbitReadout.speed(o.speed()), OrbitReadout.apsis(o.periapsis()), OrbitReadout.apsis(o.apoapsis()));
+        Runtime rt = Runtime.getRuntime();
+        String heap = String.format(Locale.ROOT, "heap %d/%d MB", (rt.totalMemory() - rt.freeMemory()) >> 20, rt.maxMemory() >> 20);
+        return o == null ? "no readout, " + heap : String.format(Locale.ROOT, "HUD: %s alt %s v %s Pe %s Ap %s; %s", o.body(), km(o.altitude()),
+                OrbitReadout.speed(o.speed()), OrbitReadout.apsis(o.periapsis()), OrbitReadout.apsis(o.apoapsis()), heap);
     }
 
     /**
-     * (c) Left alone, flight assist off, on a circular orbit at {@code target} metres: the altitude stays within ±5 %
-     * for {@code length} ticks.
+     * (c) Left alone, flight assist off, on a circular orbit at {@code target} metres for {@code length} ticks. Passes
+     * when the altitude stays within ±5 %, and the conic is really that circular orbit: periapsis and apoapsis both
+     * within ±2 % of the target and the specific orbital energy v²/2 − μ/r drifting under 0.1 %. A craft with no
+     * tangential speed would fall ½ g t² ≈ 15.7 km in a minute, inside ±5 %, but its periapsis is an impact, so it
+     * fails.
      */
     static Phase orbit(double target, int length) {
         double[] range = {Double.MAX_VALUE, -Double.MAX_VALUE};
+        double[] apsides = {Double.MAX_VALUE, -Double.MAX_VALUE};
+        double[] energy = {Double.NaN, Double.NaN};
         int[] missed = {0};
+        double mu = dev.galactica.science.Units.G * dev.galactica.science.Units.EARTH_MASS;
         return (mc, t) -> {
             Starship ship = ShipClient.piloted(mc);
             // Flight assist brakes relative to the planet, orbital speed included: coasting on an orbit is assist off.
             if (t == 0 && ship != null && ship.coupled()) ship.toggleCoupled();
             double alt = earthAltitude(mc);
-            if (Double.isNaN(alt)) missed[0]++;
+            OrbitReadout o = OrbitReadout.current(mc);
+            if (Double.isNaN(alt) || o == null) missed[0]++;
             else {
                 range[0] = Math.min(range[0], alt);
                 range[1] = Math.max(range[1], alt);
+                apsides[0] = Math.min(apsides[0], o.periapsis());
+                apsides[1] = Math.max(apsides[1], o.apoapsis());
+                double e = o.speed() * o.speed() / 2 - mu / (o.altitude() + 6.371e6);
+                if (Double.isNaN(energy[0])) energy[0] = e;
+                energy[1] = e;
             }
             if (t % 200 == 0) Galactica.LOG.info("[autotest] orbit t={} altitude {} ({})", t, km(alt), readout(mc));
             if (t < length) return false;
-            boolean ok = missed[0] == 0 && range[0] > 0.95 * target && range[1] < 1.05 * target;
-            Galactica.LOG.info("[autotest] {} circular orbit at {}: altitude {} .. {} over {} s (±5 % allowed), {} ticks out of space; {}",
-                    ok ? "PASS" : "FAIL", km(target), km(range[0]), km(range[1]), length / 20, missed[0], readout(mc));
+            double drift = Math.abs(energy[1] / energy[0] - 1);
+            boolean band = range[0] > 0.95 * target && range[1] < 1.05 * target;
+            boolean conic = apsides[0] > 0.98 * target && apsides[1] < 1.02 * target;
+            boolean ok = missed[0] == 0 && band && conic && drift < 1e-3;
+            Galactica.LOG.info(String.format(Locale.ROOT,
+                    "[autotest] %s circular orbit at %s: altitude %s .. %s over %d s (±5 %% allowed; free fall would drop %s), "
+                            + "Pe >= %s Ap <= %s (±2 %% allowed), energy drift %.4f %% (< 0.1 %%), %d ticks without readout; %s",
+                    ok ? "PASS" : "FAIL", km(target), km(range[0]), km(range[1]), length / 20,
+                    km(0.5 * mu / Math.pow(6.371e6 + target, 2) * Math.pow(length / 20.0, 2)), km(apsides[0]), km(apsides[1]),
+                    drift * 100, missed[0], readout(mc)));
             return true;
         };
     }
@@ -190,51 +213,78 @@ public final class SoiAutoTest {
     /**
      * (b) Flies at Earth from where the craft is: the main engine with the ship's nose on Earth's centre, or the warp
      * drive (sprint) for a suited creative player looking at it. Passes when the entry switch happens within
-     * {@code limit} ticks and the altitude only went down on the way.
+     * {@code limit} ticks, the altitude only went down on the way, and two seconds after the switch the player is alive,
+     * a pilot is still at the controls with the hull it had in space, and the arrival speed is within the flight
+     * model's block cap: the main-engine run enters at km/s relative to Earth, far above what the switch used to see.
      */
     static Phase approach(String how, boolean warp, int limit) {
-        double[] first = {Double.NaN}, last = {Double.NaN};
-        int[] climbs = {0};
+        double[] first = {Double.NaN}, last = {Double.NaN}, entrySpeed = {Double.NaN}, hull = {Double.NaN}, arrival = {0};
+        int[] climbs = {0}, enteredAt = {-1};
         return (mc, t) -> {
-            if (inSpace(mc)) {
+            if (enteredAt[0] < 0 && inSpace(mc)) {
+                Starship ship = ShipClient.piloted(mc);
                 if (warp) {
                     mc.player.getAbilities().flying = true;
                     mc.options.keySprint.setDown(true);
                     mc.player.setSprinting(true);
                 } else {
                     // Assist on, as a pilot flies: it measures drift against Earth, not against the falling frame.
-                    Starship ship = ShipClient.piloted(mc);
                     if (t == 0 && ship != null && !ship.coupled()) ship.toggleCoupled();
                     if (t % 100 == 0) aimShipAtEarth(mc);
                     mc.options.keyUp.setDown(true);
                 }
+                if (ship != null) hull[0] = ship.hull();
                 double alt = earthAltitude(mc);
                 if (!Double.isNaN(alt)) {
                     if (Double.isNaN(first[0])) first[0] = alt;
                     if (!Double.isNaN(last[0]) && alt > last[0] + 50) climbs[0]++;
                     last[0] = alt;
                 }
+                OrbitReadout o = OrbitReadout.current(mc);
+                if (o != null) entrySpeed[0] = o.speed();
                 if (t % (warp ? 20 : 200) == 0) Galactica.LOG.info("[autotest] approach ({}) t={} altitude {} ({})", how, t, km(alt), readout(mc));
-                if (t < limit) return false;
+                return t >= limit && finish(how, limit, t, first, last, climbs, entrySpeed, hull, arrival, false, mc);
             }
-            boolean entered = !inSpace(mc);
-            boolean ok = entered && climbs[0] == 0 && first[0] > last[0];
-            Galactica.LOG.info("[autotest] {} approach to Earth by {}: from {} down to {}, {} in {} s (limit {} s), climbing ticks {}",
-                    ok ? "PASS" : "FAIL", how, km(first[0]), km(last[0]), entered ? "entered " + mc.level.dimension().identifier() : "no entry",
-                    String.format(Locale.ROOT, "%.1f", t / 20.0), limit / 20, climbs[0]);
-            return true;
+            if (enteredAt[0] < 0) {
+                enteredAt[0] = t;
+                mc.options.keyUp.setDown(false);
+                mc.options.keySprint.setDown(false);
+            }
+            Entity root = mc.player.getRootVehicle();
+            arrival[0] = Math.max(arrival[0], root.getDeltaMovement().length() * 20);
+            if (t - enteredAt[0] < 40) return false;
+            return finish(how, limit, enteredAt[0], first, last, climbs, entrySpeed, hull, arrival, true, mc);
         };
+    }
+
+    private static boolean finish(String how, int limit, int t, double[] first, double[] last, int[] climbs, double[] entrySpeed,
+                                  double[] hull, double[] arrival, boolean entered, Minecraft mc) {
+        Starship ship = ShipClient.piloted(mc);
+        boolean alive = mc.player.isAlive() && mc.player.getHealth() > 0;
+        boolean shipOk = Double.isNaN(hull[0]) || ship != null && ship.hull() >= hull[0];
+        boolean sane = arrival[0] <= dev.galactica.ship.ShipFlightModel.MAX_SPEED * 1.01;
+        boolean ok = entered && climbs[0] == 0 && first[0] > last[0] && alive && shipOk && sane;
+        Galactica.LOG.info(String.format(Locale.ROOT,
+                "[autotest] %s approach to Earth by %s: from %s down to %s, %s in %.1f s (limit %d s), climbing ticks %d; "
+                        + "entered at %s relative to Earth, arrived at %.0f m/s (cap %.0f), player %s, %s",
+                ok ? "PASS" : "FAIL", how, km(first[0]), km(last[0]), entered ? "entered " + mc.level.dimension().identifier() : "no entry",
+                t / 20.0, limit / 20, climbs[0], OrbitReadout.speed(entrySpeed[0]), arrival[0], dev.galactica.ship.ShipFlightModel.MAX_SPEED,
+                alive ? "alive" : "DEAD", Double.isNaN(hull[0]) ? "on EVA" : ship == null ? "ship LOST"
+                        : String.format(Locale.ROOT, "hull %.0f -> %.0f", hull[0], ship.hull())));
+        return true;
     }
 
     /**
      * (a) From the Overworld in a ship: stopped ten rows under the take-off row, nose straight up, main engine until the
-     * switch (~280 m/s, an Overworld block being ~10 m), then hands off. Passes when the craft reached space and, left
-     * alone, stayed within 200 km of Earth and either fell back into it or was on a bound, decelerating climb by the
-     * end (finite apoapsis under 200 km, radial speed falling). Before the fix Earth receded at ~1.5 km per tick.
+     * switch (~280 m/s, an Overworld block being ~10 m), then hands off with flight assist off (on, it would hover the
+     * ship against Earth). Passes when the craft reached space, stayed within 200 km of Earth, and coasted
+     * ballistically: its radial speed fell at Earth's g (measured over the coast, ±30 %), until it fell back into the
+     * entry switch or, by the end, was on a bound climb (finite apoapsis under 200 km). Before the fix Earth receded at
+     * ~1.5 km per tick.
      */
     static Phase takeOff(int coastTicks) {
         int[] leftAt = {-1}, backAt = {-1};
-        double[] max = {0}, end = {Double.NaN}, vr = {Double.NaN, Double.NaN}, ap = {Double.NaN};
+        double[] max = {0}, end = {Double.NaN}, vr = {Double.NaN, Double.NaN}, vrTime = {Double.NaN, Double.NaN}, ap = {Double.NaN};
         return (mc, t) -> {
             Starship ship = ShipClient.piloted(mc);
             if (t == 0) {
@@ -251,7 +301,9 @@ public final class SoiAutoTest {
                 if (inSpace(mc)) {
                     leftAt[0] = t;
                     mc.options.keyUp.setDown(false);
-                    Galactica.LOG.info("[autotest] take-off: in space after {} ticks; hands off ({})", t, readout(mc));
+                    if (ship != null && ship.coupled()) ship.toggleCoupled();
+                    Galactica.LOG.info("[autotest] take-off: in space after {} ticks; hands off, assist {} ({})", t,
+                            ship != null && ship.coupled() ? "on" : "off", readout(mc));
                 } else if (t > 1200) {
                     Galactica.LOG.warn("[autotest] FAIL take-off: still in {} after 60 s", mc.level.dimension().identifier());
                     return true;
@@ -262,26 +314,41 @@ public final class SoiAutoTest {
             }
             int coast = t - leftAt[0];
             if (backAt[0] < 0 && !inSpace(mc)) backAt[0] = coast;
-            double alt = earthAltitude(mc);
-            if (!Double.isNaN(alt)) {
-                max[0] = Math.max(max[0], alt);
-                end[0] = alt;
+            if (backAt[0] < 0) {
+                double alt = earthAltitude(mc);
+                if (!Double.isNaN(alt)) {
+                    max[0] = Math.max(max[0], alt);
+                    end[0] = alt;
+                }
+                OrbitReadout o = OrbitReadout.current(mc);
+                NavState nav = mc.player.getAttached(Galactica.NAV);
+                if (o != null && nav != null && coast >= 20) {
+                    if (Double.isNaN(vr[0])) {
+                        vr[0] = o.vertical();
+                        vrTime[0] = nav.timeSeconds();
+                    }
+                    vr[1] = o.vertical();
+                    vrTime[1] = nav.timeSeconds();
+                    ap[0] = o.apoapsis();
+                }
+                if (coast % 40 == 0) Galactica.LOG.info("[autotest] take-off coast t={} altitude {} ({})", coast, km(alt), readout(mc));
             }
-            OrbitReadout o = OrbitReadout.current(mc);
-            if (o != null) {
-                if (coast >= 20 && Double.isNaN(vr[0])) vr[0] = o.vertical();
-                vr[1] = o.vertical();
-                ap[0] = o.apoapsis();
-            }
-            if (coast % 40 == 0 && backAt[0] < 0) Galactica.LOG.info("[autotest] take-off coast t={} altitude {} ({})", coast, km(alt), readout(mc));
             if (backAt[0] < 0 && coast < coastTicks) return false;
+            double span = vrTime[1] - vrTime[0];
+            double gMeasured = span > 2 ? (vr[0] - vr[1]) / span : Double.NaN;
+            double r = (Double.isNaN(end[0]) ? 0 : end[0]) + 6.371e6;
+            double g = dev.galactica.science.Units.G * dev.galactica.science.Units.EARTH_MASS / (r * r);
+            boolean ballistic = gMeasured > 0.7 * g && gMeasured < 1.3 * g;
             boolean bounded = max[0] < 200e3;
             boolean falling = Double.isFinite(ap[0]) && ap[0] < 200e3 && vr[1] < vr[0];
-            boolean ok = bounded && (backAt[0] >= 0 || falling);
-            Galactica.LOG.info("[autotest] {} take-off from Earth, hands off: highest {}, {}", ok ? "PASS" : "FAIL", km(max[0]),
-                    backAt[0] >= 0 ? "fell back and re-entered after " + String.format(Locale.ROOT, "%.1f s", backAt[0] / 20.0)
-                            : String.format(Locale.ROOT, "still in space after %d s at %s, radial speed %.0f -> %.0f m/s, apoapsis %s",
-                                    coast / 20, km(end[0]), vr[0], vr[1], OrbitReadout.apsis(ap[0])));
+            boolean ok = bounded && ballistic && (backAt[0] >= 0 || falling);
+            Galactica.LOG.info(String.format(Locale.ROOT,
+                    "[autotest] %s take-off from Earth, hands off, assist off: highest %s, radial speed %.0f -> %.0f m/s over %.1f s "
+                            + "= %.2f m/s^2 of pull (g = %.2f, ±30 %%), %s",
+                    ok ? "PASS" : "FAIL", km(max[0]), vr[0], vr[1], span, gMeasured, g,
+                    backAt[0] >= 0 ? String.format(Locale.ROOT, "fell back and re-entered after %.1f s", backAt[0] / 20.0)
+                            : String.format(Locale.ROOT, "still in space after %d s at %s, apoapsis %s", coast / 20, km(end[0]),
+                                    OrbitReadout.apsis(ap[0]))));
             return true;
         };
     }
