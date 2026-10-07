@@ -162,12 +162,36 @@ public final class NavServer {
             // Whatever orbit the frame carried when this player last left space is long over.
             p.setAttached(Galactica.NAV, p.getAttachedOrCreate(Galactica.NAV).resetFrame());
         }
+        boolean fromSurface = p.level().dimension() != Galactica.SPACE;
         p.teleport(new TeleportTransition(space, new Vec3(0.5, 0, 0.5), Vec3.ZERO, p.getYRot(), p.getXRot(),
                 TeleportTransition.PLAY_PORTAL_SOUND));
         p.getAbilities().mayfly = true;
         p.getAbilities().flying = true;
         p.onUpdateAbilities();
+        if (fromSurface) clearOfEntryShell(p);
         return true;
+    }
+
+    /**
+     * After a launch: a frame left where an entry switched (a few km over a planet) would drop the player straight back
+     * in, so a launch that lands inside twice a body's entry altitude is raised along the radial to that height and
+     * put on a circular orbit there.
+     */
+    private static void clearOfEntryShell(ServerPlayer p) {
+        NavState nav = p.getAttachedOrCreate(Galactica.NAV);
+        GalacticPos here = Frames.playerPos(nav, p.getX(), p.getY(), p.getZ());
+        for (Neighbourhood.Located l : neighbourhood(p).locateBodies(here, nav.timeSeconds())) {
+            var b = l.body();
+            if (!b.type().solidSurface) continue;
+            double safe = 2 * dev.galactica.planet.PlanetEntry.entryAltitude(b);
+            double[] r = here.metresFrom(l.pos());
+            double rm = Math.sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+            if (rm - b.radiusMetres() >= safe || rm <= 0) continue;
+            double k = (b.radiusMetres() + safe) / rm;
+            moveTo(p, l.pos().plusMetres(r[0] * k, r[1] * k, r[2] * k));
+            circularize(p);
+            return;
+        }
     }
 
     /** Returns a player to where they launched from (or the overworld spawn). */

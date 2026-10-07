@@ -283,6 +283,8 @@ public final class AutoTest {
         STEPS.add(new Step(5, () -> SoiAutoTest.start(SoiAutoTest.approach("warp drive", true, 1200))));
         awaitSoi(1, 1400, "warp approach");
         cmd(5, "gamemode survival");
+        // The world is saved on exit: leave the space frame in high Earth orbit, not where the entry switched.
+        cmd(20, "galactica goto Sol");
     }
 
     /** Holds the script (after {@code wait}) until the running {@link SoiAutoTest} phase has logged its verdict. */
