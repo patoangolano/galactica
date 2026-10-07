@@ -184,3 +184,22 @@ processResources {
     inputs.properties props
     filesMatching(['fabric.mod.json', '*.mixins.json']) { expand props }
 }
+
+// "bridge" dev run: the client plus the mcbridge mod (MIT, tomda; ported to 26.3 in ../tools/mcbridge-26.3) so
+// the mcbridge MCP can see and drive the game. The jar sits on the bridge source set only: every other run keeps
+// its classpath. Override the jar with -Pgalactica.mcbridgeJar=<path>.
+afterEvaluate {
+    def bridgeJar = file(findProperty('galactica.mcbridgeJar') ?: '../tools/mcbridge-26.3/mcbridge-0.1.0+26.3.jar')
+    if (!bridgeJar.isFile()) return
+    def bridge = sourceSets.create('bridge')
+    bridge.compileClasspath = sourceSets.main.compileClasspath
+    bridge.runtimeClasspath = sourceSets.main.runtimeClasspath + files(bridgeJar)
+    loom.runs.create('bridge') {
+        client()
+        configName = 'Galactica Bridge'
+        runDir 'runs/bridge'
+        vmArgs '-Xmx4G'
+        programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        source bridge
+    }
+}
