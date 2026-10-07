@@ -34,7 +34,7 @@ public final class ShipEntities {
         PayloadTypeRegistry.clientboundPlay().register(ShipCorrectionPayload.TYPE, ShipCorrectionPayload.CODEC);
         ServerPlayNetworking.registerGlobalReceiver(ShipControlPayload.TYPE, (msg, ctx) -> {
             if (ctx.player().level().getEntity(msg.entityId()) instanceof Starship ship && ship.getControllingPassenger() == ctx.player()) {
-                ship.acceptPilotReport(ctx.player(), msg.seq(), msg.attitude(), msg.velocity(), msg.coupled());
+                ship.acceptPilotReport(ctx.player(), msg.seq(), msg.attitude(), msg.velocity(), msg.coupled(), msg.rebase());
             }
         });
         ServerPlayNetworking.registerGlobalReceiver(HyperjumpPayload.TYPE, (msg, ctx) -> {

@@ -23,6 +23,9 @@ public final class ShipHud {
 
         // Displacement over the last tick works for pilot and passenger alike (a passenger's copy only interpolates).
         double speed = Math.sqrt(sq(ship.getX() - ship.xo) + sq(ship.getY() - ship.yo) + sq(ship.getZ() - ship.zo)) * 20.0;
+        // In space, relative to the body whose frame the ship flies in (the frame carries most of an orbit's speed).
+        var orbit = dev.galactica.client.hud.OrbitReadout.current(mc);
+        if (orbit != null) speed = orbit.speed();
         float h = ship.hydrogen(), hull = ship.hull();
         String[] lines = {
                 tr("hud.galactica.ship.title", tr(ship.coupled() ? "hud.galactica.ship.coupled" : "hud.galactica.ship.decoupled")),

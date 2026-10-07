@@ -62,6 +62,16 @@ public final class NavHud {
                         dist(Math.max(0, bestD)), best.body().surfaceGravityG()), TEXT));
             }
         }
+        OrbitReadout o = OrbitReadout.current(mc);
+        if (o != null) {
+            // Relative to the body whose frame we fly in: its gravity is what shapes the path.
+            lines.add(new Line(String.format(java.util.Locale.ROOT, "%s %s  alt %s  v %s  vr %s", o.star() ? "Orbiting" : "In SOI of",
+                    o.body(), dist(Math.max(0, o.altitude())), OrbitReadout.speed(o.speed()), OrbitReadout.speed(o.vertical())), ACCENT));
+            if (!o.star()) {
+                lines.add(new Line(String.format(java.util.Locale.ROOT, "Pe %s   Ap %s", OrbitReadout.apsis(o.periapsis()),
+                        OrbitReadout.apsis(o.apoapsis())), o.orbiting() ? TEXT : DIM));
+            }
+        }
         lines.add(new Line("Warp " + NavServer.formatSpeed(nav.speed()), nav.speed() > 0 ? WARP : DIM));
         if (HudScale.legend()) lines.add(new Line("[Sprint] warp   [Sneak] brake   /galactica", DIM));
 

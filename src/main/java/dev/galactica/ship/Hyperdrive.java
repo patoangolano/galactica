@@ -77,7 +77,7 @@ public final class Hyperdrive {
         for (Entity e : ship.getPassengers()) {
             if (e instanceof ServerPlayer crew && crew != pilot) {
                 NavState nav = crew.getAttachedOrCreate(Galactica.NAV);
-                crew.setAttached(Galactica.NAV, nav.withOrigin(origin).withSpeed(0));
+                crew.setAttached(Galactica.NAV, nav.withOrigin(origin).withSpeed(0).resetFrame());
             }
         }
         pilot.removeAttached(dev.galactica.nav.JumpTargets.TYPE); // the star reached is no longer a target

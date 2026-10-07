@@ -91,6 +91,19 @@ public final class GalacticaCommands {
                                 IntegerArgumentType.getInteger(c, "units")))))
                 .then(Commands.literal("orbit").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("body", StringArgumentType.greedyString()).executes(GalacticaCommands::orbit)))
+                .then(Commands.literal("circularize").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(c -> {
+                    ServerPlayer p = c.getSource().getPlayerOrException();
+                    var body = NavServer.circularize(p);
+                    if (body == null) {
+                        c.getSource().sendFailure(Component.literal("Only in space, inside a star system"));
+                        return 0;
+                    }
+                    GalacticPos g = here(p);
+                    double r = g.distanceMetres(body.pos());
+                    say(c, String.format("Circular orbit of %s: altitude %s, %.2f km/s", body.name(), distance(r - body.radius()),
+                            Math.sqrt(body.mu() / r) / 1e3));
+                    return 1;
+                }))
                 .then(Commands.literal("coords").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
                         .then(Commands.argument("x", DoubleArgumentType.doubleArg(-60_000, 60_000))
                                 .then(Commands.argument("y", DoubleArgumentType.doubleArg(-60_000, 60_000))

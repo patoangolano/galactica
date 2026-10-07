@@ -142,6 +142,14 @@ loom {
             vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=venus'
             programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
         }
+        // The orbital-frame checks alone (AutoTest "soi" mode; the default run ends with them too).
+        autotestSoi {
+            client()
+            configName = 'Galactica Autotest (SOI)'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=soi'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
         showcase {
             client()
             configName = 'Galactica Showcase take'

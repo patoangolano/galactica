@@ -136,6 +136,6 @@ public final class ShipClient {
         int seq = ship.recordReport(ship.getDeltaMovement());
         Vec3 v = ship.getDeltaMovement().scale(20.0);
         ClientPlayNetworking.send(new ShipControlPayload(ship.getId(), seq, new Quaternionf(ship.attitude()),
-                new Vector3f((float) v.x, (float) v.y, (float) v.z), ship.coupled()));
+                new Vector3f((float) v.x, (float) v.y, (float) v.z), ship.coupled(), ship.takeRebase()));
     }
 }

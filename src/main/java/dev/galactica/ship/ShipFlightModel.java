@@ -31,6 +31,11 @@ public final class ShipFlightModel {
      * behind; real distances are covered by the warp drive, which moves the frame instead of the ship.
      */
     public static final double MAX_SPEED = 300.0;
+    /**
+     * In space, block speed beyond this is handed to the frame ({@link #krakensbane}), so burns keep adding speed past
+     * {@link #MAX_SPEED} (orbital speed is ~7.7 km/s) while the hull's block velocity stays under a chunk per tick.
+     */
+    public static final double KRAKENSBANE_SPEED = 0.95 * MAX_SPEED;
     public static final double TICK = 0.05;
     /** Keyboard yaw (A/D) and roll (Q/E) rates, degrees per second. */
     public static final double KEY_YAW_RATE = 45.0, KEY_ROLL_RATE = 90.0;
@@ -87,6 +92,18 @@ public final class ShipFlightModel {
         double v = velocity.length();
         if (v > MAX_SPEED) velocity.mul(MAX_SPEED / v);
         return Math.min(hydrogen, Math.abs(throttle) * dt / MAIN_SECONDS_PER_HYDROGEN);
+    }
+
+    /**
+     * Krakensbane: removes from {@code velocity} (m/s, in place) whatever exceeds {@link #KRAKENSBANE_SPEED} and returns
+     * it, to be added to the space frame's velocity. The sum, the craft's real velocity, is unchanged.
+     */
+    public static Vector3d krakensbane(Vector3d velocity) {
+        double v = velocity.length();
+        if (!(v > KRAKENSBANE_SPEED)) return new Vector3d();
+        Vector3d excess = new Vector3d(velocity).mul(1 - KRAKENSBANE_SPEED / v);
+        velocity.sub(excess);
+        return excess;
     }
 
     /** The part of {@code x} a budget-limited thruster can cancel this step. */

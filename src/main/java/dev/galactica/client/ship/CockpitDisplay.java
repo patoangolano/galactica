@@ -38,7 +38,8 @@ import java.util.Locale;
  * interpolated attitude the camera itself uses. Under a shader pack (or if our display pipeline does not compile)
  * the ball is painted into the canvas instead, at tick rate.
  *
- * <p>Readouts: flight-assist mode; speed (m/s, or the warp drive's speed); the nearest body or star and the distance
+ * <p>Readouts: flight-assist mode; speed (m/s relative to the body whose frame the ship flies in, with that orbit's
+ * periapsis and apoapsis in km, or the warp drive's speed); the nearest body or star and the distance
  * to its surface in space, or the body and height above ground on a planet; hydrogen, exotic matter (and its jump
  * range), hull; gear and throttle; pitch and roll under the ball. The ball shows pitch and roll against the local
  * vertical: away from the nearest body's (or star's) centre in space while it is within 20 radii, world up on a
@@ -135,7 +136,7 @@ public final class CockpitDisplay {
     private static String state(Minecraft mc, Starship ship, String[] place, float[] att) {
         StringBuilder b = new StringBuilder(160);
         b.append(gpuBall).append('|').append(ship.coupled()).append('|').append(ship.isSpooling() ? ship.spoolTicks() / 2 : -1)
-                .append('|').append(speedLine(mc, ship)[1]).append('|').append(place[0]).append(place[1])
+                .append('|').append(String.join(" ", speedLine(mc, ship))).append('|').append(place[0]).append(place[1])
                 .append('|').append(Math.round(ship.hydrogen() * 10)).append('|').append(ship.exotic())
                 .append('|').append(Math.round(ship.hull())).append('|').append(ship.gearExtension(1F) > 0.5F)
                 .append('|').append(Math.round(Math.abs(ship.throttle()) * 100F))
@@ -150,8 +151,24 @@ public final class CockpitDisplay {
         if (mc.level.dimension() == Galactica.SPACE && nav != null && nav.speed() > 0) {
             return new String[] {"WARP", NavServer.formatSpeed(nav.speed())};
         }
+        if (mc.level.dimension() == Galactica.SPACE) {
+            // In space: speed relative to the body whose frame the ship flies in, and its orbit's apsides.
+            var o = dev.galactica.client.hud.OrbitReadout.current(mc);
+            if (o != null) {
+                String orbit = o.star() ? "" : "PE " + apsisShort(o.periapsis()) + " AP " + apsisShort(o.apoapsis());
+                return new String[] {"SPD", o.speed() < 1e4 ? String.format(Locale.ROOT, "%.1f M/S", o.speed())
+                        : String.format(Locale.ROOT, "%.2f KM/S", o.speed() / 1e3), orbit};
+            }
+        }
         double speed = Math.sqrt(sq(ship.getX() - ship.xo) + sq(ship.getY() - ship.yo) + sq(ship.getZ() - ship.zo)) * 20.0;
         return new String[] {"SPD", String.format(Locale.ROOT, "%.1f M/S", speed)};
+    }
+
+    /** An apsis for the display: kilometres above the surface, "ESC" or "IMP". */
+    private static String apsisShort(double m) {
+        if (!Double.isFinite(m)) return "ESC";
+        if (m < 0) return "IMP";
+        return m < 1e8 ? String.format(Locale.ROOT, "%.0f", m / 1e3) : String.format(Locale.ROOT, "%.0fK", m / 1e6);
     }
 
     private static void paint(Minecraft mc, Starship ship, String[] place, float[] att) {
@@ -171,6 +188,7 @@ public final class CockpitDisplay {
         String[] speed = speedLine(mc, ship);
         text(x, y, speed[0], DIM);
         text(val, y, speed[1], "WARP".equals(speed[0]) ? AMBER : TEXT);
+        if (speed.length > 2 && !speed[2].isEmpty()) text(val + 200, y, speed[2], speed[2].contains("IMP") ? AMBER : DIM);
         y += row;
         text(x, y, place[0], DIM);
         text(val, y, place[1], TEXT);
