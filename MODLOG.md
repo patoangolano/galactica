@@ -60,3 +60,9 @@ Loader API (Fabric) + Mixins pontuais no render do céu. O núcleo científico (
 - Interior do cockpit em primeira pessoa: painel, consoles, manche lateral, manete, vidro interno e display ao vivo (ADI, velocidade, corpo/altitude, H2, exótica, casco, modo), pintado na CPU e enviado no fim do tick.
 - Tripulantes giram com a atitude do casco; o olho do piloto gira junto com o assento (corrige a câmera fora do cockpit com a nave invertida).
 - Revisão: tripulação sentada num poço oco na fuselagem (quadril em SEAT_Y, capacete 0,13 bloco abaixo do vidro, espinhas do canopy por fora); sondas de colisão do casco além da caixa (`ShipHullProbes`, geradas); desembarque com `DismountHelper`; câmera de perseguição puxada pelo terreno; display com pipeline próprio sem neblina, bola ADI por frame, repintura só quando muda, acima da hotbar; `ShipHud` some no cockpit.
+
+## Sol da Terra, nave pousada, EVA iluminado (2026-10-07)
+- Overworld: o sol quadrado do vanilla dá lugar ao Sol do mod (`EarthSun`): disco de plasma de Sol (5 772 K) no tamanho real de 0,53°, com halo de brilho (bloom + auréola, θ^−1,3 até 8°), na posição exata do sol vanilla. Perto do horizonte avermelha e escurece pela massa de ar (Kasten & Young; `SunAppearance`); some com a chuva como o vanilla. Desligado com `realNightSky` off ou com shader pack do Iris ativo.
+- Nave: pousada e sem comando de subida, o chão sustenta o peso (o assistente de voo não paira mais) e o trem de pouso segura por atrito de Coulomb (μ = 0,8); contato com o chão memorizado por 5 ticks.
+- EVA no espaço: braço e corpo do jogador iluminados pela estrela (mesma rota de luz da tripulação) e as luzes difusas do nível apontam para a estrela (`SpaceLighting`).
+- Autotest: começa sempre no Overworld (plataforma de vidro a y 200 sobre o spawn; antes caía no oceano ou ficava no último planeta).
