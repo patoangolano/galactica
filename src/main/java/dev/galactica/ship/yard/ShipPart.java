@@ -30,7 +30,9 @@ public enum ShipPart {
     /** Fusion reactor: the power source for shields and scanners; burns a little hydrogen while it works. */
     REACTOR(2_500),
     /** Scanner array: lists bodies, ships, derelicts and ore around the ship on the cockpit display and the map. */
-    SCANNER(500);
+    SCANNER(500),
+    /** Artificial gravity: in space, one ship-down g on deck while a reactor powers it and there is hydrogen aboard. */
+    GRAVITY_GENERATOR(1_500);
 
     public final double massKg;
 

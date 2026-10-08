@@ -48,6 +48,8 @@ public final class Galactica implements ModInitializer {
         dev.galactica.content.GalacticaItems.init();
         dev.galactica.discovery.Discovery.init();
         dev.galactica.ship.ShipEntities.init();
+        dev.galactica.ship.deck.Deck.init();
+        dev.galactica.ship.deck.EvaDrift.init();
         dev.galactica.nav.JumpTargets.init();
         dev.galactica.nav.target.NavTargets.init();
         dev.galactica.content.GalacticaTab.init();

@@ -80,6 +80,8 @@ public abstract class CameraShipMixin {
             ShipCamera.clearOrbit(); // a screenshot orbit never outlives the flight it was set for
             return;
         }
+        // A deck walker looks around as on the ground: the vanilla eye, carried with the ship by its position.
+        if (dev.galactica.ship.deck.Deck.isWalker(this.entity)) return;
         if (ship.getControllingPassenger() != this.entity) {
             // Crew keep their own look, but in first person their eye rides the rotated seat like the pilot's.
             if (!this.detached) this.setPosition(ship.riderEyePosition(this.entity, partialTicks, Mth.lerp(partialTicks, this.eyeHeightOld, this.eyeHeight)));

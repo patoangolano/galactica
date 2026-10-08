@@ -266,6 +266,27 @@ for y in range(8, 14):
     p[7, y] = p[8, y] = rgb(DARK, 1.0)
 save(scanner, "ship_scanner")
 
+gravity_side = panel(17, (96, 84, 120))
+p = gravity_side.load()
+for y in range(3, 13):
+    for x in range(3, 13):
+        r = math.hypot(x - 7.5, y - 7.5)
+        if 2.5 < r < 4.5:
+            p[x, y] = rgb((210, 120, 255), 1.0 - 0.08 * abs(r - 3.5))
+        elif r <= 1.5:
+            p[x, y] = rgb((250, 220, 255), 1.0)
+stripe(gravity_side, 1, 2, PURPLE)
+stripe(gravity_side, 14, 15, PURPLE)
+save(gravity_side, "ship_gravity_generator_side")
+gravity_top = panel(18, DARK)
+p = gravity_top.load()
+for y in range(16):
+    for x in range(16):
+        r = math.hypot(x - 7.5, y - 7.5)
+        if r < 5.5 and int(r * 2) % 2 == 0:
+            p[x, y] = rgb((190, 110, 250), 1.1 - 0.1 * r)
+save(gravity_top, "ship_gravity_generator_top")
+
 # Thruster flame (entity texture, drawn additive): hot white core fading to blue-violet and transparent at the tip.
 flame = Image.new("RGBA", (16, 64))
 p = flame.load()
@@ -390,6 +411,8 @@ simple("ship_hangar_bay", {"parent": "minecraft:block/cube_bottom_top",
 simple("ship_shield_generator", {"parent": "minecraft:block/cube_all", "textures": {"all": g("ship_shield_generator")}})
 simple("ship_reactor", {"parent": "minecraft:block/cube_column",
                         "textures": {"side": g("ship_reactor_side"), "end": g("ship_reactor_top")}})
+simple("ship_gravity_generator", {"parent": "minecraft:block/cube_column",
+                                  "textures": {"side": g("ship_gravity_generator_side"), "end": g("ship_gravity_generator_top")}})
 simple("ship_scanner", {"parent": "minecraft:block/cube_bottom_top",
                         "textures": {"side": g("ship_hull_metal"), "top": g("ship_scanner"), "bottom": g("ship_hull_metal")}})
 
@@ -430,7 +453,7 @@ for cls in ("kestrel", "shuttle", "freighter", "explorer"):
 # --- loot tables, tags, recipes -------------------------------------------------------------------------------
 BLOCKS = ["ship_helm", "ship_crew_seat", "ship_thruster", "ship_rcs", "ship_hydrogen_tank", "ship_hyperdrive_core",
           "ship_landing_gear", "ship_hull_plating", "ship_docking_port", "ship_hangar_bay", "ship_shield_generator",
-          "ship_reactor", "ship_scanner"]
+          "ship_reactor", "ship_scanner", "ship_gravity_generator"]
 for b in BLOCKS:
     write_json(os.path.join(D, "galactica/loot_table/blocks", b + ".json"), {
         "type": "minecraft:block",
@@ -475,6 +498,8 @@ shaped("ship_shield_generator", ["IDI", "QRQ", "IDI"], {"I": "minecraft:iron_ing
                                                         "Q": "minecraft:quartz", "R": "minecraft:redstone_block"})
 shaped("ship_reactor", ["IHI", "BGB", "IHI"], {"I": "minecraft:iron_ingot", "H": "galactica:hydrogen_cell",
                                                "B": "minecraft:blast_furnace", "G": "minecraft:glowstone"})
+shaped("ship_gravity_generator", ["IEI", "ORO", "IEI"], {"I": "minecraft:iron_ingot", "E": "minecraft:ender_pearl",
+                                                         "O": "minecraft:obsidian", "R": "minecraft:redstone_block"})
 shaped("ship_scanner", [" C ", "IRI", "III"], {"C": "minecraft:compass", "I": "minecraft:iron_ingot",
                                               "R": "minecraft:redstone"})
 
@@ -546,6 +571,16 @@ LANG = {
         "tooltip.galactica.ship_shield_generator": "Absorbs damage before the hull; recharged by a Fusion Reactor",
         "tooltip.galactica.ship_reactor": "Powers shields and scanners, burning a little hydrogen",
         "tooltip.galactica.ship_scanner": "Lists ships, derelicts, ore and bodies around the ship (needs a reactor)",
+        "block.galactica.ship_gravity_generator": "Gravity Generator",
+        "tooltip.galactica.ship_gravity_generator": "One g on deck in space while a Fusion Reactor powers it",
+        "key.galactica.magboots": "Magnetic boots (on deck, EVA suit)",
+        "hud.galactica.deck.magboots_on": "Magnetic boots on",
+        "hud.galactica.deck.magboots_off": "Magnetic boots off",
+        "hud.galactica.deck.on_deck": "On the deck of %s",
+        "hud.galactica.deck.gravity_on": "Artificial gravity",
+        "hud.galactica.deck.helm_taken": "The helm is taken",
+        "hud.galactica.deck.no_seat": "No free seat",
+        "hud.galactica.ship.collision": "Collision: %s hull lost",
     },
     "pt_br": {
         "block.galactica.ship_helm": "Leme da Nave",
@@ -613,6 +648,16 @@ LANG = {
         "tooltip.galactica.ship_shield_generator": "Absorve dano antes do casco; recarregado por um Reator de Fusão",
         "tooltip.galactica.ship_reactor": "Alimenta escudos e sensores, queimando um pouco de hidrogênio",
         "tooltip.galactica.ship_scanner": "Lista naves, destroços, minérios e corpos em volta da nave (precisa de um reator)",
+        "block.galactica.ship_gravity_generator": "Gerador de Gravidade",
+        "tooltip.galactica.ship_gravity_generator": "Um g no convés no espaço enquanto um Reator de Fusão o alimenta",
+        "key.galactica.magboots": "Botas magnéticas (no convés, traje EVA)",
+        "hud.galactica.deck.magboots_on": "Botas magnéticas ligadas",
+        "hud.galactica.deck.magboots_off": "Botas magnéticas desligadas",
+        "hud.galactica.deck.on_deck": "No convés de %s",
+        "hud.galactica.deck.gravity_on": "Gravidade artificial",
+        "hud.galactica.deck.helm_taken": "O leme está ocupado",
+        "hud.galactica.deck.no_seat": "Nenhum assento livre",
+        "hud.galactica.ship.collision": "Colisão: %s de casco perdido",
     },
 }
 for lang, keys in LANG.items():

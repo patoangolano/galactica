@@ -36,6 +36,12 @@ public abstract class EntityLightShipMixin {
             if (entity instanceof net.minecraft.world.entity.player.Player) brighten(state, ShipEnvironment.evaLight(entity, partialTicks));
             return;
         }
+        if (dev.galactica.ship.deck.Deck.isWalker(entity)) {
+            // Standing on the deck, upright: lit like the crew, but not turned into a seat.
+            rider.galactica$setRidesShip(false);
+            brighten(state, ShipEnvironment.passengerLight(ship, partialTicks));
+            return;
+        }
         rider.galactica$setRidesShip(true);
         ship.getAttitude(partialTicks, rider.galactica$shipAttitude());
         rider.galactica$setSeatHeight((float) entity.getVehicleAttachmentPoint(ship).y);

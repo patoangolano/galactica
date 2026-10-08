@@ -433,5 +433,15 @@
   "tooltip.galactica.ship_hangar_bay": "O espaço acima destes blocos é um hangar: uma nave mais leve que entra devagar é carregada",
   "tooltip.galactica.ship_shield_generator": "Absorve dano antes do casco; recarregado por um Reator de Fusão",
   "tooltip.galactica.ship_reactor": "Alimenta escudos e sensores, queimando um pouco de hidrogênio",
-  "tooltip.galactica.ship_scanner": "Lista naves, destroços, minérios e corpos em volta da nave (precisa de um reator)"
+  "tooltip.galactica.ship_scanner": "Lista naves, destroços, minérios e corpos em volta da nave (precisa de um reator)",
+  "block.galactica.ship_gravity_generator": "Gerador de Gravidade",
+  "tooltip.galactica.ship_gravity_generator": "Um g no convés no espaço enquanto um Reator de Fusão o alimenta",
+  "key.galactica.magboots": "Botas magnéticas (no convés, traje EVA)",
+  "hud.galactica.deck.magboots_on": "Botas magnéticas ligadas",
+  "hud.galactica.deck.magboots_off": "Botas magnéticas desligadas",
+  "hud.galactica.deck.on_deck": "No convés de %s",
+  "hud.galactica.deck.gravity_on": "Gravidade artificial",
+  "hud.galactica.deck.helm_taken": "O leme está ocupado",
+  "hud.galactica.deck.no_seat": "Nenhum assento livre",
+  "hud.galactica.ship.collision": "Colisão: %s de casco perdido"
 }

@@ -17,6 +17,7 @@
     {"config": "galactica.client.mixins.json", "environment": "client"},
     "galactica.planet.mixins.json",
     "galactica.nav.mixins.json",
+    "galactica.deck.mixins.json",
     {"config": "galactica.perf.mixins.json", "environment": "client"}
   ],
   "depends": {

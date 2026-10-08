@@ -356,7 +356,14 @@ public class Starship extends VehicleEntity {
     /** Passengers that are crew (not docked craft), in boarding order: the first is at the helm. */
     public java.util.List<Entity> crew() {
         java.util.List<Entity> out = new java.util.ArrayList<>(getPassengers().size());
-        for (Entity e : getPassengers()) if (!(e instanceof Starship)) out.add(e);
+        for (Entity e : getPassengers()) if (!(e instanceof Starship) && !dev.galactica.ship.deck.Deck.isWalker(e)) out.add(e);
+        return out;
+    }
+
+    /** Passengers walking on the deck ({@link dev.galactica.ship.deck.Deck}) rather than seated. */
+    public java.util.List<Entity> walkers() {
+        java.util.List<Entity> out = new java.util.ArrayList<>(2);
+        for (Entity e : getPassengers()) if (!(e instanceof Starship) && dev.galactica.ship.deck.Deck.isWalker(e)) out.add(e);
         return out;
     }
 
@@ -371,7 +378,7 @@ public class Starship extends VehicleEntity {
         int i = 0;
         for (Entity e : getPassengers()) {
             if (e == passenger) return i;
-            if (!(e instanceof Starship)) i++;
+            if (!(e instanceof Starship) && !dev.galactica.ship.deck.Deck.isWalker(e)) i++;
         }
         return 0;
     }
@@ -417,6 +424,9 @@ public class Starship extends VehicleEntity {
     }
 
     public Quaternionfc attitude() { return attitude; }
+
+    /** The attitude at the start of the last tick. */
+    public Quaternionfc attitudeO() { return attitudeO; }
 
     /** RCS command bits ({@link ShipAnimator}): predicted for the local pilot (with roll), synced for everyone else. */
     public int rcsMask() {
@@ -1096,6 +1106,8 @@ public class Starship extends VehicleEntity {
     @Override
     protected boolean canAddPassenger(Entity passenger) {
         if (passenger instanceof Starship) return false;
+        // A deck walker (the server set its deck position just before mounting it) stands, it takes no seat.
+        if (this instanceof ShipStructure && passenger.hasAttached(dev.galactica.ship.deck.Deck.DECK)) return true;
         return crew().size() < spec().seatCount();
     }
 
@@ -1103,7 +1115,7 @@ public class Starship extends VehicleEntity {
     @Override
     public @Nullable LivingEntity getControllingPassenger() {
         for (Entity e : getPassengers()) {
-            if (e instanceof Starship) continue;
+            if (e instanceof Starship || dev.galactica.ship.deck.Deck.isWalker(e)) continue;
             return e instanceof Player p ? p : null;
         }
         return null;
@@ -1138,6 +1150,10 @@ public class Starship extends VehicleEntity {
             positionDocked(child, move);
             return;
         }
+        if (this instanceof ShipStructure built && dev.galactica.ship.deck.Deck.isWalker(passenger)) {
+            dev.galactica.ship.deck.Deck.positionWalker(built, passenger, move);
+            return;
+        }
         boolean pilot = getControllingPassenger() == passenger;
         Vector3f seat = attitude.transform(new Vector3f(seat(crewIndex(passenger))));
         Vec3 attach = passenger.getVehicleAttachmentPoint(this);
@@ -1161,6 +1177,9 @@ public class Starship extends VehicleEntity {
      */
     @Override
     public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
+        // A deck walker leaves from where it stands (stepping off the edge, or taken off by a command).
+        Vec3 walked = dev.galactica.ship.deck.Deck.dismountTarget(passenger);
+        if (walked != null) return walked;
         double yaw = Math.toRadians(getYRot());
         double fx = -Math.sin(yaw), fz = Math.cos(yaw);
         double side = spec().boxWidth() / 2.0 + 0.8, nose = spec().hullReach() + 1.0;
@@ -1342,7 +1361,9 @@ public class Starship extends VehicleEntity {
      */
     protected void ejectCrewSafely() {
         for (Starship child : dockedCraft()) ShipDocking.undock(child);
-        for (Entity e : crew()) {
+        for (Entity e : getPassengers()) {
+            if (e instanceof Starship) continue;
+            e.removeAttached(dev.galactica.ship.deck.Deck.DECK);
             e.stopRiding();
             if (e instanceof LivingEntity l && level().dimension() != Galactica.SPACE) {
                 l.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.SLOW_FALLING, 600));
@@ -1381,7 +1402,8 @@ public class Starship extends VehicleEntity {
 
     @Override
     public boolean canBeCollidedWith(@Nullable Entity other) {
-        return true;
+        // Craft meet craft through their voxels (dev.galactica.ship.collide.ShipCollisions), never box against box.
+        return !(other instanceof Starship);
     }
 
     @Override

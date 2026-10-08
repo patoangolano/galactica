@@ -35,6 +35,7 @@ public final class ShipPartBlocks {
     public static final ShipPartBlock SHIELD_GENERATOR = block("ship_shield_generator", ShipPart.SHIELD_GENERATOR, ShipPartBlock.Facing.NONE, MapColor.COLOR_CYAN, 4F, 7);
     public static final ShipPartBlock REACTOR = block("ship_reactor", ShipPart.REACTOR, ShipPartBlock.Facing.NONE, MapColor.COLOR_ORANGE, 5F, 12);
     public static final ShipPartBlock SCANNER = block("ship_scanner", ShipPart.SCANNER, ShipPartBlock.Facing.NONE, MapColor.COLOR_LIGHT_BLUE, 3F, 5);
+    public static final ShipPartBlock GRAVITY_GENERATOR = block("ship_gravity_generator", ShipPart.GRAVITY_GENERATOR, ShipPartBlock.Facing.NONE, MapColor.COLOR_MAGENTA, 4F, 6);
 
     private static ShipPartBlock block(String name, ShipPart part, ShipPartBlock.Facing facing, MapColor colour, float strength, int light) {
         ResourceKey<Block> key = ResourceKey.create(Registries.BLOCK, Galactica.id(name));
