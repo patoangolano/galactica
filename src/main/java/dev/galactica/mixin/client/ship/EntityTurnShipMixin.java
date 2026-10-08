@@ -16,6 +16,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class EntityTurnShipMixin {
     @Inject(method = "turn(DD)V", at = @At("HEAD"), cancellable = true)
     private void galactica$steerShip(double xo, double yo, CallbackInfo ci) {
+        // The autopilot flies: jitter is swallowed, a real movement hands control back (and then steers as usual).
+        if ((Object) this instanceof LocalPlayer && dev.galactica.client.nav.AutopilotClient.onMouse(xo, yo)) {
+            ci.cancel();
+            return;
+        }
         if ((Object) this instanceof LocalPlayer p && p.getVehicle() instanceof Starship ship && ship.getControllingPassenger() == p) {
             ship.addMouseInput((float) xo * 0.15F, (float) yo * 0.15F); // Entity.turn's own degrees-per-count
             ci.cancel();

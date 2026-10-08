@@ -98,6 +98,14 @@ public final class AutoTest {
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
+        if ("nav".equals(MODE)) {
+            // The 3D map and the autopilot alone (NavTarget, AutopilotServer), from a fresh login.
+            cmd(0, "clear");
+            nav();
+            STEPS.add(new Step(40, () -> Minecraft.getInstance().stop()));
+            ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+            return;
+        }
         if ("terrain".equals(MODE) || "tectonic".equals(MODE)) {
             // Tall planet terrain tour, or Earth under Tectonic (TerrainAutoTest): screenshots and PASS/FAIL lines.
             if ("terrain".equals(MODE)) TerrainAutoTest.tour(TAG);
@@ -318,6 +326,7 @@ public final class AutoTest {
         STEPS.add(new Step(40, () -> Minecraft.getInstance().player.connection.sendCommand("galactica ground")));
         look(80, 30, 5);    shot(5, "24_venus_ground");
         soi();
+        nav();
         // Block-built ships (BuiltShipAutoTest): build, assemble, fly, space, jump, Mars, disassemble, prefabs.
         BuiltShipAutoTest.run();
         if (PERF) perfScenes(true);
@@ -372,6 +381,240 @@ public final class AutoTest {
         cmd(5, "gamemode survival");
         // The world is saved on exit: leave the space frame in high Earth orbit, not where the entry switched.
         cmd(20, "galactica goto Sol");
+    }
+
+    // ---------------------------------------------------------------- 3D map and autopilot
+
+    /** Server tick when the running autopilot check was engaged, and the exotic matter aboard then. */
+    private static volatile int navStartTick, navExoticBefore;
+
+    /**
+     * The 3D Galaxy Map at five scales (whole galaxy face-on and edge-on, the region and the stars around the Sun, the
+     * Solar System, Earth and the Moon) with a check of what each frame drew; search "Mars", select and lock it; the
+     * manual override; the autopilot from high Earth orbit into a stable Mars orbit (and then a landing); and a star
+     * of another system reached through a chain of hyperjumps. Each check logs one {@code [autotest] PASS|FAIL} line.
+     */
+    private static void nav() {
+        cmd(5, "gamemode survival");
+        cmd(5, "galactica kit");
+        cmd(10, "galactica launch");
+        cmd(40, "galactica goto Sol");
+        cmd(20, "galactica ship");
+        cmd(10, "galactica fuel 400 64");
+        camera(5, net.minecraft.client.CameraType.FIRST_PERSON);
+        hud(5, true);
+        clearChat(20);
+        STEPS.add(new Step(5, () -> {
+            Galactica.LOG.info("[autotest] opening the 3D map");
+            dev.galactica.client.map.GalaxyMapClient.open();
+        }));
+        mapView(40, "galaxy", GalacticPos.ofParsecs(0, 0, 0), 48_000 * dev.galactica.science.Units.PARSEC, 200, 62, 160,
+                s -> s.autotestSummary().contains("disk 1.00"), "30_map3d_galaxy");
+        mapView(5, "galaxy edge-on", GalacticPos.ofParsecs(0, 0, 0), 45_000 * dev.galactica.science.Units.PARSEC, 200, 6, 60,
+                s -> true, "30b_map3d_galaxy_edge");
+        mapView(5, "region", Frames.SOL_POS, 220 * dev.galactica.science.Units.PARSEC, 150, 30, 400,
+                s -> s.autotestFieldStars() > 2_000, "31_map3d_region");
+        mapView(5, "neighbourhood", Frames.SOL_POS, 9 * dev.galactica.science.Units.PARSEC, 150, 25, 300,
+                s -> s.autotestFieldStars() > 500 && s.autotestDrawn("Alpha Centauri A"), "31b_map3d_neighbourhood");
+        mapView(5, "Solar System", Frames.SOL_POS, 14 * dev.galactica.science.Units.AU, 120, 38, 80,
+                s -> s.autotestOrbitLines() >= 8 && s.autotestDrawn("Jupiter"), "32_map3d_solar_system");
+        mapView(5, "inner system", Frames.SOL_POS, 3.2 * dev.galactica.science.Units.AU, 100, 50, 60,
+                s -> s.autotestDrawn("Earth") && s.autotestDrawn("Mars"), "32b_map3d_inner_system");
+        STEPS.add(new Step(5, () -> withMap(s -> {
+            boolean ok = s.searchAndFocus("Earth");
+            Galactica.LOG.info("[autotest] map search Earth: {}", ok);
+        })));
+        STEPS.add(new Step(100, () -> withMap(s -> {
+            boolean ok = s.autotestDrawn("Moon") && s.autotestDrawn("Earth");
+            Galactica.LOG.info("[autotest] {} map Earth+Moon: {}", ok ? "PASS" : "FAIL", s.autotestSummary());
+        })));
+        shot(1, "33_map3d_earth_moon");
+        STEPS.add(new Step(5, () -> withMap(s -> {
+            boolean ok = s.searchAndFocus("Mars");
+            var sel = s.selected();
+            boolean mars = ok && sel != null && "Mars".equals(sel.name());
+            Galactica.LOG.info("[autotest] {} map search and select Mars (selected {})", mars ? "PASS" : "FAIL", sel == null ? "nothing" : sel.name());
+        })));
+        STEPS.add(new Step(80, () -> withMap(s -> Galactica.LOG.info("[autotest] map at Mars: {}", s.autotestSummary()))));
+        shot(1, "34_map3d_mars_selected");
+        STEPS.add(new Step(5, () -> withMap(s -> Galactica.LOG.info("[autotest] lock Mars sent: {}", s.lockSelection()))));
+        STEPS.add(new Step(20, () -> {
+            var t = dev.galactica.nav.target.NavTargets.get(Minecraft.getInstance().player);
+            boolean ok = t != null && "Mars".equals(t.name()) && t.kind() == dev.galactica.nav.target.NavTarget.Kind.PLANET;
+            Galactica.LOG.info("[autotest] {} lock target Mars (synced target {})", ok ? "PASS" : "FAIL", t == null ? "none" : t.name());
+        }));
+        shot(5, "34b_map3d_mars_locked");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(null)));
+
+        // Assist off and a circular orbit 30 000 km over Earth: "high Earth orbit".
+        STEPS.add(new Step(10, () -> {
+            var ship = dev.galactica.client.ship.ShipClient.piloted(Minecraft.getInstance());
+            if (ship != null && ship.coupled()) ship.toggleCoupled();
+        }));
+        server(10, "park 30 000 km over Earth on a circular orbit", sp -> {
+            parkOverBody(sp, "Earth", 30_000e3);
+            NavServer.circularize(sp);
+        });
+        // Manual override: any key the pilot presses hands control back.
+        STEPS.add(new Step(40, () -> dev.galactica.client.nav.AutopilotClient.engage(dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT)));
+        key(40, "keyUp", true);
+        key(3, "keyUp", false);
+        STEPS.add(new Step(20, () -> {
+            var st = dev.galactica.nav.autopilot.AutopilotServer.state(Minecraft.getInstance().player);
+            Galactica.LOG.info("[autotest] {} autopilot manual override (engaged after a key press: {})", st.engaged() ? "FAIL" : "PASS", st.engaged());
+        }));
+        server(10, "re-park 30 000 km over Earth on a circular orbit", sp -> {
+            parkOverBody(sp, "Earth", 30_000e3);
+            NavServer.circularize(sp);
+        });
+        clearChat(20);
+        autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT, 20 * 360, "35_autopilot_hud_warp");
+        verdictOrbit(5, "Mars");
+        shot(20, "35b_autopilot_mars_orbit");
+        STEPS.add(new Step(5, () -> {
+            dev.galactica.client.map.GalaxyMapClient.open();
+        }));
+        STEPS.add(new Step(10, () -> withMap(s -> s.searchAndFocus("Mars"))));
+        STEPS.add(new Step(90, () -> withMap(s -> Galactica.LOG.info("[autotest] map around Mars in orbit: {}", s.autotestSummary()))));
+        shot(1, "36_map3d_mars_orbit_trajectory");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(null)));
+
+        // From that orbit, down to the surface.
+        clearChat(10);
+        autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.LAND, 20 * 600, "37_autopilot_mars_descent");
+        verdictLanded(5, "Mars");
+        shot(20, "37b_autopilot_mars_landed");
+
+        // A star of another system, 10.5 ly away: beyond one jump, so a chain of hyperjumps.
+        server(10, "leave the ship", net.minecraft.server.level.ServerPlayer::stopRiding);
+        cmd(10, "galactica launch");
+        cmd(40, "galactica goto Sol");
+        cmd(20, "galactica ship");
+        cmd(10, "galactica fuel 400 64");
+        cmd(10, "galactica target Epsilon Eridani");
+        clearChat(20);
+        autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT, 20 * 240, "38_autopilot_jump_spool");
+        verdictStar(5, "Epsilon Eridani");
+        lookAtNearest(20);
+        shot(5, "39_autopilot_arrived_eps_eridani");
+        STEPS.add(new Step(5, dev.galactica.client.map.GalaxyMapClient::open));
+        STEPS.add(new Step(10, () -> withMap(dev.galactica.client.map.GalaxyMapScreen::home)));
+        STEPS.add(new Step(90, () -> withMap(s -> Galactica.LOG.info("[autotest] map at Epsilon Eridani: {}", s.autotestSummary()))));
+        shot(1, "40_map3d_eps_eridani_system");
+        STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(null)));
+        server(10, "leave the ship", net.minecraft.server.level.ServerPlayer::stopRiding);
+        cmd(10, "galactica target clear");
+        // The world is saved on exit: leave the space frame in high Earth orbit.
+        cmd(20, "galactica goto Sol");
+    }
+
+    private static void withMap(Consumer<dev.galactica.client.map.GalaxyMapScreen> action) {
+        if (Minecraft.getInstance().gui.screen() instanceof dev.galactica.client.map.GalaxyMapScreen s) action.accept(s);
+        else Galactica.LOG.warn("[autotest] FAIL the 3D map is not open");
+    }
+
+    /** One map view: camera placed at once, then after {@code settle} ticks a check of what was drawn and a screenshot. */
+    private static void mapView(int wait, String label, GalacticPos focus, double distance, float yaw, float pitch, int settle,
+                                java.util.function.Predicate<dev.galactica.client.map.GalaxyMapScreen> check, String shotName) {
+        STEPS.add(new Step(wait, () -> withMap(s -> s.autotestView(focus, distance, yaw, pitch))));
+        STEPS.add(new Step(settle, () -> withMap(s -> {
+            boolean ok = dev.galactica.client.map.MapRenderer.framesDrawn > 0 && check.test(s);
+            Galactica.LOG.info("[autotest] {} map view {}: {}", ok ? "PASS" : "FAIL", label, s.autotestSummary());
+        })));
+        shot(1, shotName);
+    }
+
+    /**
+     * Engages the autopilot the way the map's button does, takes a screenshot of the HUD 8 s in, then holds the script
+     * until the server hands control back (at most {@code maxTicks}), logging the phase every 5 s.
+     */
+    static void autopilot(int wait, dev.galactica.nav.autopilot.AutopilotState.Mode mode, int maxTicks, String shotName) {
+        server(wait, "autopilot start", sp -> {
+            navStartTick = sp.level().getServer().getTickCount();
+            navExoticBefore = sp.getVehicle() instanceof dev.galactica.ship.Starship s ? s.exotic() : 0;
+        });
+        STEPS.add(new Step(5, () -> {
+            Galactica.LOG.info("[autotest] autopilot engage {}", mode);
+            dev.galactica.client.nav.AutopilotClient.engage(mode);
+        }));
+        shot(160, shotName);
+        STEPS.add(new Step(5, () -> {
+            holdLeft = maxTicks;
+            int[] n = {0};
+            hold = () -> {
+                var mc = Minecraft.getInstance();
+                if (mc.player == null) return false;
+                var st = dev.galactica.nav.autopilot.AutopilotServer.state(mc.player);
+                if (++n[0] % 100 == 0) {
+                    var r = dev.galactica.client.nav.TargetReadout.current();
+                    Galactica.LOG.info("[autotest] autopilot {} eta {} s, {} to go; {}", st.phase(), Math.round(st.eta()),
+                            r == null ? "?" : dev.galactica.client.nav.TargetReadout.distanceText(Math.max(0, r.surface())),
+                            dev.galactica.client.nav.AutopilotClient.debug);
+                }
+                if (!st.engaged() && holdLeft == 0) return true;
+                if (!st.engaged()) return true;
+                if (holdLeft <= 1) Galactica.LOG.warn("[autotest] FAIL autopilot still engaged after {} ticks ({})", maxTicks, st.phase());
+                return false;
+            };
+        }));
+    }
+
+    /** The craft is in a near-circular orbit of {@code body} above its entry shell, still at the stick. */
+    static void verdictOrbit(int wait, String body) {
+        server(wait, "verdict orbit " + body, sp -> {
+            int secs = (sp.level().getServer().getTickCount() - navStartTick) / 20;
+            var t = dev.galactica.nav.target.NavTargets.get(sp);
+            if (sp.level().dimension() != Galactica.SPACE || !(sp.getVehicle() instanceof dev.galactica.ship.Starship ship) || t == null) {
+                Galactica.LOG.info("[autotest] FAIL autopilot {} orbit: not piloting in space ({})", body, sp.level().dimension().identifier());
+                return;
+            }
+            var nav = sp.getAttachedOrCreate(Galactica.NAV);
+            GalacticPos here = Frames.playerPos(nav, ship.getX(), ship.getY(), ship.getZ());
+            var r = dev.galactica.nav.target.TargetGeometry.resolve(Galactica.GALAXY, t, nav.timeSeconds());
+            var dm = ship.getDeltaMovement();
+            double[] own = Frames.mcToGalactic(dm.x * 20, dm.y * 20, dm.z * 20);
+            double[][] rv = dev.galactica.nav.autopilot.AutopilotKinematics.relative(NavServer.neighbourhood(sp), here, nav, own, r, nav.timeSeconds());
+            double[] aps = dev.galactica.nav.OrbitalFrame.apsides(rv[0], rv[1], r.mu());
+            double floor = r.radius() + 1.05 * dev.galactica.nav.autopilot.AutopilotMath.entryAltitude(r.body());
+            boolean ok = body.equals(r.body().name()) && dev.galactica.nav.autopilot.AutopilotMath.orbitReached(aps, floor)
+                    && dev.galactica.nav.autopilot.AutopilotServer.state(sp).phase() == dev.galactica.nav.autopilot.AutopilotState.Phase.IDLE;
+            Galactica.LOG.info(String.format(java.util.Locale.ROOT,
+                    "[autotest] %s autopilot %s orbit from high Earth orbit in %d s: Pe %.0f km Ap %.0f km e %.3f (floor %.0f km), H2 %.1f",
+                    ok ? "PASS" : "FAIL", body, secs, (aps[0] - r.radius()) / 1e3, (aps[1] - r.radius()) / 1e3,
+                    dev.galactica.nav.autopilot.AutopilotMath.eccentricity(aps[0], aps[1]), (floor - r.radius()) / 1e3, ship.hydrogen()));
+        });
+    }
+
+    /** The ship rests on the gear on {@code body}'s surface level with the pilot aboard. */
+    static void verdictLanded(int wait, String body) {
+        server(wait, "verdict landed " + body, sp -> {
+            int secs = (sp.level().getServer().getTickCount() - navStartTick) / 20;
+            boolean onPlanet = sp.level().dimension() != Galactica.SPACE && sp.level().dimension() != net.minecraft.world.level.Level.OVERWORLD;
+            boolean ok = onPlanet && sp.getVehicle() instanceof dev.galactica.ship.Starship ship && (ship.onGround() || ship.restingContact())
+                    && ship.getDeltaMovement().length() * 20 < 1.0 && sp.isAlive() && ship.hull() > 0;
+            Galactica.LOG.info("[autotest] {} autopilot {} landing in {} s ({}, vehicle {}, alive {})", ok ? "PASS" : "FAIL", body, secs,
+                    sp.level().dimension().identifier(), sp.getVehicle() == null ? "none" : sp.getVehicle().getType().toShortString(), sp.isAlive());
+        });
+    }
+
+    /** Arrived in the star's system at a safe distance, through more than one hyperjump (the matter spent shows it). */
+    private static void verdictStar(int wait, String name) {
+        server(wait, "verdict star " + name, sp -> {
+            int secs = (sp.level().getServer().getTickCount() - navStartTick) / 20;
+            Star s = dev.galactica.galaxy.StarCatalog.byName(name);
+            var nav = sp.getAttachedOrCreate(Galactica.NAV);
+            var root = sp.getRootVehicle();
+            GalacticPos here = Frames.playerPos(nav, root.getX(), root.getY(), root.getZ());
+            Star sys = NavServer.neighbourhood(sp).systemStar(here);
+            double d = here.distanceMetres(Neighbourhood.starPos(s));
+            double safe = dev.galactica.nav.autopilot.AutopilotMath.starArrivalDistance(s, s.radiusMetres());
+            int spent = sp.getVehicle() instanceof dev.galactica.ship.Starship ship ? navExoticBefore - ship.exotic() : -1;
+            boolean ok = sys == s && d <= 3 * safe && d >= 0.5 * safe && spent >= 11;
+            Galactica.LOG.info(String.format(java.util.Locale.ROOT,
+                    "[autotest] %s autopilot hyperjump chain to %s in %d s: %.3f AU from it (safe %.3f AU), exotic spent %d, in system %s",
+                    ok ? "PASS" : "FAIL", name, secs, d / dev.galactica.science.Units.AU, safe / dev.galactica.science.Units.AU, spent,
+                    sys == null ? "none" : sys.name()));
+        });
     }
 
     /** Holds the script (after {@code wait}) until the running {@link SoiAutoTest} phase has logged its verdict. */
@@ -1279,7 +1522,7 @@ public final class AutoTest {
     }
 
     /** Parks the player {@code altitude} metres over the sunlit side of a body (same geometry as /galactica orbit). */
-    private static void parkOverBody(net.minecraft.server.level.ServerPlayer sp, String name, double altitude) {
+    static void parkOverBody(net.minecraft.server.level.ServerPlayer sp, String name, double altitude) {
         GalacticPos here = serverHere(sp);
         Neighbourhood nb = NavServer.neighbourhood(sp);
         Star s = nb.systemStar(here);

@@ -210,6 +210,7 @@ final class BuiltShipAutoTest {
         AutoTest.shot(20, "37_built_ship_disassembled_mars");
         AutoTest.camera(5, CameraType.FIRST_PERSON);
         prefabs();
+        autopilot();
     }
 
     /** Every prefab, deployed and boarded in space near the Sun: outside in the chase view and from the helm. */
@@ -264,6 +265,54 @@ final class BuiltShipAutoTest {
         var p = dev.galactica.nav.Neighbourhood.starPos(best);
         sp.setAttached(dev.galactica.nav.JumpTargets.TYPE, new dev.galactica.nav.JumpTarget(best.name(), p.xPc(), p.yPc(), p.zPc()));
         Galactica.LOG.info("[autotest] built ship jump target {}", best.name());
+    }
+
+    /**
+     * The autopilot flying a block-built ship (the shuttle) through the same pilot control path as the Kestrel: from a
+     * high Earth orbit to a Mars orbit (warp, then powered circularisation), then down to the surface (its landing
+     * margin read from the shuttle's own lift).
+     */
+    static void autopilot() {
+        AutoTest.cmd(20, "galactica goto Sol");
+        AutoTest.cmd(20, "galactica ship shuttle");
+        AutoTest.cmd(10, "galactica target Mars");
+        AutoTest.camera(5, CameraType.FIRST_PERSON);
+        AutoTest.step(10, () -> {
+            ShipStructure s = ship();
+            if (s != null && s.coupled()) s.toggleCoupled();
+        });
+        AutoTest.server(10, "park the shuttle 30 000 km over Earth on a circular orbit", sp -> {
+            AutoTest.parkOverBody(sp, "Earth", 30_000e3);
+            dev.galactica.nav.NavServer.circularize(sp);
+        });
+        AutoTest.clearChat(20);
+        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT, 20 * 360, "39_built_autopilot_hud");
+        AutoTest.verdictOrbit(5, "Mars");
+        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.LAND, 20 * 600, "39b_built_autopilot_descent");
+        AutoTest.verdictLanded(5, "Mars");
+        AutoTest.step(5, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            ShipStructure s = ship();
+            boolean ok = s != null && mc.level.dimension() != Galactica.SPACE && (s.onGround() || s.restingContact())
+                    && s.blocks().size() == ShipTemplate.shuttle().size();
+            log(ok, "autopilot (shuttle) Mars orbit and landing", String.format(Locale.ROOT, "in %s, aboard a built ship %s, resting %s, max landing gravity %.1f m/s^2",
+                    mc.level.dimension().identifier(), s != null, s != null && (s.onGround() || s.restingContact()),
+                    s == null ? 0 : dev.galactica.nav.autopilot.AutopilotMath.maxLandingGravity(s.spec())));
+        });
+        AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
+        AutoTest.step(5, () -> ShipCamera.orbit(150, 20, 24F));
+        AutoTest.shot(30, "39c_built_autopilot_landed_mars");
+        AutoTest.step(5, ShipCamera::clearOrbit);
+        AutoTest.camera(5, CameraType.FIRST_PERSON);
+        AutoTest.server(10, "leave the shuttle", sp -> {
+            if (sp.getVehicle() instanceof ShipStructure s) {
+                sp.stopRiding();
+                s.discard();
+            }
+        });
+        AutoTest.cmd(10, "galactica target clear");
+        AutoTest.cmd(10, "galactica launch");
+        AutoTest.cmd(40, "galactica goto Sol");
     }
 
     private static ShipStructure ship() {

@@ -12,6 +12,8 @@ public final class GalacticaClient implements ClientModInitializer {
         dev.galactica.client.hud.LifeSupportHud.initClient();
         dev.galactica.client.ship.ShipClient.initClient();
         dev.galactica.client.map.GalaxyMapClient.initClient();
+        // After ShipClient: its tick hands the pilot keys to the ship first, the autopilot then overrides them.
+        dev.galactica.client.nav.AutopilotClient.initClient();
         dev.galactica.client.planet.PlanetClient.initClient();
         dev.galactica.client.discovery.DiscoveryClient.initClient();
         dev.galactica.client.exotic.ExoticOverlay.initClient();
@@ -33,5 +35,6 @@ public final class GalacticaClient implements ClientModInitializer {
         if (!perf.isEmpty()) Galactica.LOG.info("Performance mods present:{}", perf);
         dev.galactica.client.dev.AutoTest.install();
         HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("nav_hud"), NavHud::extract);
+        HudElementRegistry.attachElementAfter(VanillaHudElements.CHAT, Galactica.id("target_hud"), dev.galactica.client.hud.TargetHud::extract);
     }
 }

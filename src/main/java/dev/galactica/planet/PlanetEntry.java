@@ -95,7 +95,7 @@ public final class PlanetEntry {
 
     public static final double ENTRY_Y = TransferAltitude.ENTRY_Y, EXIT_Y = TransferAltitude.EXIT_Y;
     /** Entry shell of a body with no air: low orbit altitude for the Moon, high enough to brake in. */
-    public static final double AIRLESS_ENTRY_M = 100_000;
+    public static final double AIRLESS_ENTRY_M = dev.galactica.nav.autopilot.AutopilotMath.AIRLESS_ENTRY_M;
     /** No re-entry for 5 s after leaving, so a take-off cannot bounce straight back down. */
     private static final int REENTRY_COOLDOWN_TICKS = 100;
     /** A climb within this many blocks of {@link #EXIT_Y} arms the client for the take-off switch. */
@@ -243,8 +243,7 @@ public final class PlanetEntry {
 
     /** Altitude above the surface where the approach (heating, chunk pre-load) begins. */
     public static double entryAltitude(Body b) {
-        double top = b.atmosphereTopMetres();
-        return top > 0 ? top : AIRLESS_ENTRY_M;
+        return dev.galactica.nav.autopilot.AutopilotMath.entryAltitude(b);
     }
 
     // ---------------------------------------------------------------- Earth

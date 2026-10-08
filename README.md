@@ -43,6 +43,24 @@ A Via Láctea inteira, em escala real, dentro do Minecraft Fabric 26.3: cerca de
 
 O governador do motor reduz a velocidade a metade da distância até a superfície mais próxima por segundo, então a nave sempre desacelera na chegada.
 
+### Mapa 3D e piloto automático
+
+| Ação | Como |
+|---|---|
+| Abrir o mapa 3D | **M** (a pé, em EVA ou pilotando) |
+| Girar a câmera | arrastar com o botão esquerdo |
+| Mover o foco | arrastar com o botão direito, ou **WASD** (**Q/E** desce e sobe) |
+| Zoom | roda do mouse (escala logarítmica, de 100 km a 80 kpc) |
+| Selecionar / voar até | clique / duplo clique num objeto |
+| Buscar | caixa de busca: estrelas do catálogo (`Sol`, `Sirius A`), planetas e luas (`Mars`, `Titan`), céu profundo (`M42`), designações (`GX S+0817.-0001.+001-24`) |
+| Voltar à minha posição | **Home** |
+| Travar o alvo | **Enter** ou o botão *Lock target* |
+| Piloto automático | **P**, ou o botão *Engage autopilot* no mapa; o botão ao lado escolhe órbita ou pouso na chegada |
+| Por comando | `/galactica target <nome>` (`clear` limpa), `/galactica autopilot orbit`, `land` ou `off` |
+
+O mapa mostra a galáxia inteira (disco, bojo, aglomerados, nebulosas, buracos negros), as estrelas em volta do foco (geradas por setor, numa thread à parte) e, perto de uma estrela, o sistema: órbitas a partir dos elementos reais, planetas e luas onde estão agora, a sua posição e a cônica da sua órbita. O painel à direita mostra tipo, classe espectral, massa e raio; para planetas, gravidade, pressão, temperatura e órbita; e a distância e os tempos de viagem (dobra, hipersalto, motor principal).
+
+O alvo travado fica salvo e aparece no HUD (nome, distância, chegada, marcador na tela ou seta na borda) e no painel do cockpit (linha TGT). Os passageiros veem o alvo e o piloto automático do piloto. O plano é do servidor e quem voa são os controles da própria nave (a mesma predição, a mesma validação de Δv e de combustível): hipersaltos encadeados até outro sistema (se a matéria exótica der; senão, dobra), dobra até o alvo com o governador normal, inserção numa órbita circular acima da camada de entrada (assistência de voo desligada) ou, no modo pouso, descida propulsada, entrada atmosférica e pouso no trem. O pouso automático só vale onde o RCS vence a gravidade com folga (Marte, Lua, Mercúrio); na Terra e em Vênus ele só põe em órbita. Qualquer tecla de movimento, as teclas de rolagem ou um movimento firme do mouse devolvem o controle. Em EVA ele usa só a dobra (modo criativo).
 ### Naves construídas com blocos
 
 Qualquer construção vira nave. Os blocos de peça (aba Galactica, receitas no livro de receitas):

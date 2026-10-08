@@ -59,6 +59,29 @@ public record OrbitReadout(String body, boolean star, double altitude, double sp
         return new OrbitReadout(d.name(), d.isStar(), rm - d.radius(), speed, vertical, apsides[0] - d.radius(), apsides[1] - d.radius());
     }
 
+    /**
+     * The local craft's position and velocity relative to its dominant body ({r, v}, galactic metres and m/s), the
+     * body written to {@code dominant[0]}; null where {@link #current} would be.
+     */
+    public static double @Nullable [][] relativeState(Minecraft mc, OrbitalFrame.Dominant[] dominant) {
+        if (mc.player == null || mc.level == null || mc.level.dimension() != dev.galactica.Galactica.SPACE) return null;
+        SkyManager mgr = SkyManager.get();
+        NavState nav = mc.player.getAttached(dev.galactica.Galactica.NAV);
+        if (nav == null || nav.speed() > 0) return null;
+        Entity root = mc.player.getRootVehicle();
+        GalacticPos eye = Frames.playerPos(nav, root.getX(), root.getY(), root.getZ());
+        double t = nav.timeSeconds();
+        OrbitalFrame.Dominant d = OrbitalFrame.dominant(mgr.neighbourhood(), eye, t);
+        if (d == null || d.isStar()) return null;
+        double[] v = nav.anchor() == d.id() ? nav.frameVelocity() : nav.anchor() == OrbitalFrame.ANCHOR_UNSET ? new double[3]
+                : OrbitalFrame.handOver(nav.frameVelocity(), OrbitalFrame.anchorVelocity(mgr.neighbourhood(), eye, nav.anchor(), t),
+                OrbitalFrame.anchorVelocity(mgr.neighbourhood(), eye, d.id(), t));
+        double[] own = Frames.mcToGalactic((root.getX() - root.xo) * 20, (root.getY() - root.yo) * 20, (root.getZ() - root.zo) * 20);
+        for (int i = 0; i < 3; i++) v[i] += own[i];
+        dominant[0] = d;
+        return new double[][] {eye.metresFrom(d.pos()), v};
+    }
+
     /** True when the conic is closed and clears the surface. */
     public boolean orbiting() {
         return periapsis > 0 && Double.isFinite(apoapsis);
