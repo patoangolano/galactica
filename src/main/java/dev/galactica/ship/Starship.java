@@ -131,6 +131,13 @@ public class Starship extends VehicleEntity {
     private final java.util.ArrayDeque<SentRebase> sentRebases = new java.util.ArrayDeque<>();
 
     private record SentRebase(int seq, Vector3d rebase) {}
+    /**
+     * Spin a collision gave the hull ({@link dev.galactica.ship.collide.ShipCollisions}), rad/s, world frame: turns the
+     * hull on top of the pilot's own control and dies away ({@link #SPIN_DECAY} per tick, the RCS damping it).
+     */
+    private final Vector3d spin = new Vector3d();
+    /** Share of the collision spin left after each tick. */
+    public static final double SPIN_DECAY = 0.95;
     // Client-side visual state (gear, canopy, gimbal), ticked for every ship the client sees.
     private float gear = 1F, gearO = 1F, canopy, canopyO, gimbalYaw, gimbalYawO, gimbalPitch, gimbalPitchO;
     private boolean gearDown = true;
@@ -428,6 +435,52 @@ public class Starship extends VehicleEntity {
     /** The attitude at the start of the last tick. */
     public Quaternionfc attitudeO() { return attitudeO; }
 
+    /** Collision spin, rad/s, world frame. */
+    public org.joml.Vector3dc spin() { return spin; }
+
+    /** Adds collision spin (rad/s, world frame). */
+    public void addSpin(org.joml.Vector3dc w) {
+        if (w.isFinite()) spin.add(w);
+    }
+
+    /** Turns {@code q} by this tick's collision spin and lets the spin die down. */
+    private void applySpin(Quaterniond q) {
+        double rate = spin.length();
+        if (rate < 1e-4) {
+            spin.zero();
+            return;
+        }
+        Quaterniond turn = new Quaterniond().fromAxisAngleRad(spin.x / rate, spin.y / rate, spin.z / rate, rate * ShipFlightModel.TICK);
+        q.premul(turn).normalize();
+        spin.mul(SPIN_DECAY);
+    }
+
+    /**
+     * Pilot's client: the server resolved a collision of this ship ({@link dev.galactica.ship.collide.ShipImpulsePayload}):
+     * velocity change (m/s), push (blocks), spin (rad/s).
+     */
+    public void applyImpulse(Vector3fc dv, Vector3fc nudge, Vector3fc dw) {
+        if (dv.isFinite()) setDeltaMovement(getDeltaMovement().add(dv.x() * ShipFlightModel.TICK, dv.y() * ShipFlightModel.TICK, dv.z() * ShipFlightModel.TICK));
+        if (nudge.isFinite() && nudge.lengthSquared() > 0) setPos(getX() + nudge.x(), getY() + nudge.y(), getZ() + nudge.z());
+        if (dw.isFinite()) spin.add(dw.x(), dw.y(), dw.z());
+    }
+
+    /**
+     * Server: hull points lost to a collision ({@link dev.galactica.ship.collide.ShipCollisions}): the shields take them
+     * first; a hull at zero is wrecked when ship destruction is on.
+     */
+    public void collisionDamage(ServerLevel level, float hullPoints) {
+        if (hullPoints <= 0 || isRemoved()) return;
+        setHull(hull() - absorbByShield(hullPoints));
+        if (hull() <= 0 && dev.galactica.config.GalacticaConfigs.get().shipDestruction()) wreck(level);
+    }
+
+    /** Server: the hull is gone: crew set down safely and the craft destroyed. */
+    protected void wreck(ServerLevel level) {
+        ejectCrewSafely();
+        destroy(level, level.damageSources().generic());
+    }
+
     /** RCS command bits ({@link ShipAnimator}): predicted for the local pilot (with roll), synced for everyone else. */
     public int rcsMask() {
         if (level().isClientSide() && isLocalInstanceAuthoritative()) {
@@ -530,6 +583,7 @@ public class Starship extends VehicleEntity {
 
     private void tickTimed() {
         if (getHurtTime() > 0) setHurtTime(getHurtTime() - 1);
+        dev.galactica.ship.collide.ShipCollisions.track(this);
         attitudeO.set(attitude);
         if (!isDocked()) attitudeSync.apply(attitude, level().isClientSide() && !isLocalInstanceAuthoritative());
         super.tick();
@@ -595,7 +649,13 @@ public class Starship extends VehicleEntity {
     /** {@link #hullClear} with this craft's own probes and pivot ({@link #spec()}). */
     public boolean hullClearAt(Level level, Vec3 origin, Quaternionfc q) {
         ShipSpec s = spec();
-        return probesClear(level, origin, q, s.probes(), s.pivot());
+        return probesClear(level, origin, q, s.probes(), s.pivot()) && terrainClearBeyondProbes(level, origin, q)
+                && dev.galactica.ship.collide.ShipCollisions.clearOfShips(this, level, origin, q);
+    }
+
+    /** Terrain tests beyond the probes (a large built ship's occupancy grid); none for the Kestrel. */
+    protected boolean terrainClearBeyondProbes(Level level, Vec3 origin, Quaternionfc q) {
+        return true;
     }
 
     /** True if none of {@code probes} (body frame, from a pivot {@code pivot} above {@code origin}) is inside a block. */
@@ -784,6 +844,7 @@ public class Starship extends VehicleEntity {
         boolean grounded = onGround() || restingContact();
         float fuel = usableHydrogen();
         ShipFlightModel.step(spec, q, v, c, new Vector3d(g.x(), g.y(), g.z()), fuel, ShipFlightModel.TICK, grounded, assistReference());
+        applySpin(q);
         gearHolds = ShipFlightModel.parked(c, fuel, grounded) && v.x == 0 && v.z == 0 && gravityIsVertical(g);
         // Speed beyond the block cap goes to the frame (reported with the velocity, ShipClient), not lost.
         if (level().dimension() == Galactica.SPACE) pendingRebase.add(ShipFlightModel.krakensbane(v));
@@ -834,6 +895,13 @@ public class Starship extends VehicleEntity {
         gearHolds = grounded && v.x == 0 && v.z == 0 && gravityIsVertical(g);
         setDeltaMovement(v.x, v.y, v.z);
         entityData.set(DATA_THRUST, 0F);
+        if (spin.lengthSquared() > 1e-8) {
+            Quaterniond q = new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w);
+            applySpin(q);
+            attitude.set((float) q.x, (float) q.y, (float) q.z, (float) q.w).normalize();
+            entityData.set(DATA_ATTITUDE, new Quaternionf(attitude));
+            syncRotationFields();
+        }
     }
 
     /** The gear hold only makes sense with gravity along the block Y axis (planets), not in a ship's space frame. */
@@ -939,7 +1007,11 @@ public class Starship extends VehicleEntity {
         int ticks = Math.max(1, elapsed);
         lastReportTick = now;
 
-        Vector3d v = new Vector3d(velocity.x(), velocity.y(), velocity.z());
+        // A collision impulse the pilot has not acknowledged yet is missing from this report: add it, so it is neither
+        // charged to the engines nor undone (dev.galactica.ship.collide.ShipCollisions).
+        Vector3d pendingImpulse = dev.galactica.ship.collide.ShipCollisions.pendingVelocity(this);
+        Vector3d v = new Vector3d(velocity.x(), velocity.y(), velocity.z()).add(pendingImpulse);
+        Vector3d claimed = new Vector3d(v);
         // Krakensbane: the part of the velocity the client moved into the frame still counts against the engines.
         Vector3d moved = new Vector3d();
         if (rebase.isFinite() && level().dimension() == Galactica.SPACE) {
@@ -988,8 +1060,11 @@ public class Starship extends VehicleEntity {
             if (moved.lengthSquared() > 0) carryCrew(pilot, nav.origin(), next);
         }
         // The pilot ignores the tracker's velocity echo, so a clamp has to be told explicitly.
-        if (v.distance(velocity.x(), velocity.y(), velocity.z()) >= PilotReconciler.EPSILON)
-            ServerPlayNetworking.send(pilot, new ShipCorrectionPayload(getId(), seq, new Vector3f((float) v.x, (float) v.y, (float) v.z)));
+        // In the report's own terms (without the impulse it did not know of yet), so the client removes only the clamp.
+        if (v.distance(claimed) >= PilotReconciler.EPSILON) {
+            Vector3d accepted = new Vector3d(v).sub(pendingImpulse);
+            ServerPlayNetworking.send(pilot, new ShipCorrectionPayload(getId(), seq, new Vector3f((float) accepted.x, (float) accepted.y, (float) accepted.z)));
+        }
 
         Quaterniond turned = ShipFlightModel.clampAttitude(new Quaterniond(attitude.x, attitude.y, attitude.z, attitude.w),
                 new Quaterniond(q.x(), q.y(), q.z(), q.w()), ticks);
@@ -1003,6 +1078,12 @@ public class Starship extends VehicleEntity {
         // space chunks still loading); its riders are only seated when it ticks. Seat them now, so the server-side crew
         // (and the chunks streamed around them) never fall behind their own ship.
         if (level() instanceof ServerLevel sl) seatTree(this, sl);
+        dev.galactica.ship.collide.ShipCollisions.enforce(pilot, this);
+    }
+
+    /** {@link #seatTree} for other areas (a collision push). */
+    public static void seatRiders(Entity vehicle, ServerLevel sl) {
+        seatTree(vehicle, sl);
     }
 
     /** Seats every rider of {@code vehicle}, and theirs (docked craft and their crew), moving player chunk centres along. */

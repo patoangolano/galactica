@@ -186,10 +186,15 @@ public class ShipStructure extends Starship {
      * whole, so in open space or high above the ground the test costs a handful of section lookups.
      */
     @Override
-    public boolean hullClearAt(Level level, Vec3 origin, org.joml.Quaternionfc q) {
-        if (!super.hullClearAt(level, origin, q)) return false;
+    protected boolean terrainClearBeyondProbes(Level level, Vec3 origin, org.joml.Quaternionfc q) {
         ShipOccupancy occ = occupancy;
         return occ == null || occupancyClear(level, origin, q, occ);
+    }
+
+    /** A wreck breaks up ({@link ShipWreck}) instead of dropping a beacon. */
+    @Override
+    protected void wreck(ServerLevel level) {
+        ShipWreck.breakUp(this, level);
     }
 
     private boolean occupancyClear(Level level, Vec3 origin, org.joml.Quaternionfc q, ShipOccupancy occ) {
