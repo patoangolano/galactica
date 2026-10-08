@@ -139,6 +139,12 @@ final class DeckAutoTest {
             freighterId = f == null ? -1 : f.getId();
         });
         AutoTest.cmd(60, "execute in minecraft:overworld run tp @s 16.5 200 27.5 90 0");
+        // On foot: after the space runs the player may still be flying (EVA), which never touches the steps.
+        AutoTest.server(5, "on foot", sp -> {
+            sp.getAbilities().flying = false;
+            if (!sp.isCreative()) sp.getAbilities().mayfly = false;
+            sp.onUpdateAbilities();
+        });
         AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
         AutoTest.clearChat(5);
         AutoTest.shot(10, "deck_01_freighter_steps");
