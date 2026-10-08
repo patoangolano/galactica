@@ -124,8 +124,8 @@ public final class AutopilotClient {
     /** From {@code Entity.turn} of the local player: true swallows the movement (small jitter); a real one disengages. */
     public static boolean onMouse(double dx, double dy) {
         if (override == null) return false;
-        // Dev autotest: the desk's mouse is not the test's pilot (the scripted override uses a key mapping instead).
-        if (AUTOTEST) return true;
+        // Dev autotest: the desk's mouse never gets here (AutotestInput drops OS events at the GLFW callback), so a
+        // movement is the script's own Entity.turn call, and the override logic runs exactly as for a player.
         mouseAccum += Math.abs(dx) + Math.abs(dy);
         // A deliberate movement (over ~20° of turn within a second), not a nudge of the desk.
         if (mouseAccum > MOUSE_OVERRIDE && engagedTicks > 10) {

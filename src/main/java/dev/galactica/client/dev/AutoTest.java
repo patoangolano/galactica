@@ -463,6 +463,18 @@ public final class AutoTest {
             var st = dev.galactica.nav.autopilot.AutopilotServer.state(Minecraft.getInstance().player);
             Galactica.LOG.info("[autotest] {} autopilot manual override (engaged after a key press: {})", st.engaged() ? "FAIL" : "PASS", st.engaged());
         }));
+        // The same with a deliberate mouse movement: OS input is gated in the autotest, so this is the script turning
+        // the pilot through Entity.turn, the path MouseHandler.turnPlayer takes for a real mouse.
+        STEPS.add(new Step(20, () -> dev.galactica.client.nav.AutopilotClient.engage(dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT)));
+        STEPS.add(new Step(40, () -> {
+            var pl = Minecraft.getInstance().player;
+            if (pl != null) for (int i = 0; i < 4; i++) pl.turn(60, 0);
+        }));
+        STEPS.add(new Step(20, () -> {
+            var st = dev.galactica.nav.autopilot.AutopilotServer.state(Minecraft.getInstance().player);
+            Galactica.LOG.info("[autotest] {} autopilot manual override by mouse (engaged after a turn: {}, desk events dropped {})",
+                    st.engaged() ? "FAIL" : "PASS", st.engaged(), AutotestInput.dropped);
+        }));
         server(10, "re-park 30 000 km over Earth on a circular orbit", sp -> {
             parkOverBody(sp, "Earth", 30_000e3);
             NavServer.circularize(sp);

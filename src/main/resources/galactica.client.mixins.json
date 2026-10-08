@@ -15,7 +15,10 @@
     "ship.ClientLevelShipTrackingMixin",
     "earthsky.EarthSkyMixin",
     "eva.LightingAccessor",
-    "planet.LoadingScreenMixin"
+    "planet.LoadingScreenMixin",
+    "dev.KeyboardInputGateMixin",
+    "dev.MouseInputGateMixin",
+    "dev.KeyMappingGateMixin"
   ],
   "injectors": {
     "defaultRequire": 1
