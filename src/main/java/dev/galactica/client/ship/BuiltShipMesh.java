@@ -1,7 +1,7 @@
 package dev.galactica.client.ship;
 
-import dev.galactica.ship.build.ShipBlocks;
-import dev.galactica.ship.build.ShipCell;
+import dev.galactica.ship.yard.ShipBlocks;
+import dev.galactica.ship.yard.ShipCell;
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
@@ -70,9 +70,9 @@ final class BuiltShipMesh {
             BlockStateModel model = models.get(state);
             TextureAtlasSprite particle = model.particleMaterial().sprite();
             boolean emissive = state.getLightEmission() > 0;
-            if (state.getBlock() instanceof dev.galactica.ship.build.ShipPartBlock
-                    && dev.galactica.ship.build.ShipPartBlocks.partOf(state) == dev.galactica.ship.build.ShipPart.THRUSTER) {
-                Direction f = dev.galactica.ship.build.ShipPartBlock.facingOf(state);
+            if (state.getBlock() instanceof dev.galactica.ship.yard.ShipPartBlock
+                    && dev.galactica.ship.yard.ShipPartBlocks.partOf(state) == dev.galactica.ship.yard.ShipPart.THRUSTER) {
+                Direction f = dev.galactica.ship.yard.ShipPartBlock.facingOf(state);
                 if (f != null) {
                     nozzles.add(ox + 0.5F + 0.5F * f.getStepX()); nozzles.add(oy + 0.5F + 0.5F * f.getStepY()); nozzles.add(oz + 0.5F + 0.5F * f.getStepZ());
                     nozzles.add(f.getStepX()); nozzles.add(f.getStepY()); nozzles.add(f.getStepZ());

@@ -97,7 +97,7 @@ public final class ShipClient {
     }
 
     /** Block sets that arrived before their ship's spawn was handled, by entity id (client thread only). */
-    private static final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<dev.galactica.ship.build.ShipBlocks> PENDING_BLOCKS =
+    private static final it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<dev.galactica.ship.yard.ShipBlocks> PENDING_BLOCKS =
             new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>();
 
     /** GeckoLib versions whose API {@code GeckoShipRendering} was compiled against (5.5.7, MC 26.3). */

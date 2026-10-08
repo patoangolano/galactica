@@ -1,7 +1,7 @@
 package dev.galactica.ship;
 
 import dev.galactica.Galactica;
-import dev.galactica.ship.build.ShipBlocks;
+import dev.galactica.ship.yard.ShipBlocks;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;

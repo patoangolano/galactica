@@ -7,8 +7,8 @@ import dev.galactica.nav.NavState;
 import dev.galactica.ship.HyperjumpPayload;
 import dev.galactica.ship.ShipStructure;
 import dev.galactica.ship.Starship;
-import dev.galactica.ship.build.ShipAssembler;
-import dev.galactica.ship.build.ShipTemplate;
+import dev.galactica.ship.yard.ShipAssembler;
+import dev.galactica.ship.yard.ShipTemplate;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
@@ -202,7 +202,7 @@ final class BuiltShipAutoTest {
                     s.attitude().transform(new org.joml.Vector3f(0, 0, 1)).x, 0, s.attitude().transform(new org.joml.Vector3f(0, 0, 1)).z);
             BlockPos helm = ShipAssembler.helmCell(s, facing);
             boolean done = ShipAssembler.disassemble(s, sp);
-            boolean helmBack = sp.level().getBlockState(helm).is(dev.galactica.ship.build.ShipPartBlocks.HELM);
+            boolean helmBack = sp.level().getBlockState(helm).is(dev.galactica.ship.yard.ShipPartBlocks.HELM);
             log(done && helmBack && s.isRemoved(), "disassemble", String.format(Locale.ROOT,
                     "%d blocks set down on Mars, helm back at %s: %s", blocks, helm.toShortString(), helmBack));
         });

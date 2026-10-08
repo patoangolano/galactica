@@ -1,11 +1,11 @@
 package dev.galactica.ship;
 
-import dev.galactica.ship.build.ShipAssembler;
-import dev.galactica.ship.build.ShipBlocks;
-import dev.galactica.ship.build.ShipCell;
-import dev.galactica.ship.build.ShipPart;
-import dev.galactica.ship.build.ShipPartBlocks;
-import dev.galactica.ship.build.ShipStats;
+import dev.galactica.ship.yard.ShipAssembler;
+import dev.galactica.ship.yard.ShipBlocks;
+import dev.galactica.ship.yard.ShipCell;
+import dev.galactica.ship.yard.ShipPart;
+import dev.galactica.ship.yard.ShipPartBlocks;
+import dev.galactica.ship.yard.ShipStats;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
