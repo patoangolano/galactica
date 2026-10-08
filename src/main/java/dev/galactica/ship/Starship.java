@@ -1292,9 +1292,10 @@ public class Starship extends VehicleEntity {
     @Override
     protected void removePassenger(Entity passenger) {
         boolean wasPilot = getControllingPassenger() == passenger;
+        boolean walker = dev.galactica.ship.deck.Deck.isWalker(passenger);
         super.removePassenger(passenger);
         if (this instanceof ShipStructure built) dev.galactica.ship.deck.Deck.onRemoved(built, passenger);
-        if (AUTOTEST) Galactica.LOG.info("[autotest] ship {} lost {} {} ({}) at {}, ship removed {}", getId(), wasPilot ? "pilot" : "passenger",
+        if (AUTOTEST) Galactica.LOG.info("[autotest] ship {} lost {} {} ({}) at {}, ship removed {}", getId(), walker ? "deck walker" : wasPilot ? "pilot" : "passenger",
                 passenger.getName().getString(), level().isClientSide() ? "client" : "server", position(), getRemovalReason());
         // The jump is the pilot's order: it dies with their leaving, even if the passenger slides into the seat.
         if (!level().isClientSide() && wasPilot && pendingJump != null) {

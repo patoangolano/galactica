@@ -140,6 +140,7 @@ final class DeckAutoTest {
         });
         AutoTest.cmd(60, "execute in minecraft:overworld run tp @s 16.5 200 27.5 90 0");
         AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
+        AutoTest.clearChat(5);
         AutoTest.shot(10, "deck_01_freighter_steps");
         AutoTest.camera(5, CameraType.FIRST_PERSON);
         // Walk up the steps and in through the door (west, −X).
@@ -319,7 +320,8 @@ final class DeckAutoTest {
         });
         AutoTest.key(1, "keyUp", true);
         AutoTest.await(1, 200, () -> !Minecraft.getInstance().player.isPassenger());
-        AutoTest.key(1, "keyUp", false);
+        // A few more steps of EVA flight out from the hull, then let go.
+        AutoTest.key(15, "keyUp", false);
         AutoTest.step(40, () -> {
             Minecraft mc = Minecraft.getInstance();
             var f = clientShip(freighterId);
@@ -403,7 +405,9 @@ final class DeckAutoTest {
                 lookAt(new Vec3(helm.x, helm.y, helm.z));
             }
         });
-        AutoTest.shot(5, "deck_09_hangar_to_the_shuttle");
+        AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
+        AutoTest.shot(10, "deck_09_hangar_to_the_shuttle");
+        AutoTest.camera(5, CameraType.FIRST_PERSON);
         AutoTest.step(5, DeckAutoTest::click);
         AutoTest.await(1, 60, () -> Minecraft.getInstance().player.getVehicle() != null && Minecraft.getInstance().player.getVehicle().getId() == shuttleId);
         AutoTest.step(10, () -> {

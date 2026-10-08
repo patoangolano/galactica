@@ -56,6 +56,7 @@ public final class DeckClient {
             if (now != null) ClientPlayNetworking.send(new DeckPayloads.Move(ship.getId(), now.x(), now.y(), now.z(), now.epoch()));
         };
         Deck.clientLeave = DeckClient::leave;
+        Deck.clientNewWalker = DeckClient::announce;
         ClientTickEvents.START_CLIENT_TICK.register(DeckClient::beforeTick);
         ClientTickEvents.END_CLIENT_TICK.register(DeckClient::afterTick);
     }
@@ -134,6 +135,9 @@ public final class DeckClient {
             double reach = ship.spec().hullReach() + 3;
             if (p.distanceToSqr(ship.getX(), ship.getY() + ship.pivot(), ship.getZ()) > (reach + 16) * (reach + 16)) continue;
             ShipPose from = Deck.prevPose(ship), to = Deck.pose(ship);
+            // Drifting with a ship after an EVA step-off, the player moved with it this tick: sweep the relative move only.
+            Vec3 d = drift;
+            if (d != null) from = new ShipPose(new Vector3d(from.pivot()).add(d.x, d.y, d.z), from.attitude(), from.com());
             boolean moved = from.maxTravel(to, reach) > 1e-4;
             if (moved) {
                 HullSweep.Result r = HullSweep.sweep(new Vector3d(p.getX(), p.getY(), p.getZ()), DeckWalker.Size.PLAYER, from, to, reach, Deck.blocks(ship));
@@ -172,7 +176,7 @@ public final class DeckClient {
         boolean space = p.level().dimension() == Galactica.SPACE;
         drift = space && shipV.length() >= EvaDrift.MIN ? shipV : null;
         p.setDeltaMovement(drift != null ? v.subtract(shipV) : v);
-        boardCooldown = 10;
+        boardCooldown = 20;
         leaves++;
         if (ClientPlayNetworking.canSend(DeckPayloads.Leave.TYPE)) ClientPlayNetworking.send(new DeckPayloads.Leave(at.x, at.y, at.z, v.x, v.y, v.z));
         if (AUTOTEST) Galactica.LOG.info("[autotest] client steps off ship {} at {} with {} m/s", ship.getId(), at, String.format(java.util.Locale.ROOT, "%.2f", v.length() * 20));
@@ -194,6 +198,12 @@ public final class DeckClient {
     public static Vec3 drift() {
         Vec3 d = drift;
         return d == null ? Vec3.ZERO : d;
+    }
+
+    /** The local player started walking a deck the server put them on (stood up, a command): say so over vanilla's "dismount" hint. */
+    static void announce(ShipStructure ship) {
+        var p = Minecraft.getInstance().player;
+        if (p != null) p.sendOverlayMessage(Component.translatable("hud.galactica.deck.on_deck", ship.getDisplayName()));
     }
 
     public static boolean magbootsOn() {

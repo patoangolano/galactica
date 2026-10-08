@@ -90,6 +90,8 @@ public final class Deck {
     public static java.util.function.BiConsumer<ShipStructure, Entity> clientAfterStep = (s, e) -> { };
     /** Client: the local player stepped off ({@code world} position, {@code velocity} blocks per tick, the ship's own). */
     public static ClientLeave clientLeave = (s, e, world, velocity, shipVelocity) -> { };
+    /** Client: the local player's walk began from the server's deck position (boarded or stood up by the server). */
+    public static java.util.function.Consumer<ShipStructure> clientNewWalker = s -> { };
     /**
      * Server: players whose walk the server simulates itself (no client reports their deck position): GameTest mock
      * players. Real players' clients simulate their own.
@@ -331,6 +333,7 @@ public final class Deck {
                 synchronized (Deck.class) {
                     states(level).put(e, st);
                 }
+                if (client) clientNewWalker.accept(ship);
             }
             if (st.lastTick != e.tickCount) {
                 st.lastTick = e.tickCount;
