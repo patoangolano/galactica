@@ -90,6 +90,15 @@ public final class AutoTest {
             ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
             return;
         }
+        if ("deck".equals(MODE)) {
+            // Deck walking and ship-to-ship collision alone (DeckAutoTest; runAutotestShips ends with it too).
+            cmd(0, "clear");
+            cmd(5, "galactica kit");
+            DeckAutoTest.run();
+            STEPS.add(new Step(40, () -> Minecraft.getInstance().stop()));
+            ClientTickEvents.END_CLIENT_TICK.register(AutoTest::tick);
+            return;
+        }
         if ("soi".equals(MODE)) {
             // The orbital frame alone (OrbitalFrame): the four SOI checks, from a fresh login.
             cmd(0, "clear");

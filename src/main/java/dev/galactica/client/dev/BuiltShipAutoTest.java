@@ -214,6 +214,8 @@ final class BuiltShipAutoTest {
         prefabs();
         systems();
         autopilot();
+        // Deck walking and ship-to-ship collision (DeckAutoTest).
+        DeckAutoTest.run();
     }
 
     // ------------------------------------------------------------------ ship systems (S7+)

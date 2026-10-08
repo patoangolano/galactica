@@ -227,6 +227,14 @@ loom {
             vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=ships'
             programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
         }
+        // Deck walking and ship-to-ship collision alone (AutoTest "deck" mode; runAutotestShips ends with them too).
+        autotestDeck {
+            client()
+            configName = 'Galactica Autotest (deck walking + ship collision)'
+            runDir 'runs/client'
+            vmArgs '-Xmx4G', '-Dgalactica.autotest=true', '-Dgalactica.autotest.mode=deck'
+            programArgs '--quickPlaySingleplayer', 'galactica_test', '--width', '1600', '--height', '900'
+        }
         showcase {
             client()
             configName = 'Galactica Showcase take'

@@ -84,8 +84,27 @@ public final class DeckClient {
     public static boolean useFromDeck(Minecraft mc) {
         LocalPlayer p = mc.player;
         if (p == null || !(p.getVehicle() instanceof ShipStructure ship) || !Deck.isWalker(p)) return false;
-        int index = ShipCargo.raycast(ship, p.getEyePosition(), p.getViewVector(1F), Deck.USE_REACH);
-        if (index < 0 || !usable(ship, index) || !ClientPlayNetworking.canSend(DeckPayloads.Use.TYPE)) return false;
+        if (!ClientPlayNetworking.canSend(DeckPayloads.Use.TYPE)) return false;
+        Vec3 eye = p.getEyePosition(), dir = p.getViewVector(1F);
+        double[] own = ShipCargo.raycastHit(ship, eye, dir, Deck.USE_REACH);
+        // A craft docked to this ship (in its hangar): any of its blocks, if nearer than the ship's own.
+        ShipStructure best = null;
+        double[] bestHit = null;
+        for (dev.galactica.ship.Starship c : ship.dockedCraft()) {
+            if (!(c instanceof ShipStructure child) || child.blocks().isEmpty()) continue;
+            double[] hit = ShipCargo.raycastHit(child, eye, dir, Deck.USE_REACH);
+            if (hit[0] >= 0 && hit[1] < own[1] && (bestHit == null || hit[1] < bestHit[1])) {
+                best = child;
+                bestHit = hit;
+            }
+        }
+        if (best != null) {
+            uses++;
+            ClientPlayNetworking.send(new DeckPayloads.Use(best.getId(), (int) bestHit[0]));
+            return true;
+        }
+        int index = (int) own[0];
+        if (index < 0 || !usable(ship, index)) return false;
         uses++;
         ClientPlayNetworking.send(new DeckPayloads.Use(ship.getId(), index));
         return true;

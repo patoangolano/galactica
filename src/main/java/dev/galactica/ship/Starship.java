@@ -1265,7 +1265,7 @@ public class Starship extends VehicleEntity {
     @Override
     public Vec3 getDismountLocationForPassenger(LivingEntity passenger) {
         // A deck walker leaves from where it stands (stepping off the edge, or taken off by a command).
-        Vec3 walked = dev.galactica.ship.deck.Deck.dismountTarget(passenger);
+        Vec3 walked = dev.galactica.ship.deck.Deck.takeDismountTarget(passenger);
         if (walked != null) return walked;
         double yaw = Math.toRadians(getYRot());
         double fx = -Math.sin(yaw), fz = Math.cos(yaw);
@@ -1293,6 +1293,7 @@ public class Starship extends VehicleEntity {
     protected void removePassenger(Entity passenger) {
         boolean wasPilot = getControllingPassenger() == passenger;
         super.removePassenger(passenger);
+        if (this instanceof ShipStructure built) dev.galactica.ship.deck.Deck.onRemoved(built, passenger);
         if (AUTOTEST) Galactica.LOG.info("[autotest] ship {} lost {} {} ({}) at {}, ship removed {}", getId(), wasPilot ? "pilot" : "passenger",
                 passenger.getName().getString(), level().isClientSide() ? "client" : "server", position(), getRemovalReason());
         // The jump is the pilot's order: it dies with their leaving, even if the passenger slides into the seat.

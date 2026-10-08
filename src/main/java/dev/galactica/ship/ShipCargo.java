@@ -59,6 +59,11 @@ public final class ShipCargo {
      * or −1: a voxel walk through the ship grid in its body frame.
      */
     public static int raycast(ShipStructure ship, Vec3 eye, Vec3 dir, double max) {
+        return (int) raycastHit(ship, eye, dir, max)[0];
+    }
+
+    /** {@link #raycast}, with the distance along the ray to the block's face: {index, distance} ({-1, ∞} for a miss). */
+    public static double[] raycastHit(ShipStructure ship, Vec3 eye, Vec3 dir, double max) {
         var com = ship.centreOfMass();
         Vector3d o = ShipDocking.toBody(ship, new Vector3d(eye.x, eye.y, eye.z)).add(com.x(), com.y(), com.z());
         Vector3d d = new Quaternionf(ship.attitude()).conjugate().transform(new Vector3d(dir.x, dir.y, dir.z)).normalize();
@@ -71,7 +76,7 @@ public final class ShipCargo {
         double t = 0;
         while (t <= max) {
             int i = blocks.indexAt(x, y, z);
-            if (i >= 0) return i;
+            if (i >= 0) return new double[] {i, t};
             if (tx <= ty && tx <= tz) {
                 t = tx;
                 tx += dx;
@@ -86,7 +91,7 @@ public final class ShipCargo {
                 z += sz;
             }
         }
-        return -1;
+        return new double[] {-1, Double.POSITIVE_INFINITY};
     }
 
     private static double boundary(double p, double d) {

@@ -201,8 +201,64 @@ public final class Deck {
         });
     }
 
-    /** The ship's block collision boxes, cell coordinates. */
+    /** The ship's block collision boxes, cell coordinates, with the hulls of craft docked to it. */
     public static DeckWalker.Blocks blocks(ShipStructure s) {
+        DeckWalker.Blocks own = ownBlocks(s);
+        List<ShipStructure> docked = new ArrayList<>(1);
+        for (Starship c : s.dockedCraft()) if (c instanceof ShipStructure b && !b.blocks().isEmpty()) docked.add(b);
+        if (docked.isEmpty()) return own;
+        return (r, out) -> {
+            own.collect(r, out);
+            for (ShipStructure c : docked) dockedCells(s, c).collect(r, out);
+        };
+    }
+
+    /** A docked craft's cells in its carrier's cell coordinates (unit boxes at the cell centres), cached per docked pose. */
+    private record DockedCells(org.joml.Vector3fc offset, org.joml.Quaternionfc rotation, float[] centres, Aabb bounds) implements DeckWalker.Blocks {
+        @Override
+        public void collect(Aabb r, List<Aabb> out) {
+            if (!bounds.intersects(r.inflate(0.5))) return;
+            for (int i = 0; i < centres.length; i += 3) {
+                double x = centres[i], y = centres[i + 1], z = centres[i + 2];
+                if (x + 0.5 < r.minX() || x - 0.5 > r.maxX() || y + 0.5 < r.minY() || y - 0.5 > r.maxY() || z + 0.5 < r.minZ() || z - 0.5 > r.maxZ()) continue;
+                out.add(new Aabb(x - 0.5, y - 0.5, z - 0.5, x + 0.5, y + 0.5, z + 0.5));
+            }
+        }
+    }
+
+    private static final Map<Entity, DockedCells> DOCKED_CELLS = new WeakHashMap<>();
+
+    private static DockedCells dockedCells(ShipStructure carrier, ShipStructure child) {
+        synchronized (DOCKED_CELLS) {
+            DockedCells c = DOCKED_CELLS.get(child);
+            if (c != null && c.offset().equals(child.dockOffset()) && c.rotation().equals(child.dockRotation())) return c;
+            var comC = child.centreOfMass();
+            var comK = carrier.centreOfMass();
+            org.joml.Quaternionf rot = new org.joml.Quaternionf(child.dockRotation());
+            var cells = child.blocks().shipCells();
+            float[] centres = new float[cells.size() * 3];
+            double ax = Double.MAX_VALUE, ay = Double.MAX_VALUE, az = Double.MAX_VALUE, bx = -Double.MAX_VALUE, by = -Double.MAX_VALUE, bz = -Double.MAX_VALUE;
+            org.joml.Vector3f v = new org.joml.Vector3f();
+            for (int i = 0; i < cells.size(); i++) {
+                var cell = cells.get(i);
+                v.set((float) (cell.x() + 0.5 - comC.x()), (float) (cell.y() + 0.5 - comC.y()), (float) (cell.z() + 0.5 - comC.z()));
+                rot.transform(v).add(child.dockOffset());
+                double x = v.x + comK.x(), y = v.y + comK.y(), z = v.z + comK.z();
+                centres[3 * i] = (float) x;
+                centres[3 * i + 1] = (float) y;
+                centres[3 * i + 2] = (float) z;
+                ax = Math.min(ax, x); ay = Math.min(ay, y); az = Math.min(az, z);
+                bx = Math.max(bx, x); by = Math.max(by, y); bz = Math.max(bz, z);
+            }
+            c = new DockedCells(new org.joml.Vector3f(child.dockOffset()), new org.joml.Quaternionf(child.dockRotation()), centres,
+                    new Aabb(ax - 0.5, ay - 0.5, az - 0.5, bx + 0.5, by + 0.5, bz + 0.5));
+            DOCKED_CELLS.put(child, c);
+            return c;
+        }
+    }
+
+    /** The ship's own block collision boxes, cell coordinates. */
+    private static DeckWalker.Blocks ownBlocks(ShipStructure s) {
         ShipBlocks blocks = s.blocks();
         int[] lo = s.cellMin(), hi = s.cellMax();
         return (r, out) -> {
@@ -507,8 +563,8 @@ public final class Deck {
             SERVER.remove(e);
             LEAVE_TO.put(e, at);
         }
-        e.removeAttached(DECK);
         if (e.getVehicle() == ship) e.stopRiding();
+        e.removeAttached(DECK);
         synchronized (Deck.class) {
             LEAVE_TO.remove(e);
         }
@@ -523,13 +579,30 @@ public final class Deck {
                 String.format(java.util.Locale.ROOT, "%.2f", v.length() * 20));
     }
 
-    /** Where a passenger leaving now is set down, if it is a walker stepping off (null otherwise). */
-    public static @Nullable Vec3 dismountTarget(Entity passenger) {
+    /**
+     * Where a passenger leaving now is set down, if it walked the deck (null otherwise): where it stood. One shot: the
+     * spot is forgotten once read.
+     */
+    public static @Nullable Vec3 takeDismountTarget(Entity passenger) {
         synchronized (Deck.class) {
-            Vec3 at = LEAVE_TO.get(passenger);
+            Vec3 at = LEAVE_TO.remove(passenger);
             if (at != null) return at;
         }
         return passenger.hasAttached(DECK) ? passenger.position() : null;
+    }
+
+    /**
+     * {@code Starship.removePassenger}: a walker leaving the ship by any way (stepping off, boarding another craft,
+     * a command, death) stops walking: its spot is kept for the dismount, its deck position and walk state dropped.
+     */
+    public static void onRemoved(ShipStructure ship, Entity passenger) {
+        boolean walked = passenger.hasAttached(DECK);
+        synchronized (Deck.class) {
+            State st = states(passenger.level()).remove(passenger);
+            walked |= st != null;
+            if (walked) LEAVE_TO.putIfAbsent(passenger, passenger.position());
+        }
+        if (walked && !passenger.level().isClientSide()) passenger.removeAttached(DECK);
     }
 
     // ------------------------------------------------------------------ server: the clients' reports
@@ -583,10 +656,39 @@ public final class Deck {
         return new Vec3(w.x, w.y, w.z);
     }
 
-    /** A walker uses a ship block: the helm (fly), a crew seat (sit), a container (open it). */
+    /**
+     * A walker uses a ship block: of the ship it walks on, the helm (fly), a crew seat (sit), a container (open it); of
+     * a craft docked to that ship (in its hangar), any block boards it, a container opens.
+     */
     private static void handleUse(ServerPlayer p, DeckPayloads.Use msg) {
-        if (!(p.getVehicle() instanceof ShipStructure ship) || ship.getId() != msg.shipId() || !p.hasAttached(DECK)) return;
-        use(p, ship, msg.block());
+        if (!(p.getVehicle() instanceof ShipStructure ship) || !p.hasAttached(DECK)) return;
+        if (ship.getId() == msg.shipId()) {
+            use(p, ship, msg.block());
+            return;
+        }
+        if (p.level().getEntity(msg.shipId()) instanceof ShipStructure child && child.getVehicle() == ship) useDocked(p, child, msg.block());
+    }
+
+    /** Server: a walker's click on block {@code index} of a craft docked to the ship they walk on. */
+    public static boolean useDocked(ServerPlayer p, ShipStructure child, int index) {
+        ShipBlocks blocks = child.blocks();
+        if (index < 0 || index >= blocks.size()) return false;
+        int c = blocks.cell(index);
+        var com = child.centreOfMass();
+        Vector3d centre = dev.galactica.ship.ShipDocking.toWorld(child,
+                new Vector3d(ShipCell.unpackX(c) + 0.5 - com.x(), ShipCell.unpackY(c) + 0.5 - com.y(), ShipCell.unpackZ(c) + 0.5 - com.z()));
+        if (centre.distance(p.getX(), p.getEyeY(), p.getZ()) > USE_REACH + 1.5) return false;
+        if (ShipCargo.isContainer(blocks, index)) {
+            ShipCargo.open(p, child, index);
+            return true;
+        }
+        if (child.crew().size() >= child.spec().seatCount()) {
+            p.sendOverlayMessage(Component.translatable("hud.galactica.deck.no_seat"));
+            return false;
+        }
+        boolean ok = p.startRiding(child, true, true);
+        Galactica.LOG.info("{}{} boards docked ship {} from the deck: {}", AUTOTEST ? "[autotest] " : "", p.getName().getString(), child.getId(), ok);
+        return ok;
     }
 
     /** Server: what a walker's click on ship block {@code index} does. True if something happened. */
