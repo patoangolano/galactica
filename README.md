@@ -43,6 +43,30 @@ A Via Láctea inteira, em escala real, dentro do Minecraft Fabric 26.3: cerca de
 
 O governador do motor reduz a velocidade a metade da distância até a superfície mais próxima por segundo, então a nave sempre desacelera na chegada.
 
+### Naves construídas com blocos
+
+Qualquer construção vira nave. Os blocos de peça (aba Galactica, receitas no livro de receitas):
+
+| Bloco | Papel |
+|---|---|
+| Leme da Nave | assento do piloto e âncora da montagem; o nariz aponta para onde você olhava ao colocá-lo; acima dele precisa haver um bloco vazio para a cabeça |
+| Propulsor da Nave | 0,6 MN, empurra oposto ao bocal (o bocal aponta para você ao colocar). Bocal para trás: motor principal (W); para a frente: freio (S); para baixo: sustentação VTOL (pulo) |
+| Quadra de Propulsores RCS | 0,5 MN em cada eixo: sustentação, assistência de voo e giro |
+| Tanque de Hidrogênio | 100 células de H₂ |
+| Núcleo do Hiperpropulsor | habilita o hipersalto: 10 al com um núcleo, +5 al por núcleo extra (até 30), 16 de matéria exótica cada |
+| Trem de Pouso | os pés tocam o chão primeiro |
+| Assento de Tripulante | um passageiro por assento |
+| Blindagem do Casco | pesada, dá pontos de casco |
+
+Os demais blocos (concreto, vidro, tábuas, barris…) são o casco: a massa vem da dureza do bloco. Baús e barris guardam o conteúdo.
+
+1. Construa a nave separada do terreno por ar (a montagem para em terra, pedra natural, areia, folhas e troncos). Precisa de leme, pelo menos um propulsor com o bocal para trás e um tanque. Limite: 4 096 blocos, 64 × 48 × 64.
+2. Clique com o botão direito no leme: os blocos viram uma entidade (`galactica:built_ship`) com massa, centro de massa, inércia, empuxo por direção, tanques, alcance de salto, caixa e sondas de colisão calculados das peças. Se algo faltar, a mensagem diz o quê e onde.
+3. Abasteça com células de hidrogênio e matéria exótica (até 64 por clique), embarque com o botão direito e voe como a Kestrel: W/S, mouse, Q/E, pulo/agachar, C assistência, J hipersalto, M mapa. O mostrador do cockpit aparece à frente do leme.
+4. Para desmontar: pouse (ou pare, no espaço), desembarque todos e use a nave agachado com a mão vazia. Os blocos voltam à grade alinhados ao ponto cardeal mais próximo; H₂ e matéria exótica saem como itens.
+
+Naves prontas (as mesmas peças, desmontáveis): `/galactica ship <kestrel|shuttle|freighter|explorer>` implanta, abastece e embarca; os itens "Planta de Nave" implantam onde você olha; `/galactica shipblocks <classe>` coloca a nave como blocos para modificar. `/galactica ship` sem classe continua implantando a Kestrel modelada.
+
 ## Instalação
 
 1. Fabric Loader 0.19.5+ e Fabric API para Minecraft 26.3.

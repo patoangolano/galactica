@@ -498,7 +498,7 @@ public final class AutoTest {
      * nose and {@code sunElDeg} above the ship's horizon, as close as a 1° search gets. The pilot's client is
      * authoritative for the attitude, so setting it here is what the server receives next tick.
      */
-    private static void orientShip(int wait, float sunAzDeg, float sunElDeg) {
+    static void orientShip(int wait, float sunAzDeg, float sunElDeg) {
         STEPS.add(new Step(wait, () -> {
             Minecraft mc = Minecraft.getInstance();
             var ship = dev.galactica.client.ship.ShipClient.piloted(mc);

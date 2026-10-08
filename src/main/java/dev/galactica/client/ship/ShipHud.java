@@ -40,7 +40,7 @@ public final class ShipHud {
                 tr("hud.galactica.ship.title", tr(ship.coupled() ? "hud.galactica.ship.coupled" : "hud.galactica.ship.decoupled")),
                 tr("hud.galactica.ship.hydrogen", String.format("%.1f", h), String.format("%.0f", ship.maxHydrogen())),
                 tr("hud.galactica.ship.exotic", ship.exotic(), String.format("%.0f", DriveRules.rangeLy(ship.exotic(), ship.jumpTierLy()))),
-                tr("hud.galactica.ship.hull", Math.round(hull)),
+                tr("hud.galactica.ship.hull", Math.round(hull / ship.maxHull() * 100F)),
                 tr("hud.galactica.ship.speed", String.format("%.1f", speed)),
         };
         int[] colours = {ACCENT, h < 5 ? WARN : TEXT, DIM, hull < 25 ? WARN : TEXT, TEXT};

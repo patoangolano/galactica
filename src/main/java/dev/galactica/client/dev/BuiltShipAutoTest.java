@@ -42,11 +42,11 @@ final class BuiltShipAutoTest {
     static void run() {
         AutoTest.cmd(0, "galactica kit");
         AutoTest.cmd(5, "execute in minecraft:overworld run forceload add -16 -8 16 40");
-        AutoTest.cmd(80, "execute in minecraft:overworld run tp @s 0.5 201 0.5 0 15");
-        AutoTest.cmd(5, "kill @e[type=galactica:built_ship,distance=..300]");
-        AutoTest.cmd(5, "fill -14 199 -4 14 199 34 minecraft:stone");
-        AutoTest.cmd(5, "fill -14 200 -4 14 212 34 minecraft:air");
-        AutoTest.cmd(5, "setblock 0 199 0 minecraft:stone");
+        // The pad first, then the player onto it (teleported first, the player fell past the pad into the sea).
+        AutoTest.cmd(80, "execute in minecraft:overworld run fill -14 199 -4 14 199 34 minecraft:stone");
+        AutoTest.cmd(5, "execute in minecraft:overworld run fill -14 200 -4 14 212 34 minecraft:air");
+        AutoTest.cmd(5, "execute in minecraft:overworld run tp @s 0.5 200 0.5 0 15");
+        AutoTest.cmd(20, "kill @e[type=galactica:built_ship,distance=..300]");
         // The test ship: a 3 × 6 deck on three gear legs, helm and a crew seat, two tanks, a core, an aft thruster, two
         // lift jets in the deck and two RCS quads.
         AutoTest.cmd(5, "fill -1 201 9 1 201 14 minecraft:white_concrete");
@@ -81,16 +81,24 @@ final class BuiltShipAutoTest {
         });
         AutoTest.camera(20, CameraType.THIRD_PERSON_BACK);
         AutoTest.shot(20, "32_built_ship_boarded");
-        // Hover: a short lift burst off the pad, then hands off with flight assist on: it holds altitude.
+        // Hover: a short lift burst off the pad, then hands off with flight assist on: it holds altitude. Level first,
+        // as a pilot would: flight assist nulls drift across the nose and along the dorsal axis, not along the nose,
+        // so a hull pitched down would slide down its own nose under gravity.
+        AutoTest.levelShip(5);
         AutoTest.key(5, "keyJump", true);
         AutoTest.key(12, "keyJump", false);
-        AutoTest.step(30, () -> hoverY = ship() != null ? ship().getY() : Double.NaN);
+        AutoTest.levelShip(1);
+        AutoTest.step(40, () -> {
+            hoverY = ship() != null ? ship().getY() : Double.NaN;
+            Starship.traceTicks = 6;
+        });
         AutoTest.step(200, () -> {
             ShipStructure s = ship();
             double drift = s == null ? Double.NaN : Math.abs(s.getY() - hoverY);
             boolean ok = s != null && drift < 0.5 && s.getY() > 203 && s.coupled();
-            log(ok, "hover", String.format(Locale.ROOT, "altitude %.2f -> %.2f over 10 s (drift %.3f, limit 0.5), assist %s",
-                    hoverY, s == null ? Double.NaN : s.getY(), drift, s != null && s.coupled()));
+            float pitch = s == null ? Float.NaN : s.getXRot();
+            log(ok, "hover", String.format(Locale.ROOT, "altitude %.2f -> %.2f over 10 s (drift %.3f, limit 0.5), assist %s, pitch %.1f deg",
+                    hoverY, s == null ? Double.NaN : s.getY(), drift, s != null && s.coupled(), pitch));
         });
         // Fly: main engine for 1.5 s.
         AutoTest.step(5, () -> flyStart = ship() != null ? ship().position() : null);
@@ -129,14 +137,14 @@ final class BuiltShipAutoTest {
         AutoTest.cmd(5, "galactica goto Sol");
         // Floating origin: ~14 blocks per tick through at least three recentres, pilot on the same instance.
         AutoTest.step(40, () -> OriginShiftAutoTest.start("built-ship", new Vec3(0, 0, 14)));
-        AutoTest.step(180, OriginShiftAutoTest::finish);
+        AutoTest.step(270, OriginShiftAutoTest::finish);
         AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
         AutoTest.step(5, () -> ShipCamera.orbit(150, 20, 14F));
         AutoTest.shot(20, "34_built_ship_space");
         AutoTest.step(5, ShipCamera::clearOrbit);
         AutoTest.camera(5, CameraType.FIRST_PERSON);
         // Hyperjump with the ship's own core (tier 10 ly), to the nearest star.
-        AutoTest.server(5, "no map target: the drive aims at the nearest star", sp -> sp.removeAttached(dev.galactica.nav.JumpTargets.TYPE));
+        AutoTest.server(5, "target the nearest other star 1-9 ly away", BuiltShipAutoTest::targetNearestStar);
         AutoTest.step(5, () -> {
             Minecraft mc = Minecraft.getInstance();
             ShipStructure s = ship();
@@ -219,6 +227,8 @@ final class BuiltShipAutoTest {
                         s.spec().jumpRangeLy(), s.spec().seatCount(), s.spec().probes().length, s.spec().turnScale()));
             });
             AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
+            // The Sun ahead-left and high, so the orbit camera (from ahead and to port) sees the lit side.
+            AutoTest.orientShip(5, -60, 40);
             AutoTest.step(5, () -> {
                 ShipStructure s = ship();
                 float d = s == null ? 20F : 2.2F * s.spec().hullReach() + 4F;
@@ -235,6 +245,25 @@ final class BuiltShipAutoTest {
                 }
             });
         }
+    }
+
+    /** Server: sets the pilot's jump target to the nearest star between 1 and 9 ly (Sol itself is a few AU away). */
+    private static void targetNearestStar(net.minecraft.server.level.ServerPlayer sp) {
+        var g = dev.galactica.nav.Frames.playerPos(sp.getAttachedOrCreate(Galactica.NAV), sp.getX(), sp.getY(), sp.getZ());
+        double pcPerLy = dev.galactica.science.Units.LIGHT_YEAR / dev.galactica.science.Units.PARSEC;
+        var best = dev.galactica.nav.NavServer.neighbourhood(sp).nearbyStars(g).stream()
+                .filter(s -> {
+                    double ly = s.distanceTo(g.xPc(), g.yPc(), g.zPc()) / pcPerLy;
+                    return ly > 1 && ly < 9;
+                })
+                .min(java.util.Comparator.comparingDouble(s -> s.distanceTo(g.xPc(), g.yPc(), g.zPc()))).orElse(null);
+        if (best == null) {
+            Galactica.LOG.warn("[autotest] FAIL built ship hyperjump: no star within 1-9 ly");
+            return;
+        }
+        var p = dev.galactica.nav.Neighbourhood.starPos(best);
+        sp.setAttached(dev.galactica.nav.JumpTargets.TYPE, new dev.galactica.nav.JumpTarget(best.name(), p.xPc(), p.yPc(), p.zPc()));
+        Galactica.LOG.info("[autotest] built ship jump target {}", best.name());
     }
 
     private static ShipStructure ship() {
