@@ -235,7 +235,7 @@ public final class AutopilotServer {
             return;
         }
         if (s.phase() == AutopilotState.Phase.DESCENT && ship != null) {
-            if (now - run.phaseStart > DESCENT_TIMEOUT) {
+            if (now - run.phaseStart > forShip(DESCENT_TIMEOUT, ship)) {
                 disengage(p, "hud.galactica.autopilot.off.stalled");
                 return;
             }
@@ -312,10 +312,20 @@ public final class AutopilotServer {
         set(p, new AutopilotState(true, phase, s.mode(), 0, (float) eta), run);
     }
 
+    /**
+     * A powered phase's time limit for this ship: the Kestrel's limits were set for its 50 m/s² main engine, and a
+     * block-built ship with a weaker one needs proportionally longer for the same Δv (at most 6×).
+     */
+    static int forShip(int ticks, Starship ship) {
+        double main = ship.spec().mainAccel();
+        double k = main > 0 ? Math.clamp(dev.galactica.ship.ShipFlightModel.MAIN_ACCEL / main, 1.0, 6.0) : 6.0;
+        return (int) Math.round(ticks * k);
+    }
+
     /** Orbit insertion: arrived once the conic is near-circular above the entry shell for {@link #SETTLE_TICKS}. */
     private static void insertStep(ServerPlayer p, AutopilotState s, Run run, Starship ship, Neighbourhood nb, GalacticPos here,
                                    NavState nav, TargetGeometry.Resolved r, int now) {
-        if (now - run.phaseStart > INSERT_TIMEOUT) {
+        if (now - run.phaseStart > forShip(INSERT_TIMEOUT, ship)) {
             disengage(p, "hud.galactica.autopilot.off.insert_failed");
             return;
         }
@@ -345,7 +355,7 @@ public final class AutopilotServer {
             set(p, s.withPhase(AutopilotState.Phase.LANDING), run);
             return;
         }
-        if (now - run.phaseStart > LANDING_TIMEOUT) {
+        if (now - run.phaseStart > forShip(LANDING_TIMEOUT, ship)) {
             disengage(p, "hud.galactica.autopilot.off.stalled");
             return;
         }

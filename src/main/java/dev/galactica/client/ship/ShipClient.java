@@ -78,6 +78,12 @@ public final class ShipClient {
             if (blocks != null && entity instanceof dev.galactica.ship.ShipStructure s) s.setBlocks(blocks);
         });
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> PENDING_BLOCKS.clear());
+        if (Boolean.getBoolean("galactica.autotest")) {
+            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents.ENTITY_UNLOAD.register((entity, level) -> {
+                if (entity instanceof Starship s) Galactica.LOG.info("[autotest] client unloads ship {} at {} ({}, riders {})", s.getId(),
+                        s.position(), s.getRemovalReason(), s.getPassengers().size());
+            });
+        }
 
         // Fabric runs play payload handlers on the client thread, in packet order.
         ClientPlayNetworking.registerGlobalReceiver(ShipCorrectionPayload.TYPE, (msg, ctx) -> {

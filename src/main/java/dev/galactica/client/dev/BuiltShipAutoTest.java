@@ -286,9 +286,10 @@ final class BuiltShipAutoTest {
             dev.galactica.nav.NavServer.circularize(sp);
         });
         AutoTest.clearChat(20);
-        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT, 20 * 360, "39_built_autopilot_hud");
+        AutoTest.step(1, () -> watch(true));
+        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT, 20 * 900, "39_built_autopilot_hud");
         AutoTest.verdictOrbit(5, "Mars");
-        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.LAND, 20 * 600, "39b_built_autopilot_descent");
+        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.LAND, 20 * 900, "39b_built_autopilot_descent");
         AutoTest.verdictLanded(5, "Mars");
         AutoTest.step(5, () -> {
             Minecraft mc = Minecraft.getInstance();
@@ -313,6 +314,30 @@ final class BuiltShipAutoTest {
         AutoTest.cmd(10, "galactica target clear");
         AutoTest.cmd(10, "galactica launch");
         AutoTest.cmd(40, "galactica goto Sol");
+    }
+
+    private static boolean watching, watchInstalled;
+    private static int watchTicks;
+    private static String lastVehicle = "";
+
+    /** Logs the local player's vehicle whenever it changes, and the ship's state every 2 s, while the autopilot runs. */
+    static void watch(boolean on) {
+        watching = on;
+        if (watchInstalled) return;
+        watchInstalled = true;
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+            if (!watching || mc.player == null) return;
+            var v = mc.player.getVehicle();
+            String now = v == null ? "none" : v.getClass().getSimpleName() + "#" + v.getId();
+            if (!now.equals(lastVehicle)) {
+                Galactica.LOG.info("[autotest] built ship watch: vehicle {} -> {} (player at {})", lastVehicle, now, mc.player.position());
+                lastVehicle = now;
+            }
+            if (++watchTicks % 40 == 0 && v instanceof ShipStructure s) {
+                Galactica.LOG.info(String.format(Locale.ROOT, "[autotest] built ship watch: ship #%d y %.1f v %.1f m/s piloted %s flightReady %s",
+                        s.getId(), s.getY(), s.getDeltaMovement().length() * 20, ship() == s, s.flightReady()));
+            }
+        });
     }
 
     private static ShipStructure ship() {

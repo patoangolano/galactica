@@ -43,6 +43,13 @@ public final class ShipEntities {
         net.fabricmc.fabric.api.networking.v1.EntityTrackingEvents.START_TRACKING.register((entity, player) -> {
             if (entity instanceof ShipStructure s) s.sendBlocksTo(player);
         });
+        if (Boolean.getBoolean("galactica.autotest")) {
+            net.fabricmc.fabric.api.networking.v1.EntityTrackingEvents.STOP_TRACKING.register((entity, player) -> {
+                if (entity instanceof Starship s) Galactica.LOG.info("[autotest] {} stops tracking ship {} at {} (rides {}, player at {})",
+                        player.getName().getString(), s.getId(), s.position(), player.getVehicle() == null ? "nothing" : player.getVehicle().getId(),
+                        player.position());
+            });
+        }
         dev.galactica.ship.build.ShipPartBlocks.init();
         dev.galactica.ship.build.ShipBlueprintItem.init();
         dev.galactica.ship.build.ShipBuildCommands.init();
