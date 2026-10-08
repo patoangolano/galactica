@@ -7,3 +7,7 @@ out/
 *.log
 .claude/
 logs/
+bin/
+.classpath
+.project
+.settings/
