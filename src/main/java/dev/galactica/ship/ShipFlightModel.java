@@ -137,14 +137,17 @@ public final class ShipFlightModel {
                 roll = clamp(c.rollDeg(), MAX_TURN_PER_TICK);
         attitude.rotateY(Math.toRadians(-yaw)).rotateX(Math.toRadians(pitch)).rotateZ(Math.toRadians(roll)).normalize();
 
-        double throttle = hydrogen > 0 ? clamp(c.thrust(), 1) : 0;
+        boolean fuelled = hydrogen > 0;
+        double throttle = fuelled ? clamp(c.thrust(), 1) : 0;
         double lift = clamp(c.lift(), 1);
         Vector3d fwd = attitude.transform(new Vector3d(0, 0, 1));
         Vector3d up = attitude.transform(new Vector3d(0, 1, 0));
         Vector3d side = attitude.transform(new Vector3d(1, 0, 0));
         double mainAccel = throttle >= 0 ? spec.mainAccel() : spec.reverseAccel(), rcsAccel = spec.rcsAccel();
-        // Dorsal (+Y) authority: the RCS plus any engines firing downward (VTOL lift); ventral is the RCS alone.
-        double liftAccel = Math.max(rcsAccel, spec.liftAccel());
+        // Dorsal (+Y) authority: the RCS plus any engines firing downward (VTOL lift), which burn hydrogen like the
+        // main engine; ventral is the RCS alone, and so is dorsal once the tanks are dry.
+        double liftAccel = Math.max(rcsAccel, spec.liftAccel(fuelled));
+        double dorsalUsed = lift > 0 ? lift * liftAccel : 0;
         velocity.fma(throttle * mainAccel * dt, fwd).fma(lift * (lift > 0 ? liftAccel : rcsAccel) * dt, up).fma(dt, gravity);
 
         if (c.coupled()) {
@@ -155,13 +158,33 @@ public final class ShipFlightModel {
             velocity.fma(-toward0(rel.dot(side), budget), side);
             if (lift == 0) {
                 double dorsal = rel.dot(up);
-                velocity.fma(-toward0(dorsal, (dorsal < 0 ? liftAccel : rcsAccel) * dt), up);
+                double push = toward0(dorsal, (dorsal < 0 ? liftAccel : rcsAccel) * dt);
+                velocity.fma(-push, up);
+                if (push < 0) dorsalUsed = -push / dt;
             }
         }
 
         double v = velocity.length();
         if (v > MAX_SPEED) velocity.mul(MAX_SPEED / v);
-        return Math.min(hydrogen, Math.abs(throttle) * dt * spec.hydrogenPerSecond());
+        double burn = Math.abs(throttle) * dt * spec.hydrogenPerSecond()
+                + spec.liftEngineShare(dorsalUsed) * dt * spec.liftHydrogenPerSecond();
+        return Math.min(hydrogen, burn);
+    }
+
+    /**
+     * Server: hydrogen (cells per second) the lift engines of a piloted craft burn, from what the server knows: the
+     * pilot's lift key (all lift engines), or else, with flight assist holding it aloft against gravity, the share of
+     * them the hover needs ({@link ShipSpec#liftEngineShare}). The same share the pilot's prediction burns.
+     *
+     * @param up      the craft's dorsal axis, world frame (unit)
+     * @param gravity gravity, m/s², world frame
+     */
+    public static double liftBurnRate(ShipSpec spec, boolean liftKey, boolean coupled, boolean grounded, Vector3dc up, Vector3dc gravity) {
+        if (spec.liftEngineN() <= 0) return 0;
+        if (liftKey) return spec.liftHydrogenPerSecond();
+        if (!coupled || grounded) return 0;
+        double hold = -up.dot(gravity); // dorsal acceleration that cancels gravity's pull along the dorsal axis
+        return spec.liftEngineShare(hold) * spec.liftHydrogenPerSecond();
     }
 
     /**
@@ -207,8 +230,16 @@ public final class ShipFlightModel {
 
     /** {@link #maxDeltaVPerTick(boolean, double)} for the craft {@code spec} describes (the server's own copy, never the client's). */
     public static double maxDeltaVPerTick(ShipSpec spec, boolean fuelled, double gravity) {
-        double main = fuelled ? Math.max(spec.mainAccel(), spec.reverseAccel()) : 0;
-        return (main + Math.sqrt(3) * Math.max(spec.rcsAccel(), spec.liftAccel()) + gravity) * TICK;
+        return maxDeltaVPerTick(spec, fuelled, true, gravity);
+    }
+
+    /**
+     * {@link #maxDeltaVPerTick(ShipSpec, boolean, double)} with the main engine ({@code mainBurning}) and the lift
+     * engines ({@code liftFuelled}: hydrogen aboard) gated apart: dry tanks leave only the cold-gas RCS.
+     */
+    public static double maxDeltaVPerTick(ShipSpec spec, boolean mainBurning, boolean liftFuelled, double gravity) {
+        double main = mainBurning ? Math.max(spec.mainAccel(), spec.reverseAccel()) : 0;
+        return (main + Math.sqrt(3) * Math.max(spec.rcsAccel(), spec.liftAccel(liftFuelled)) + gravity) * TICK;
     }
 
     /**

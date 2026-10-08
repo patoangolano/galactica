@@ -20,7 +20,17 @@ public enum ShipPart {
     /** Ground contact: its feet are always hull probes. */
     LANDING_GEAR(400),
     /** Armoured hull: heavy, adds hull points. */
-    HULL_PLATING(900);
+    HULL_PLATING(900),
+    /** Docking port: its face (the block's facing) mates with another ship's port; the lighter ship rides the heavier. */
+    DOCKING_PORT(700),
+    /** Hangar bay floor: the empty space above a run of these holds a smaller ship that settles into it slowly. */
+    HANGAR_BAY(600),
+    /** Shield generator: a shield pool that absorbs damage before the hull, recharged from the reactors. */
+    SHIELD_GENERATOR(1_200),
+    /** Fusion reactor: the power source for shields and scanners; burns a little hydrogen while it works. */
+    REACTOR(2_500),
+    /** Scanner array: lists bodies, ships, derelicts and ore around the ship on the cockpit display and the map. */
+    SCANNER(500);
 
     public final double massKg;
 
@@ -42,4 +52,10 @@ public enum ShipPart {
     public static final double FIRST_CORE_LY = 10, EXTRA_CORE_LY = 5, MAX_JUMP_LY = 30;
     /** Hull points per plating block, and per any other block. */
     public static final float PLATING_HULL = 3F, BLOCK_HULL = 0.25F, BASE_HULL = 40F, MAX_HULL = 1_000F;
+    /** Shield points per generator (hull-point units: one point of damage costs 5). */
+    public static final float SHIELD_PER_GENERATOR = 60F;
+    /** Shield points per second one reactor recharges, and hydrogen cells per shield point recharged. */
+    public static final float REACTOR_RECHARGE = 4F, HYDROGEN_PER_SHIELD = 1F / 200F;
+    /** Scanner range, blocks: the first array, plus this per extra one, capped. */
+    public static final double SCANNER_RANGE = 1_024, EXTRA_SCANNER_RANGE = 512, MAX_SCANNER_RANGE = 4_096;
 }

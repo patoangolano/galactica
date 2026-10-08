@@ -39,6 +39,16 @@ public final class ShipEntities {
         PayloadTypeRegistry.serverboundPlay().register(HyperjumpPayload.TYPE, HyperjumpPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(ShipCorrectionPayload.TYPE, ShipCorrectionPayload.CODEC);
         PayloadTypeRegistry.clientboundPlay().register(ShipBlocksPayload.TYPE, ShipBlocksPayload.CODEC);
+        PayloadTypeRegistry.clientboundPlay().register(ShipScanner.Payload.TYPE, ShipScanner.Payload.CODEC);
+        PayloadTypeRegistry.serverboundPlay().register(ShipActionPayload.TYPE, ShipActionPayload.CODEC);
+        ServerPlayNetworking.registerGlobalReceiver(ShipActionPayload.TYPE, (msg, ctx) -> {
+            switch (msg.action()) {
+                case ShipActionPayload.DOCK -> ShipDocking.toggle(ctx.player());
+                case ShipActionPayload.CARGO -> ShipCargo.openNext(ctx.player());
+                default -> { }
+            }
+        });
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(ShipScanner::tick);
         // A block-built ship's blocks go to every client that starts tracking it (after its spawn packet).
         net.fabricmc.fabric.api.networking.v1.EntityTrackingEvents.START_TRACKING.register((entity, player) -> {
             if (entity instanceof ShipStructure s) s.sendBlocksTo(player);
@@ -54,12 +64,14 @@ public final class ShipEntities {
         dev.galactica.ship.yard.ShipBlueprintItem.init();
         dev.galactica.ship.yard.ShipBuildCommands.init();
         ServerPlayNetworking.registerGlobalReceiver(ShipControlPayload.TYPE, (msg, ctx) -> {
-            if (ctx.player().level().getEntity(msg.entityId()) instanceof Starship ship && ship.getControllingPassenger() == ctx.player()) {
+            if (ctx.player().level().getEntity(msg.entityId()) instanceof Starship ship && ship.getControllingPassenger() == ctx.player()
+                    && !ship.isDocked()) {
                 ship.acceptPilotReport(ctx.player(), msg.seq(), msg.attitude(), msg.velocity(), msg.coupled(), msg.rebase());
             }
         });
         ServerPlayNetworking.registerGlobalReceiver(HyperjumpPayload.TYPE, (msg, ctx) -> {
-            if (ctx.player().level().getEntity(msg.entityId()) instanceof Starship ship && ship.getControllingPassenger() == ctx.player()) {
+            if (ctx.player().level().getEntity(msg.entityId()) instanceof Starship ship && ship.getControllingPassenger() == ctx.player()
+                    && !ship.isDocked() && !ship.enginesDead()) {
                 Hyperdrive.request(ship, ctx.player());
             }
         });

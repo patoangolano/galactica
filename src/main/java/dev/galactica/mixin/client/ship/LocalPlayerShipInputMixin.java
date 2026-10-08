@@ -20,7 +20,8 @@ public abstract class LocalPlayerShipInputMixin {
     private Input galactica$holdSeat(Input in) {
         LocalPlayer self = (LocalPlayer) (Object) this;
         if (!in.shift() || !(self.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != self) return in;
-        boolean parked = ship.onGround() && ship.getDeltaMovement().lengthSqr() < 0.0025; // < 1 m/s
+        // Docked (in a hangar or at a port) the craft is held by its carrier: stepping out is safe.
+        boolean parked = ship.isDocked() || ship.onGround() && ship.getDeltaMovement().lengthSqr() < 0.0025; // < 1 m/s
         return parked ? in : new Input(in.forward(), in.backward(), in.left(), in.right(), in.jump(), false, in.sprint());
     }
 }

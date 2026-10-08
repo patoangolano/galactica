@@ -30,6 +30,11 @@ public final class ShipPartBlocks {
     public static final ShipPartBlock HYPERDRIVE_CORE = block("ship_hyperdrive_core", ShipPart.HYPERDRIVE_CORE, ShipPartBlock.Facing.NONE, MapColor.COLOR_PURPLE, 5F, 10);
     public static final ShipPartBlock LANDING_GEAR = block("ship_landing_gear", ShipPart.LANDING_GEAR, ShipPartBlock.Facing.NONE, MapColor.COLOR_GRAY, 3F, 0);
     public static final ShipPartBlock HULL_PLATING = block("ship_hull_plating", ShipPart.HULL_PLATING, ShipPartBlock.Facing.NONE, MapColor.COLOR_LIGHT_GRAY, 5F, 0);
+    public static final ShipPartBlock DOCKING_PORT = block("ship_docking_port", ShipPart.DOCKING_PORT, ShipPartBlock.Facing.ALL, MapColor.COLOR_YELLOW, 4F, 4);
+    public static final ShipPartBlock HANGAR_BAY = block("ship_hangar_bay", ShipPart.HANGAR_BAY, ShipPartBlock.Facing.NONE, MapColor.COLOR_GRAY, 4F, 2);
+    public static final ShipPartBlock SHIELD_GENERATOR = block("ship_shield_generator", ShipPart.SHIELD_GENERATOR, ShipPartBlock.Facing.NONE, MapColor.COLOR_CYAN, 4F, 7);
+    public static final ShipPartBlock REACTOR = block("ship_reactor", ShipPart.REACTOR, ShipPartBlock.Facing.NONE, MapColor.COLOR_ORANGE, 5F, 12);
+    public static final ShipPartBlock SCANNER = block("ship_scanner", ShipPart.SCANNER, ShipPartBlock.Facing.NONE, MapColor.COLOR_LIGHT_BLUE, 3F, 5);
 
     private static ShipPartBlock block(String name, ShipPart part, ShipPartBlock.Facing facing, MapColor colour, float strength, int light) {
         ResourceKey<Block> key = ResourceKey.create(Registries.BLOCK, Galactica.id(name));

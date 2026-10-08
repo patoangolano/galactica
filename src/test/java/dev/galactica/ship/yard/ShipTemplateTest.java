@@ -50,6 +50,9 @@ class ShipTemplateTest {
             assertTrue(s.mainAccel() > 0.4 * G, name + " climbs: main " + s.mainAccel());
             assertTrue(s.probes().length <= ShipStats.MAX_PROBES);
             assertTrue(s.seatCount() >= 2, name + " seats crew");
+            // The lift jets now burn hydrogen: a full tank must still hover the ship for a while (≥ 2 min at 1 g).
+            double hover = s.liftEngineShare(G) * s.liftHydrogenPerSecond();
+            assertTrue(hover == 0 || s.maxHydrogen() / hover > 120, name + " hovers " + s.maxHydrogen() / hover + " s on a full load");
         }
     }
 

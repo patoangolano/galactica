@@ -127,20 +127,71 @@ public class GalaxyMapScreen extends Screen {
         addRenderableWidget(search);
         panelScale = (float) Math.clamp(width / 640.0, 0.6, 1.0);
         panelW = Math.round(PANEL_W * panelScale);
-        int bx = width - panelW - MARGIN, bw = (panelW - 4) / 2, by = height - MARGIN - 20 * 3 - 4;
+        layoutButtons();
+        lastNanos = System.nanoTime();
+    }
+
+    /** Height of the button block at the bottom right, GUI units (panel and labels keep clear of it). */
+    private int buttonsH = 20 * 3;
+    /** Left edge of the button block. */
+    private int buttonsX;
+
+    /**
+     * The buttons under the panel. Each label is measured in every state it can show ("Engage"/"Disengage", both
+     * modes); two to a row while the widest fits half the panel, else one to a row, and the block widens past the
+     * panel rather than cut a label (narrow GUIs: scale 3 at 1600 px leaves a 150-unit panel).
+     */
+    private void layoutButtons() {
+        Component[] pairs = {Component.translatable("map.galactica.button.lock"), Component.translatable("map.galactica.button.clear"),
+                Component.translatable("map.galactica.button.engage"), Component.translatable("map.galactica.button.disengage"),
+                Component.translatable("map.galactica.button.mode_orbit"), Component.translatable("map.galactica.button.mode_land"),
+                Component.translatable("map.galactica.button.home")};
+        int widest = 0;
+        for (Component c : pairs) widest = Math.max(widest, font.width(c) + 10);
+        int full = Math.min(width - 2 * MARGIN, Math.max(panelW, widest));
+        boolean twoPerRow = widest <= (full - 4) / 2;
+        int bw = twoPerRow ? (full - 4) / 2 : full;
+        int rows = twoPerRow ? 3 : 5;
+        buttonsH = rows * 20;
+        int bx = width - full - MARGIN;
+        buttonsX = bx;
+        int by = height - MARGIN - buttonsH - 4;
+        int[][] at = new int[5][];
+        for (int i = 0; i < 4; i++) at[i] = twoPerRow ? new int[] {bx + (i % 2) * (bw + 4), by + (i / 2) * 20} : new int[] {bx, by + i * 20};
+        at[4] = new int[] {bx, by + (twoPerRow ? 40 : 80)};
         lockButton = addRenderableWidget(Button.builder(Component.translatable("map.galactica.button.lock"), b -> lockSelected())
-                .bounds(bx, by, bw, 18).build());
+                .bounds(at[0][0], at[0][1], bw, 18).build());
         clearButton = addRenderableWidget(Button.builder(Component.translatable("map.galactica.button.clear"), b -> clearTarget())
-                .bounds(bx + bw + 4, by, bw, 18).build());
+                .bounds(at[1][0], at[1][1], bw, 18).build());
         engageButton = addRenderableWidget(Button.builder(Component.translatable("map.galactica.button.engage"), b -> toggleAutopilot())
-                .bounds(bx, by + 20, bw, 18).build());
+                .bounds(at[2][0], at[2][1], bw, 18).build());
         modeButton = addRenderableWidget(Button.builder(modeLabel(), b -> {
                     AutopilotClient.setMode(AutopilotClient.mode() == AutopilotState.Mode.ORBIT ? AutopilotState.Mode.LAND : AutopilotState.Mode.ORBIT);
                     b.setMessage(modeLabel());
-                }).bounds(bx + bw + 4, by + 20, bw, 18).build());
+                }).bounds(at[3][0], at[3][1], bw, 18).build());
         addRenderableWidget(Button.builder(Component.translatable("map.galactica.button.home"), b -> home())
-                .bounds(bx, by + 40, panelW, 18).build());
-        lastNanos = System.nanoTime();
+                .bounds(at[4][0], at[4][1], full, 18).build());
+        buttonLayout = (twoPerRow ? "2" : "1") + " per row, width " + bw + ", block " + full + " of panel " + panelW + ", widest label " + widest;
+    }
+
+    /** Autotest: how the buttons were laid out. */
+    private String buttonLayout = "";
+
+    public String autotestButtons() {
+        StringBuilder b = new StringBuilder(buttonLayout);
+        for (var w : children()) {
+            if (w instanceof Button btn) {
+                boolean fits = font.width(btn.getMessage()) + 6 <= btn.getWidth();
+                b.append(String.format(Locale.ROOT, "; '%s' %d/%d%s", btn.getMessage().getString(), font.width(btn.getMessage()), btn.getWidth(), fits ? "" : " CUT"));
+            }
+        }
+        return b.toString();
+    }
+
+    /** Autotest: true when every button's label fits its button. */
+    public boolean autotestButtonsFit() {
+        for (var w : children()) if (w instanceof Button btn && font.width(btn.getMessage()) + 6 > btn.getWidth()) return false;
+        return true;
     }
 
     private Component modeLabel() {
@@ -240,7 +291,6 @@ public class GalaxyMapScreen extends Screen {
         NavTarget target = minecraft.player != null ? NavTargets.get(TargetReadoutAccess.owner(minecraft.player)) : null;
 
         for (MapScene.Polyline l : scene.lines) polyline(g, l.xy(), k, l.argb());
-        drawTrajectory(g, k);
 
         // Hover under the cursor (the map area, not the panel).
         hovered = null;
@@ -300,6 +350,9 @@ public class GalaxyMapScreen extends Screen {
             if (sel != null && d.object().same(sel)) circle(g, d.x() * k, d.y() * k, Math.max(6, d.radiusPx() * k + 4), ACCENT);
             else if (hovered != null && d.object().same(hovered)) circle(g, d.x() * k, d.y() * k, Math.max(5, d.radiusPx() * k + 3), 0xA0D8E4FF);
         }
+        // The craft's own orbit goes on top of the rings and markers: close to a body the selection ring sits right
+        // where a low orbit runs, and used to hide it.
+        drawTrajectory(g, k);
 
         g.text(font, title, MARGIN, MARGIN, ACCENT, false);
         drawScaleBar(g);
@@ -310,7 +363,7 @@ public class GalaxyMapScreen extends Screen {
     /** True when a box would fall on the panel, the buttons, or the search box and hints. */
     private boolean overInterface(double x, double y, int w, int h) {
         boolean right = x + w > width - panelW - MARGIN - 2;
-        boolean panel = right && (y < panelBottom + 2 || y + h > height - MARGIN - 20 * 3 - 6);
+        boolean panel = right && y < panelBottom + 2 || x + w > buttonsX - 2 && y + h > height - MARGIN - buttonsH - 6;
         boolean topLeft = x < MARGIN + 240 && y < MARGIN + 34 + 5 * 10 + Math.min(results.size(), 8) * 11;
         boolean bottomLeft = x < MARGIN + 330 && y + h > height - MARGIN - 20;
         return panel || topLeft || bottomLeft;
@@ -325,14 +378,25 @@ public class GalaxyMapScreen extends Screen {
 
     /** The craft's conic around its dominant body (dashed), when one is in view. */
     private void drawTrajectory(GuiGraphicsExtractor g, double k) {
+        trajectoryDrawn = 0;
         OrbitalFrame.Dominant[] d = new OrbitalFrame.Dominant[1];
         double[][] rv = OrbitReadout.relativeState(minecraft, d);
         if (rv == null) return;
         double[] pts = Conics.points(rv[0], rv[1], d[0].mu(), 160, Math.min(d[0].soi(), 1e13));
         if (pts.length == 0) return;
         double[] xy = MapScene.projectPolyline(camera, d[0].pos(), pts);
-        polylineDashed(g, xy, k, 0xC07FE0FF);
+        // A dark underlay one unit down keeps the dashes readable across rings, discs and labels.
+        double[] shadow = xy.clone();
+        for (int i = 1; i < shadow.length; i += 2) shadow[i] += guiScale;
+        polylineDashed(g, shadow, k, 0xA0000814);
+        polylineDashed(g, xy, k, 0xF07FE0FF);
+        trajectoryDrawn = xy.length / 2;
     }
+
+    /** Autotest: points of the craft's conic drawn in the last frame (0 when none was in view). */
+    public int trajectoryDrawn;
+    /** Autotest: panel rows when the scanner section was shown (0 without a scan). */
+    public int scannerRows;
 
     private void drawScaleBar(GuiGraphicsExtractor g) {
         double pxPerM = camera.pixelsPerMetreAtFocus() / guiScale;
@@ -375,7 +439,11 @@ public class GalaxyMapScreen extends Screen {
         if (target != null) {
             rows.add(new Row(Component.translatable("map.galactica.panel.target", target.name()), TARGET));
             var r = dev.galactica.client.nav.TargetReadout.current();
-            if (r != null) {
+            if (r != null && r.onTarget() != dev.galactica.client.nav.TargetReadout.OnTarget.NO) {
+                rows.add(new Row(r.onTarget() == dev.galactica.client.nav.TargetReadout.OnTarget.LANDED
+                        ? Component.translatable("hud.galactica.target.landed")
+                        : Component.translatable("hud.galactica.target.on_target", distanceText(r.surface())), OK));
+            } else if (r != null) {
                 rows.add(new Row(Component.translatable("map.galactica.panel.target_distance", distanceText(Math.max(0, r.surface())),
                         r.eta() >= 0 ? AutopilotMath.formatDuration(r.eta()) : "?"), TEXT));
             }
@@ -390,10 +458,20 @@ public class GalaxyMapScreen extends Screen {
             rows.add(new Row(Component.translatable("map.galactica.panel.fuel", String.format(Locale.ROOT, "%.0f", ship.hydrogen()), ship.exotic(),
                     String.format(Locale.ROOT, "%.0f", DriveRules.rangeLy(ship.exotic(), ship.jumpTierLy()))), DIM));
         }
+        // The ship's scanner, when one aboard is powered: contacts nearest first (bodies from the sky model).
+        var scan = dev.galactica.client.ship.ShipSystemsClient.scan();
+        if (scan != null) {
+            rows.add(Row.GAP);
+            rows.add(new Row(Component.translatable("map.galactica.panel.scanner", String.format(Locale.ROOT, "%.0f", scan.range())), ACCENT));
+            List<String> contacts = dev.galactica.client.ship.ShipSystemsClient.lines(minecraft, 5);
+            if (contacts.isEmpty()) rows.add(new Row(Component.translatable("map.galactica.panel.scanner_empty"), DIM));
+            for (String c : contacts) rows.add(new Row(Component.literal(c.toLowerCase(Locale.ROOT)), c.startsWith("DERELICT") ? WARN : TEXT));
+        }
+        scannerRows = scan == null ? 0 : rows.size();
         int h = 8;
         for (Row r : rows) h += r.height();
         // Drawn in its own scaled space, anchored at the top right corner.
-        int bottom = (int) ((height - MARGIN - 20 * 3 - 8 - MARGIN) / panelScale);
+        int bottom = (int) ((height - MARGIN - buttonsH - 8 - MARGIN) / panelScale);
         int boxH = Math.min(bottom, h);
         panelBottom = MARGIN + Math.round(boxH * panelScale);
         g.pose().pushMatrix();

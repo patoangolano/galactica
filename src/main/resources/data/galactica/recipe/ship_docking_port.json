@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "Y": "minecraft:yellow_dye",
+    "R": "minecraft:redstone"
+  },
+  "pattern": [
+    "IYI",
+    "I I",
+    "IRI"
+  ],
+  "result": {
+    "id": "galactica:ship_docking_port"
+  }
+}

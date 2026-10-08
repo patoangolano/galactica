@@ -27,6 +27,7 @@ public final class GalacticaConfigScreen extends Screen {
      */
     static final double[] WARP_STEPS = {1e-9, 1e-7, 1e-5, 1e-3, 0.01, 0.1, 0.3, 1, 3, 10, 30, 100, 300, 1000};
     private static final double[] HUD_STEPS = {0.5, 0.75, 1.0, 1.25, 1.5, 2.0};
+    private static final double[] WRECK_STEPS = {0.0, 0.1, 0.25, 0.5, 1.0};
 
     private final Screen parent;
     private final GalacticaConfig.Builder draft;
@@ -58,6 +59,9 @@ public final class GalacticaConfigScreen extends Screen {
         rows.add(new Row("hud_scale", b -> String.format(Locale.ROOT, "%.2f×", b.hudScale),
                 b -> b.hudScale = nextDouble(HUD_STEPS, b.hudScale)));
         rows.add(new Row("show_legend", b -> onOff(b.showLegend), b -> b.showLegend = !b.showLegend));
+        rows.add(new Row("ship_destruction", b -> onOff(b.shipDestruction), b -> b.shipDestruction = !b.shipDestruction));
+        rows.add(new Row("wreck_drop_share", b -> Math.round(b.wreckDropShare * 100) + "%",
+                b -> b.wreckDropShare = nextDouble(WRECK_STEPS, b.wreckDropShare)));
     }
 
     @Override

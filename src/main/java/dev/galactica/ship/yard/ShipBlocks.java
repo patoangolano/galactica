@@ -43,6 +43,38 @@ public final class ShipBlocks {
     public CompoundTag blockEntity(int i) { return blockEntities.get(i); }
     public int blockEntityCount() { return blockEntities.size(); }
 
+    /** Indices of the blocks that carry block-entity data, in block order. */
+    public int[] blockEntityIndices() {
+        int[] out = blockEntities.keySet().toIntArray();
+        java.util.Arrays.sort(out);
+        return out;
+    }
+
+    /**
+     * Server: replaces one block's block-entity data (a cargo container closed after use in flight). The only mutation
+     * a built ship's blocks allow: the data never reaches clients ({@link #write}), so nothing has to be re-sent.
+     */
+    public void setBlockEntity(int i, CompoundTag tag) {
+        if (i < 0 || i >= cells.length) throw new IndexOutOfBoundsException(i);
+        if (this == EMPTY) throw new IllegalStateException("the empty block set is shared");
+        blockEntities.put(i, tag);
+    }
+
+    /** Index of the block at ship-grid cell (x, y, z), or −1. */
+    public int indexAt(int x, int y, int z) {
+        if (Math.abs(x) > 511 || Math.abs(y) > 511 || Math.abs(z) > 511) return -1;
+        it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap map = byCell;
+        if (map == null) {
+            map = new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap(cells.length);
+            map.defaultReturnValue(-1);
+            for (int i = 0; i < cells.length; i++) map.put(cells[i], i);
+            byCell = map;
+        }
+        return map.get(ShipCell.pack(x, y, z));
+    }
+
+    private it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap byCell;
+
     /** What the stats see: part, mass and thruster nozzle direction of every block. */
     public List<ShipCell> shipCells() {
         if (shipCells == null) {
@@ -51,7 +83,7 @@ public final class ShipBlocks {
                 BlockState s = state(i);
                 ShipPart part = s.getBlock() instanceof ShipPartBlock p ? p.part() : ShipPart.STRUCTURE;
                 double mass = part == ShipPart.STRUCTURE ? structureMass(s) : part.massKg;
-                Direction f = part == ShipPart.THRUSTER ? ShipPartBlock.facingOf(s) : null;
+                Direction f = part == ShipPart.THRUSTER || part == ShipPart.DOCKING_PORT ? ShipPartBlock.facingOf(s) : null;
                 int c = cells[i];
                 out.add(new ShipCell(ShipCell.unpackX(c), ShipCell.unpackY(c), ShipCell.unpackZ(c), part, mass, f == null ? -1 : f.ordinal()));
             }

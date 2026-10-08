@@ -79,6 +79,8 @@ public final class GalacticaConfig {
     private final double warpMaxPcPerS;
     private final double hudScale;
     private final boolean showLegend;
+    private final boolean shipDestruction;
+    private final double wreckDropShare;
 
     private GalacticaConfig(Builder b) {
         this.skyBakeWidth = snapSkyWidth(b.skyBakeWidth);
@@ -92,6 +94,8 @@ public final class GalacticaConfig {
         this.warpMaxPcPerS = clamp(b.warpMaxPcPerS, WARP_MIN_PC_PER_S, WARP_MAX_PC_PER_S, 10.0);
         this.hudScale = clamp(b.hudScale, HUD_SCALE_MIN, HUD_SCALE_MAX, 1.0);
         this.showLegend = b.showLegend;
+        this.shipDestruction = b.shipDestruction;
+        this.wreckDropShare = clamp(b.wreckDropShare, 0.0, 1.0, 0.25);
     }
 
     public static GalacticaConfig defaults() {
@@ -115,6 +119,8 @@ public final class GalacticaConfig {
         b.warpMaxPcPerS = warpMaxPcPerS;
         b.hudScale = hudScale;
         b.showLegend = showLegend;
+        b.shipDestruction = shipDestruction;
+        b.wreckDropShare = wreckDropShare;
         return b;
     }
 
@@ -181,6 +187,19 @@ public final class GalacticaConfig {
         return showLegend;
     }
 
+    /**
+     * Whether a block-built ship whose hull reaches 0 breaks up (crew thrown clear, part of its blocks dropped as
+     * items); off, it stays a powerless wreck to repair with iron ingots. Server side, read at the moment of the hit.
+     */
+    public boolean shipDestruction() {
+        return shipDestruction;
+    }
+
+    /** Share (0..1) of a destroyed ship's blocks that survive as item drops; the rest is lost. */
+    public double wreckDropShare() {
+        return wreckDropShare;
+    }
+
     // ---------------------------------------------------------------- JSON
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
@@ -200,6 +219,8 @@ public final class GalacticaConfig {
         o.addProperty("warpMaxPcPerS", warpMaxPcPerS);
         o.addProperty("hudScale", hudScale);
         o.addProperty("showLegend", showLegend);
+        o.addProperty("shipDestruction", shipDestruction);
+        o.addProperty("wreckDropShare", wreckDropShare);
         return GSON.toJson(o) + "\n";
     }
 
@@ -251,6 +272,8 @@ public final class GalacticaConfig {
         b.warpMaxPcPerS = readDouble(o, "warpMaxPcPerS", b.warpMaxPcPerS, repairs);
         b.hudScale = readDouble(o, "hudScale", b.hudScale, repairs);
         b.showLegend = readBool(o, "showLegend", b.showLegend, repairs);
+        b.shipDestruction = readBool(o, "shipDestruction", b.shipDestruction, repairs);
+        b.wreckDropShare = readDouble(o, "wreckDropShare", b.wreckDropShare, repairs);
 
         GalacticaConfig c = b.build();
         // Report clamping/snapping so a user who typed 3000 sees why it became 4096.
@@ -259,6 +282,7 @@ public final class GalacticaConfig {
         if (Double.compare(b.entryEffects, c.entryEffects) != 0) repairs.add("entryEffects " + b.entryEffects + " clamped to " + c.entryEffects);
         if (Double.compare(b.warpMaxPcPerS, c.warpMaxPcPerS) != 0) repairs.add("warpMaxPcPerS " + b.warpMaxPcPerS + " clamped to " + c.warpMaxPcPerS);
         if (Double.compare(b.hudScale, c.hudScale) != 0) repairs.add("hudScale " + b.hudScale + " clamped to " + c.hudScale);
+        if (Double.compare(b.wreckDropShare, c.wreckDropShare) != 0) repairs.add("wreckDropShare " + b.wreckDropShare + " clamped to " + c.wreckDropShare);
         return new ParseResult(c, repairs, version);
     }
 
@@ -372,13 +396,14 @@ public final class GalacticaConfig {
                 && starPlasmaQuality == c.starPlasmaQuality && exhaustQuality == c.exhaustQuality
                 && Double.compare(entryEffects, c.entryEffects) == 0 && realNightSky == c.realNightSky
                 && seamlessTransitions == c.seamlessTransitions && Double.compare(warpMaxPcPerS, c.warpMaxPcPerS) == 0
-                && Double.compare(hudScale, c.hudScale) == 0 && showLegend == c.showLegend;
+                && Double.compare(hudScale, c.hudScale) == 0 && showLegend == c.showLegend
+                && shipDestruction == c.shipDestruction && Double.compare(wreckDropShare, c.wreckDropShare) == 0;
     }
 
     @Override
     public int hashCode() {
         return java.util.Objects.hash(skyBakeWidth, planetTextureMax, starPlasma, starPlasmaQuality, exhaustQuality,
-                entryEffects, realNightSky, seamlessTransitions, warpMaxPcPerS, hudScale, showLegend);
+                entryEffects, realNightSky, seamlessTransitions, warpMaxPcPerS, hudScale, showLegend, shipDestruction, wreckDropShare);
     }
 
     @Override
@@ -403,6 +428,8 @@ public final class GalacticaConfig {
         public double warpMaxPcPerS = 10.0;
         public double hudScale = 1.0;
         public boolean showLegend = true;
+        public boolean shipDestruction = true;
+        public double wreckDropShare = 0.25;
 
         private Builder() {
         }

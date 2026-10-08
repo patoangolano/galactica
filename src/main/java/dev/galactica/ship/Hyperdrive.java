@@ -92,7 +92,8 @@ public final class Hyperdrive {
         if (s != null) arriveAt(pilot, s);
         else arriveNear(pilot, GalacticPos.ofParsecs(t.xPc(), t.yPc(), t.zPc()), 0.05 * Units.AU);
         GalacticPos origin = pilot.getAttachedOrCreate(Galactica.NAV).origin();
-        for (Entity e : ship.getPassengers()) {
+        // Everyone aboard, docked craft and ships in the hangar included: they ride the same root.
+        for (Entity e : ship.getRootVehicle().getIndirectPassengers()) {
             if (e instanceof ServerPlayer crew && crew != pilot) {
                 NavState nav = crew.getAttachedOrCreate(Galactica.NAV);
                 crew.setAttached(Galactica.NAV, nav.withOrigin(origin).withSpeed(0).resetFrame());

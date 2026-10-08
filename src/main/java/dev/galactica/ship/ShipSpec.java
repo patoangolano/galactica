@@ -61,6 +61,36 @@ public record ShipSpec(double massKg, double mainThrustN, double reverseThrustN,
         return massKg > 0 ? Math.max(rcsThrustN, liftThrustN) / massKg : 0;
     }
 
+    /** Dorsal authority with or without fuel for the lift engines: dry, only the RCS (cold gas) pushes up. */
+    public double liftAccel(boolean fuelled) {
+        return fuelled ? liftAccel() : rcsAccel();
+    }
+
+    /** Thrust of the engines firing downward (VTOL lift), N: the dorsal thrust beyond the RCS. They burn hydrogen. */
+    public double liftEngineN() {
+        return Math.max(0, liftThrustN - rcsThrustN);
+    }
+
+    /** Acceleration the lift engines alone give, m/s². */
+    public double liftEngineAccel() {
+        return massKg > 0 ? liftEngineN() / massKg : 0;
+    }
+
+    /** Hydrogen cells per second with every lift engine at full thrust: the same flow per newton as the main engine. */
+    public double liftHydrogenPerSecond() {
+        return liftEngineN() / ShipFlightModel.MAIN_THRUST_N / ShipFlightModel.MAIN_SECONDS_PER_HYDROGEN;
+    }
+
+    /**
+     * Share (0..1) of the lift engines a dorsal acceleration {@code accel} (m/s²) needs: the RCS gives the first
+     * {@link #rcsAccel()} for free, the engines the rest.
+     */
+    public double liftEngineShare(double accel) {
+        double e = liftEngineAccel();
+        if (e <= 0 || accel <= rcsAccel()) return 0;
+        return Math.min(1, (accel - rcsAccel()) / e);
+    }
+
     /**
      * Hydrogen cells per second at full main throttle: the Kestrel's 2.5 MN burns one cell per
      * {@link ShipFlightModel#MAIN_SECONDS_PER_HYDROGEN} s, and fuel flow scales with thrust.

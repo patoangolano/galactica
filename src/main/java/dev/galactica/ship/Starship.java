@@ -77,6 +77,12 @@ public class Starship extends VehicleEntity {
     private static final EntityDataAccessor<Vector3fc> DATA_GRAVITY = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.VECTOR3);
     /** RCS command bits ({@link ShipAnimator#rcsMask}) for the puffs other players see. */
     private static final EntityDataAccessor<Byte> DATA_RCS = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.BYTE);
+    /** Shield points left (ships with shield generators). */
+    private static final EntityDataAccessor<Float> DATA_SHIELD = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.FLOAT);
+    /** While docked ({@link ShipDocking}): how ({@link ShipDocking.Kind} ordinal), and where in the carrier's body frame. */
+    private static final EntityDataAccessor<Byte> DATA_DOCK_KIND = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.BYTE);
+    private static final EntityDataAccessor<Vector3fc> DATA_DOCK_OFFSET = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.VECTOR3);
+    private static final EntityDataAccessor<Quaternionfc> DATA_DOCK_ROT = SynchedEntityData.defineId(Starship.class, EntityDataSerializers.QUATERNION);
 
     public static final float MAX_HYDROGEN = 400F, MAX_HULL = 100F;
     public static final int MAX_EXOTIC = 64;
@@ -183,13 +189,18 @@ public class Starship extends VehicleEntity {
         b.define(DATA_SPOOL, 0);
         b.define(DATA_GRAVITY, new Vector3f(0F, (float) -Units.EARTH_GRAVITY, 0F));
         b.define(DATA_RCS, (byte) 0);
+        b.define(DATA_SHIELD, 0F);
+        b.define(DATA_DOCK_KIND, (byte) 0);
+        b.define(DATA_DOCK_OFFSET, new Vector3f());
+        b.define(DATA_DOCK_ROT, new Quaternionf());
     }
 
     @Override
     public void onSyncedDataUpdated(EntityDataAccessor<?> key) {
         super.onSyncedDataUpdated(key);
         if (!level().isClientSide() || isLocalInstanceAuthoritative()) return;
-        if (DATA_ATTITUDE.equals(key)) attitudeSync.receive(entityData.get(DATA_ATTITUDE), attitude, attitudeO);
+        // Docked, the carrier's pose sets this hull's attitude every tick (positionRider), on every side alike.
+        if (DATA_ATTITUDE.equals(key) && !isDocked()) attitudeSync.receive(entityData.get(DATA_ATTITUDE), attitude, attitudeO);
         else if (DATA_COUPLED.equals(key)) coupled = entityData.get(DATA_COUPLED);
     }
 
@@ -276,6 +287,95 @@ public class Starship extends VehicleEntity {
     public void setExotic(int x) { entityData.set(DATA_EXOTIC, Math.clamp(x, 0, maxExotic())); }
     public void setHull(float h) { entityData.set(DATA_HULL, Math.clamp(h, 0F, maxHull())); }
 
+    /** Shield points left; 0 for a craft without shield generators. */
+    public float shield() { return entityData.get(DATA_SHIELD); }
+
+    public void setShield(float s) { entityData.set(DATA_SHIELD, Math.clamp(s, 0F, maxShield())); }
+
+    /** Shield pool, points: none for the Kestrel; a built ship's from its generators ({@code ShipSystems}). */
+    public float maxShield() { return 0F; }
+
+    /** Shield recharge, points per second (reactor output); 0 without a reactor. */
+    public float shieldRecharge() { return 0F; }
+
+    /** A hull at zero is a wreck: no engine, no lift jet, no drive answers. The cold-gas RCS still turns it. */
+    public boolean enginesDead() { return hull() <= 0F; }
+
+    /** Hydrogen the engines can draw: none from a wreck. */
+    private float usableHydrogen() {
+        return enginesDead() ? 0F : hydrogen();
+    }
+
+    // ---------------------------------------------------------------- docking ({@link ShipDocking})
+
+    /** True while this craft rides another (a docking port or a hangar holds it). */
+    public boolean isDocked() {
+        return getVehicle() instanceof Starship;
+    }
+
+    public ShipDocking.Kind dockKind() {
+        int k = entityData.get(DATA_DOCK_KIND);
+        return ShipDocking.Kind.values()[Math.clamp(k, 0, ShipDocking.Kind.values().length - 1)];
+    }
+
+    /** Where this craft's pivot sits in its carrier's body frame (blocks from the carrier's pivot), while docked. */
+    public Vector3fc dockOffset() {
+        return entityData.get(DATA_DOCK_OFFSET);
+    }
+
+    /** This craft's attitude relative to its carrier's, while docked. */
+    public Quaternionfc dockRotation() {
+        return entityData.get(DATA_DOCK_ROT);
+    }
+
+    /** Server: records the docked pose ({@link ShipDocking}); synced so every client seats the craft the same way. */
+    void clearDockPose() {
+        entityData.set(DATA_DOCK_KIND, (byte) 0);
+    }
+
+    void setDockPose(ShipDocking.Kind kind, Vector3fc offset, Quaternionfc rotation) {
+        entityData.set(DATA_DOCK_KIND, (byte) kind.ordinal());
+        entityData.set(DATA_DOCK_OFFSET, new Vector3f(offset));
+        entityData.set(DATA_DOCK_ROT, new Quaternionf(rotation).normalize());
+    }
+
+    /** Server tick of the last undock: a craft just released is not caught by the same hangar straight away. */
+    int undockedTick = Integer.MIN_VALUE / 2;
+
+    /**
+     * Seats a docked craft at its pose in this carrier: pivot at {@code q · offset} from this pivot, attitude
+     * {@code q · rotation}. Local only (no synced write): every side computes the same pose from the same data.
+     */
+    private void positionDocked(Starship child, Entity.MoveFunction move) {
+        Vector3f p = attitude.transform(new Vector3f(child.dockOffset()));
+        child.attitude.set(attitude).mul(child.dockRotation()).normalize();
+        child.syncRotationFields();
+        move.accept(child, getX() + p.x, getY() + pivot() + p.y - child.pivot(), getZ() + p.z);
+    }
+
+    /** Passengers that are crew (not docked craft), in boarding order: the first is at the helm. */
+    public java.util.List<Entity> crew() {
+        java.util.List<Entity> out = new java.util.ArrayList<>(getPassengers().size());
+        for (Entity e : getPassengers()) if (!(e instanceof Starship)) out.add(e);
+        return out;
+    }
+
+    /** Craft docked to (or carried in the hangar of) this one. */
+    public java.util.List<Starship> dockedCraft() {
+        java.util.List<Starship> out = new java.util.ArrayList<>(2);
+        for (Entity e : getPassengers()) if (e instanceof Starship s) out.add(s);
+        return out;
+    }
+
+    private int crewIndex(Entity passenger) {
+        int i = 0;
+        for (Entity e : getPassengers()) {
+            if (e == passenger) return i;
+            if (!(e instanceof Starship)) i++;
+        }
+        return 0;
+    }
+
     // ---------------------------------------------------------------- what this craft is (ShipSpec)
 
     /**
@@ -308,7 +408,7 @@ public class Starship extends VehicleEntity {
      * block set (its spec, so its thrust and probes, come from it).
      */
     public boolean flightReady() {
-        return true;
+        return !isDocked();
     }
 
     /** Main-engine throttle for the exhaust glow, −1 … 1: predicted for the local pilot, synced for everyone else. */
@@ -421,7 +521,7 @@ public class Starship extends VehicleEntity {
     private void tickTimed() {
         if (getHurtTime() > 0) setHurtTime(getHurtTime() - 1);
         attitudeO.set(attitude);
-        attitudeSync.apply(attitude, level().isClientSide() && !isLocalInstanceAuthoritative());
+        if (!isDocked()) attitudeSync.apply(attitude, level().isClientSide() && !isLocalInstanceAuthoritative());
         super.tick();
         // Pilot's client still on the level-loading screen (just switched dimension): hold the ship where the server
         // put it, velocity kept. Flying on meanwhile (vanilla ignores its moves until the client has loaded) carried a
@@ -672,12 +772,13 @@ public class Starship extends VehicleEntity {
         // Weight on the gear: touching now (box or probe within 1/16 block), not "touched within the last ticks",
         // so a ship that hops off or rolls over a ledge is airborne at once and its flight assist takes over.
         boolean grounded = onGround() || restingContact();
-        ShipFlightModel.step(spec, q, v, c, new Vector3d(g.x(), g.y(), g.z()), hydrogen(), ShipFlightModel.TICK, grounded, assistReference());
-        gearHolds = ShipFlightModel.parked(c, hydrogen(), grounded) && v.x == 0 && v.z == 0 && gravityIsVertical(g);
+        float fuel = usableHydrogen();
+        ShipFlightModel.step(spec, q, v, c, new Vector3d(g.x(), g.y(), g.z()), fuel, ShipFlightModel.TICK, grounded, assistReference());
+        gearHolds = ShipFlightModel.parked(c, fuel, grounded) && v.x == 0 && v.z == 0 && gravityIsVertical(g);
         // Speed beyond the block cap goes to the frame (reported with the velocity, ShipClient), not lost.
         if (level().dimension() == Galactica.SPACE) pendingRebase.add(ShipFlightModel.krakensbane(v));
         attitude.set((float) q.x, (float) q.y, (float) q.z, (float) q.w);
-        localThrottle = hydrogen() > 0 ? (float) c.thrust() : 0F;
+        localThrottle = fuel > 0 ? (float) c.thrust() : 0F;
         setDeltaMovement(v.x * ShipFlightModel.TICK, v.y * ShipFlightModel.TICK, v.z * ShipFlightModel.TICK);
         syncRotationFields();
     }
@@ -731,15 +832,27 @@ public class Starship extends VehicleEntity {
     }
 
     private void serverStep() {
-        ServerPlayer pilot = getControllingPassenger() instanceof ServerPlayer sp ? sp : null;
-        keepParkedInReach();
+        boolean docked = isDocked();
+        ServerPlayer pilot = !docked && getControllingPassenger() instanceof ServerPlayer sp ? sp : null;
+        if (!docked) keepParkedInReach();
         entityData.set(DATA_GRAVITY, computeGravity(pilot));
+        rechargeShield();
+        if (!docked && tickCount % 10 == 0) ShipDocking.captureIntoHangar(this);
         if (pilot != null) {
             Input in = pilot.getLastClientInput();
             float throttle = (in.forward() ? 1F : 0F) - (in.backward() ? 1F : 0F);
-            if (hydrogen() <= 0) throttle = 0;
+            if (usableHydrogen() <= 0) throttle = 0;
             if (throttle != 0) lastMainBurnTick = tickCount;
             if (throttle != 0) setHydrogen(hydrogen() - Math.abs(throttle) * (float) (ShipFlightModel.TICK * spec().hydrogenPerSecond()));
+            // The lift jets (thrusters firing downward) burn hydrogen too: under the lift key, or holding the hull up
+            // against gravity with flight assist on. Dry tanks or a wrecked hull leave only the RCS.
+            if (usableHydrogen() > 0 && spec().liftEngineN() > 0) {
+                Vector3f upF = attitude.transform(new Vector3f(0, 1, 0));
+                Vector3fc g = gravity();
+                double rate = ShipFlightModel.liftBurnRate(spec(), in.jump(), coupled, onGround() || restingContact(),
+                        new Vector3d(upF.x, upF.y, upF.z), new Vector3d(g.x(), g.y(), g.z()));
+                if (rate > 0) setHydrogen(hydrogen() - (float) (rate * ShipFlightModel.TICK));
+            }
             if (entityData.get(DATA_THRUST) != throttle) entityData.set(DATA_THRUST, throttle);
             byte rcs = (byte) ShipAnimator.rcsMask((in.jump() ? 1 : 0) - (in.shift() ? 1 : 0),
                     (in.right() ? 1 : 0) - (in.left() ? 1 : 0), 0F);
@@ -760,6 +873,20 @@ public class Starship extends VehicleEntity {
                 entityData.set(DATA_SPOOL, spool - 1);
             }
         }
+    }
+
+    /**
+     * Server: the reactors refill the shield pool at their output, burning {@link dev.galactica.ship.yard.ShipPart#HYDROGEN_PER_SHIELD}
+     * cells per point; no hydrogen or a wrecked hull, no recharge.
+     */
+    private void rechargeShield() {
+        float max = maxShield(), s = shield();
+        if (s > max) setShield(max);
+        float rate = shieldRecharge();
+        if (rate <= 0 || s >= max || usableHydrogen() <= 0) return;
+        float add = Math.min(max - s, rate * (float) ShipFlightModel.TICK);
+        setShield(s + add);
+        setHydrogen(hydrogen() - add * dev.galactica.ship.yard.ShipPart.HYDROGEN_PER_SHIELD);
     }
 
     void beginSpool(JumpTargetInfo target) {
@@ -794,6 +921,7 @@ public class Starship extends VehicleEntity {
      */
     void acceptPilotReport(ServerPlayer pilot, int seq, Quaternionfc q, Vector3fc velocity, boolean assist, Vector3fc rebase) {
         if (!q.isFinite() || !velocity.isFinite() || q.lengthSquared() < 1e-6) return;
+        if (isDocked()) return; // the carrier moves a docked craft, not its pilot
         int now = tickCount;
         // Elapsed server ticks, not reports: several reports in one tick (a burst after lag, or a modified client
         // spamming them) share that tick's budget instead of each getting one of its own.
@@ -813,11 +941,13 @@ public class Starship extends VehicleEntity {
         // W/S held right now counts too: the input packet arrives before this report, but serverStep (which stamps
         // lastMainBurnTick) only runs in the next entity tick, so the first tick of every burn would be clamped.
         Input in = pilot.getLastClientInput();
-        boolean mainBurning = hydrogen() > 0 && (in.forward() || in.backward() || tickCount - lastMainBurnTick <= ticks + 1);
+        boolean fuelled = usableHydrogen() > 0;
+        boolean mainBurning = fuelled && (in.forward() || in.backward() || tickCount - lastMainBurnTick <= ticks + 1);
         // Velocity-change credit (m/s): what the engines plus gravity can do per elapsed tick (10 % and 0.5 m/s of float
         // slack), banked for at most 20 ticks and spent by the reports, Krakensbane rebase included. The main engine
-        // only counts while the server burns hydrogen for it, so frame velocity is never free.
-        double perTick = ShipFlightModel.maxDeltaVPerTick(spec(), mainBurning, gravity().length()) * 1.1 + 0.5;
+        // only counts while the server burns hydrogen for it, so frame velocity is never free; the lift jets need
+        // hydrogen aboard and a hull above zero.
+        double perTick = ShipFlightModel.maxDeltaVPerTick(spec(), mainBurning, fuelled, gravity().length()) * 1.1 + 0.5;
         dvBudget.refill(elapsed, perTick);
         // Touching terrain, the pilot's collision may have stopped the ship along any axis: the ground takes
         // 190 m/s off a hull in one tick, which no engine could. Collisions only remove velocity, so per axis the
@@ -862,11 +992,15 @@ public class Starship extends VehicleEntity {
         // The pilot's move packets keep moving the craft even while its chunk is not ticking yet (a fast flight through
         // space chunks still loading); its riders are only seated when it ticks. Seat them now, so the server-side crew
         // (and the chunks streamed around them) never fall behind their own ship.
-        if (level() instanceof ServerLevel sl) {
-            for (Entity e : getPassengers()) {
-                positionRider(e);
-                if (e instanceof ServerPlayer sp) sl.getChunkSource().move(sp);
-            }
+        if (level() instanceof ServerLevel sl) seatTree(this, sl);
+    }
+
+    /** Seats every rider of {@code vehicle}, and theirs (docked craft and their crew), moving player chunk centres along. */
+    static void seatTree(Entity vehicle, ServerLevel sl) {
+        for (Entity e : vehicle.getPassengers()) {
+            vehicle.positionRider(e);
+            if (e instanceof ServerPlayer sp) sl.getChunkSource().move(sp);
+            if (!e.getPassengers().isEmpty()) seatTree(e, sl);
         }
     }
 
@@ -955,21 +1089,57 @@ public class Starship extends VehicleEntity {
         return hasPassenger(attacker);
     }
 
+    /**
+     * Crew take the seats; a craft only boards through {@link ShipDocking} (which mounts it by force), never by a
+     * vanilla mount.
+     */
     @Override
     protected boolean canAddPassenger(Entity passenger) {
-        return getPassengers().size() < spec().seatCount();
+        if (passenger instanceof Starship) return false;
+        return crew().size() < spec().seatCount();
     }
 
+    /** The first crew member, when a player: docked craft never fly their carrier. */
     @Override
     public @Nullable LivingEntity getControllingPassenger() {
-        return getFirstPassenger() instanceof Player p ? p : null;
+        for (Entity e : getPassengers()) {
+            if (e instanceof Starship) continue;
+            return e instanceof Player p ? p : null;
+        }
+        return null;
+    }
+
+    /**
+     * Undocking (or a carrier destroyed under it): the craft leaves with its carrier's velocity plus a gentle push
+     * clear of it ({@link ShipDocking#releasePush}), on the server and on every client alike, the pilot's included
+     * (its prediction ignores the server's velocity echo).
+     */
+    @Override
+    public void removeVehicle() {
+        Entity old = getVehicle();
+        super.removeVehicle();
+        if (old instanceof Starship carrier) {
+            Vec3 push = ShipDocking.releasePush(carrier, this);
+            setDeltaMovement(carrier.getDeltaMovement().add(push));
+            attitudeO.set(attitude);
+            attitudeSync.reset(attitude);
+            if (level().isClientSide()) reconciler.reset();
+            else {
+                undockedTick = tickCount;
+                entityData.set(DATA_ATTITUDE, new Quaternionf(attitude));
+            }
+        }
     }
 
     @Override
     protected void positionRider(Entity passenger, Entity.MoveFunction move) {
         if (!hasPassenger(passenger)) return;
-        boolean pilot = getFirstPassenger() == passenger;
-        Vector3f seat = attitude.transform(new Vector3f(seat(getPassengers().indexOf(passenger))));
+        if (passenger instanceof Starship child) {
+            positionDocked(child, move);
+            return;
+        }
+        boolean pilot = getControllingPassenger() == passenger;
+        Vector3f seat = attitude.transform(new Vector3f(seat(crewIndex(passenger))));
         Vec3 attach = passenger.getVehicleAttachmentPoint(this);
         move.accept(passenger, getX() + seat.x - attach.x, getY() + pivot() + seat.y - attach.y, getZ() + seat.z - attach.z);
         if (pilot) {
@@ -1042,8 +1212,14 @@ public class Starship extends VehicleEntity {
         return !level().isClientSide() && level().dimension() == Galactica.SPACE;
     }
 
+    /** At the controls of a craft that flies (not one docked to, or carried by, another). */
     public static boolean isPiloting(Player p) {
-        return p.getVehicle() instanceof Starship s && s.getControllingPassenger() == p;
+        return p.getVehicle() instanceof Starship s && s.getControllingPassenger() == p && !s.isDocked();
+    }
+
+    /** The craft at the root of what {@code p} rides (the carrier, when their own ship is docked), or null. */
+    public static @Nullable Starship rootCraft(Player p) {
+        return p.isPassenger() && p.getRootVehicle() instanceof Starship s ? s : null;
     }
 
     // ---------------------------------------------------------------- integration hooks (NavServer)
@@ -1056,6 +1232,7 @@ public class Starship extends VehicleEntity {
      */
     public static boolean consumeWarpFuel(ServerPlayer p, double speed) {
         if (!(p.getVehicle() instanceof Starship s) || s.getControllingPassenger() != p) return p.isCreative();
+        if (s.enginesDead() || s.isDocked()) return false;
         if (p.isCreative()) return true;
         double cost = DriveRules.warpHydrogenPerTick(speed);
         if (cost == 0) return true;
@@ -1066,17 +1243,19 @@ public class Starship extends VehicleEntity {
 
     /** A player aboard a ship but not at its controls: their galactic frame is driven by the pilot's. */
     public static boolean isCrew(Player p) {
-        return p.getVehicle() instanceof Starship s && s.getControllingPassenger() != p;
+        return p.getVehicle() instanceof Starship && !isPiloting(p);
     }
 
     /**
-     * The player whose frame the ship's floating origin follows: the pilot, or, when nobody (or no player) is at
-     * the controls, the first player aboard, so a drifting ship with only crew aboard still recentres.
+     * The player whose frame the craft's floating origin follows: the pilot of the root craft (the carrier, for a
+     * docked ship), or, when nobody (or no player) is at its controls, the first player aboard anywhere in it, so a
+     * drifting ship with only crew aboard, or a carrier with only a docked pilot, still recentres.
      */
     public static boolean leadsCraft(Player p) {
-        if (!(p.getVehicle() instanceof Starship s)) return false;
-        if (s.getControllingPassenger() instanceof Player pilot) return pilot == p;
-        for (Entity e : s.getPassengers()) if (e instanceof Player first) return first == p;
+        Starship root = rootCraft(p);
+        if (root == null) return false;
+        if (root.getControllingPassenger() instanceof Player pilot) return pilot == p;
+        for (Entity e : root.getIndirectPassengers()) if (e instanceof Player first) return first == p;
         return false;
     }
 
@@ -1087,9 +1266,10 @@ public class Starship extends VehicleEntity {
      * in its own drive logic ({@link #isCrew}), so in space this is their only frame update.
      */
     public static void carryCrew(ServerPlayer pilot, GalacticPos oldOrigin, NavState pilotNow) {
-        if (!(pilot.getVehicle() instanceof Starship ship) || !leadsCraft(pilot)) return;
+        Starship root = rootCraft(pilot);
+        if (root == null || !leadsCraft(pilot)) return;
         double[] d = pilotNow.origin().metresFrom(oldOrigin);
-        for (Entity e : ship.getPassengers()) {
+        for (Entity e : root.getIndirectPassengers()) {
             if (e instanceof ServerPlayer crew && crew != pilot) {
                 NavState nav = crew.getAttachedOrCreate(Galactica.NAV);
                 crew.setAttached(Galactica.NAV, new NavState(nav.origin().plusMetres(d[0], d[1], d[2]),
@@ -1106,7 +1286,7 @@ public class Starship extends VehicleEntity {
      */
     public Vec3 riderEyePosition(Entity rider, float partialTick, float eyeHeight) {
         Vec3 attach = rider.getVehicleAttachmentPoint(this);
-        Vector3f seat = new Vector3f(seat(Math.max(0, getPassengers().indexOf(rider))));
+        Vector3f seat = new Vector3f(seat(crewIndex(rider)));
         Vector3f eye = getAttitude(partialTick, new Quaternionf()).transform(seat.add((float) -attach.x, eyeHeight - (float) attach.y, (float) -attach.z));
         return getPosition(partialTick).add(eye.x, pivot() + eye.y, eye.z);
     }
@@ -1129,9 +1309,36 @@ public class Starship extends VehicleEntity {
             discard();
             return true;
         }
-        setHull(hull() - amount * HULL_PER_DAMAGE);
-        if (hull() <= 0) destroy(level, source);
+        setHull(hull() - absorbByShield(amount * HULL_PER_DAMAGE));
+        if (hull() <= 0 && dev.galactica.config.GalacticaConfigs.get().shipDestruction()) {
+            ejectCrewSafely();
+            destroy(level, source);
+        }
         return true;
+    }
+
+    /** Spends shield points on {@code hullPoints} of incoming damage; returns what is left for the hull. */
+    protected float absorbByShield(float hullPoints) {
+        float s = shield();
+        if (s <= 0 || hullPoints <= 0) return hullPoints;
+        float used = Math.min(s, hullPoints);
+        setShield(s - used);
+        return hullPoints - used;
+    }
+
+    /**
+     * Server, on destruction: docked craft are released (with their crews, who keep flying them), and everyone aboard
+     * is set beside the wreck the way a normal exit would, with slow falling on a planet so nobody dies of the drop.
+     */
+    protected void ejectCrewSafely() {
+        for (Starship child : dockedCraft()) ShipDocking.undock(child);
+        for (Entity e : crew()) {
+            e.stopRiding();
+            if (e instanceof LivingEntity l && level().dimension() != Galactica.SPACE) {
+                l.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.SLOW_FALLING, 600));
+            }
+            e.resetFallDistance();
+        }
     }
 
     @Override
@@ -1181,6 +1388,14 @@ public class Starship extends VehicleEntity {
         out.putInt("exotic", exotic());
         out.putFloat("hull", hull());
         out.putBoolean("coupled", coupled);
+        out.putFloat("shield", shield());
+        // Kept even while the riding link is briefly cut: a cross-dimension teleport ejects the passengers, copies
+        // each through this data, and mounts the copies again (Entity.teleportCrossDimension).
+        if (dockKind() != ShipDocking.Kind.NONE) {
+            out.putInt("dock_kind", dockKind().ordinal());
+            out.store("dock_offset", ExtraCodecs.VECTOR3F, new Vector3f(dockOffset()));
+            out.store("dock_rotation", ExtraCodecs.QUATERNIONF, new Quaternionf(dockRotation()));
+        }
     }
 
     @Override
@@ -1191,5 +1406,11 @@ public class Starship extends VehicleEntity {
         setHull(in.getFloatOr("hull", maxHull()));
         coupled = in.getBooleanOr("coupled", true);
         entityData.set(DATA_COUPLED, coupled);
+        setShield(in.getFloatOr("shield", 0F));
+        int kind = in.getIntOr("dock_kind", 0);
+        if (kind > 0 && kind < ShipDocking.Kind.values().length) {
+            setDockPose(ShipDocking.Kind.values()[kind], in.read("dock_offset", ExtraCodecs.VECTOR3F).orElse(new Vector3f()),
+                    in.read("dock_rotation", ExtraCodecs.QUATERNIONF).orElse(new Quaternionf()));
+        }
     }
 }

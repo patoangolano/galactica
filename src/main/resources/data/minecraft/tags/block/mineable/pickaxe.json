@@ -7,6 +7,11 @@
     "galactica:ship_hydrogen_tank",
     "galactica:ship_hyperdrive_core",
     "galactica:ship_landing_gear",
-    "galactica:ship_hull_plating"
+    "galactica:ship_hull_plating",
+    "galactica:ship_docking_port",
+    "galactica:ship_hangar_bay",
+    "galactica:ship_shield_generator",
+    "galactica:ship_reactor",
+    "galactica:ship_scanner"
   ]
 }

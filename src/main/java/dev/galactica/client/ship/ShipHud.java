@@ -36,14 +36,25 @@ public final class ShipHud {
         var orbit = dev.galactica.client.hud.OrbitReadout.current(mc);
         if (orbit != null) speed = orbit.speed();
         float h = ship.hydrogen(), hull = ship.hull();
-        String[] lines = {
+        java.util.List<String> lineList = new java.util.ArrayList<>(java.util.List.of(
                 tr("hud.galactica.ship.title", tr(ship.coupled() ? "hud.galactica.ship.coupled" : "hud.galactica.ship.decoupled")),
                 tr("hud.galactica.ship.hydrogen", String.format("%.1f", h), String.format("%.0f", ship.maxHydrogen())),
                 tr("hud.galactica.ship.exotic", ship.exotic(), String.format("%.0f", DriveRules.rangeLy(ship.exotic(), ship.jumpTierLy()))),
-                tr("hud.galactica.ship.hull", Math.round(hull / ship.maxHull() * 100F)),
-                tr("hud.galactica.ship.speed", String.format("%.1f", speed)),
-        };
-        int[] colours = {ACCENT, h < 5 ? WARN : TEXT, DIM, hull < 25 ? WARN : TEXT, TEXT};
+                ship.enginesDead() ? tr("hud.galactica.ship.wreck") : tr("hud.galactica.ship.hull", Math.round(hull / ship.maxHull() * 100F)),
+                tr("hud.galactica.ship.speed", String.format("%.1f", speed))));
+        java.util.List<Integer> colourList = new java.util.ArrayList<>(java.util.List.of(ACCENT, h < 5 ? WARN : TEXT, DIM,
+                hull < 25 ? WARN : TEXT, TEXT));
+        if (ship.maxShield() > 0) {
+            lineList.add(4, tr("hud.galactica.ship.shield", Math.round(ship.shield()), Math.round(ship.maxShield())));
+            colourList.add(4, ship.shield() < 0.25F * ship.maxShield() ? WARN : CYAN);
+        }
+        if (ship.isDocked()) {
+            lineList.add(tr(ship.dockKind() == dev.galactica.ship.ShipDocking.Kind.HANGAR ? "hud.galactica.ship.in_hangar" : "hud.galactica.ship.docked",
+                    ShipSystemsClient.DOCK.getTranslatedKeyMessage().getString()));
+            colourList.add(CYAN);
+        }
+        String[] lines = lineList.toArray(new String[0]);
+        int[] colours = colourList.stream().mapToInt(Integer::intValue).toArray();
         String spool = ship.isSpooling() ? tr("hud.galactica.ship.spooling", String.format("%.1f", ship.spoolTicks() / 20.0)) : null;
 
         int w = 0;

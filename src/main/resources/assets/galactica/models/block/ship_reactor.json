@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_column",
+  "textures": {
+    "side": "galactica:block/ship_reactor_side",
+    "end": "galactica:block/ship_reactor_top"
+  }
+}

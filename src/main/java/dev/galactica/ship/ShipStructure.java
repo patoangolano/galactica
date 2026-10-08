@@ -5,7 +5,10 @@ import dev.galactica.ship.yard.ShipBlocks;
 import dev.galactica.ship.yard.ShipCell;
 import dev.galactica.ship.yard.ShipPart;
 import dev.galactica.ship.yard.ShipPartBlocks;
+import dev.galactica.ship.yard.ShipOccupancy;
 import dev.galactica.ship.yard.ShipStats;
+import dev.galactica.ship.yard.ShipSystems;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -68,16 +71,43 @@ public class ShipStructure extends Starship {
         return com;
     }
 
+    /** Docking ports, hangar, shields, reactors, scanners. */
+    public ShipSystems systems() {
+        return systems;
+    }
+
+    @Override
+    public float maxShield() {
+        return systems.shieldCapacity();
+    }
+
+    @Override
+    public float shieldRecharge() {
+        return systems.shieldRecharge();
+    }
+
     /** Replaces the block set and recomputes the spec (server on assembly or load, client on the payload). */
     public void setBlocks(ShipBlocks blocks) {
         this.blocks = blocks;
         if (blocks.isEmpty()) {
             spec = EMPTY_SPEC;
             com = new org.joml.Vector3d(0.5, 0.5, 0.5);
+            systems = ShipSystems.NONE;
+            occupancy = null;
         } else {
             ShipStats.Result r = ShipStats.compute(blocks.shipCells());
             spec = r.spec();
             com = r.com();
+            systems = ShipSystems.compute(blocks.shipCells());
+            occupancy = blocks.size() >= OCCUPANCY_BLOCKS ? new ShipOccupancy(blocks.shipCells()) : null;
+            int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, z0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE, z1 = Integer.MIN_VALUE;
+            for (ShipCell c : blocks.shipCells()) {
+                x0 = Math.min(x0, c.x()); x1 = Math.max(x1, c.x() + 1);
+                y0 = Math.min(y0, c.y()); y1 = Math.max(y1, c.y() + 1);
+                z0 = Math.min(z0, c.z()); z1 = Math.max(z1, c.z() + 1);
+            }
+            bodyMin = new org.joml.Vector3d(x0, y0, z0).sub(com);
+            bodyMax = new org.joml.Vector3d(x1, y1, z1).sub(com);
         }
         blocksVersion++;
         refreshDimensions();
@@ -85,7 +115,83 @@ public class ShipStructure extends Starship {
             setHydrogen(hydrogen());
             setExotic(exotic());
             setHull(Math.min(hull(), maxHull()));
+            setShield(Math.min(shield(), maxShield()));
         }
+    }
+
+    // ------------------------------------------------------------------ occupancy-grid terrain collision
+
+    /** Ships of at least this many blocks also collide through the occupancy grid ({@link ShipOccupancy}). */
+    public static final int OCCUPANCY_BLOCKS = 256;
+    private ShipSystems systems = ShipSystems.NONE;
+    private @org.jspecify.annotations.Nullable ShipOccupancy occupancy;
+    private org.joml.Vector3d bodyMin = new org.joml.Vector3d(), bodyMax = new org.joml.Vector3d();
+    /** Dev counters: occupancy tests run, and world blocks examined by them. */
+    public static long occupancyTests, occupancyBlocks;
+
+    public boolean usesOccupancyGrid() {
+        return occupancy != null;
+    }
+
+    /**
+     * The probes first (cheap, exact at the outline); then, for a large hull, every solid world block inside the
+     * hull's rotated bounding box is tested against the occupancy grid. Chunk sections that hold only air are skipped
+     * whole, so in open space or high above the ground the test costs a handful of section lookups.
+     */
+    @Override
+    public boolean hullClearAt(Level level, Vec3 origin, org.joml.Quaternionfc q) {
+        if (!super.hullClearAt(level, origin, q)) return false;
+        ShipOccupancy occ = occupancy;
+        return occ == null || occupancyClear(level, origin, q, occ);
+    }
+
+    private boolean occupancyClear(Level level, Vec3 origin, org.joml.Quaternionfc q, ShipOccupancy occ) {
+        occupancyTests++;
+        org.joml.Vector3d pivotW = new org.joml.Vector3d(origin.x, origin.y + pivot(), origin.z);
+        // World AABB of the rotated body box.
+        double ax = Double.MAX_VALUE, ay = Double.MAX_VALUE, az = Double.MAX_VALUE, bx = -Double.MAX_VALUE, by = -Double.MAX_VALUE, bz = -Double.MAX_VALUE;
+        org.joml.Vector3d v = new org.joml.Vector3d();
+        for (int k = 0; k < 8; k++) {
+            v.set((k & 1) == 0 ? bodyMin.x : bodyMax.x, (k & 2) == 0 ? bodyMin.y : bodyMax.y, (k & 4) == 0 ? bodyMin.z : bodyMax.z);
+            q.transform(v);
+            ax = Math.min(ax, v.x); bx = Math.max(bx, v.x);
+            ay = Math.min(ay, v.y); by = Math.max(by, v.y);
+            az = Math.min(az, v.z); bz = Math.max(bz, v.z);
+        }
+        int x0 = net.minecraft.util.Mth.floor(pivotW.x + ax), x1 = net.minecraft.util.Mth.floor(pivotW.x + bx);
+        int y0 = Math.max(level.getMinY(), net.minecraft.util.Mth.floor(pivotW.y + ay)), y1 = Math.min(level.getMaxY(), net.minecraft.util.Mth.floor(pivotW.y + by));
+        int z0 = net.minecraft.util.Mth.floor(pivotW.z + az), z1 = net.minecraft.util.Mth.floor(pivotW.z + bz);
+        if (y0 > y1) return true;
+        org.joml.Quaternionf inverse = new org.joml.Quaternionf(q).conjugate();
+        org.joml.Vector3d scratch = new org.joml.Vector3d();
+        net.minecraft.core.BlockPos.MutableBlockPos pos = new net.minecraft.core.BlockPos.MutableBlockPos();
+        for (int cx = x0 >> 4; cx <= x1 >> 4; cx++) {
+            for (int cz = z0 >> 4; cz <= z1 >> 4; cz++) {
+                var access = level.getChunk(cx, cz, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false);
+                if (!(access instanceof net.minecraft.world.level.chunk.LevelChunk chunk)) continue;
+                for (int sy = level.getSectionIndex(y0); sy <= level.getSectionIndex(y1); sy++) {
+                    var section = chunk.getSection(sy);
+                    if (section.hasOnlyAir()) continue;
+                    int base = net.minecraft.core.SectionPos.sectionToBlockCoord(level.getSectionYFromSectionIndex(sy));
+                    int lx0 = Math.max(x0, cx << 4), lx1 = Math.min(x1, (cx << 4) + 15);
+                    int ly0 = Math.max(y0, base), ly1 = Math.min(y1, base + 15);
+                    int lz0 = Math.max(z0, cz << 4), lz1 = Math.min(z1, (cz << 4) + 15);
+                    for (int y = ly0; y <= ly1; y++) {
+                        for (int x = lx0; x <= lx1; x++) {
+                            for (int z = lz0; z <= lz1; z++) {
+                                BlockState s = section.getBlockState(x & 15, y & 15, z & 15);
+                                if (s.isAir()) continue;
+                                occupancyBlocks++;
+                                pos.set(x, y, z);
+                                if (s.getCollisionShape(level, pos).isEmpty()) continue;
+                                if (occ.overlapsWorldBlock(x, y, z, pivotW, inverse, com, scratch)) return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     @Override
@@ -96,7 +202,7 @@ public class ShipStructure extends Starship {
 
     @Override
     public boolean flightReady() {
-        return !blocks.isEmpty();
+        return !blocks.isEmpty() && super.flightReady();
     }
 
     /** Number of a part aboard. */
@@ -106,8 +212,7 @@ public class ShipStructure extends Starship {
         return n;
     }
 
-    @Override
-    public InteractionResult interact(Player player, InteractionHand hand, Vec3 location) {
+    private InteractionResult interactBase(Player player, InteractionHand hand, Vec3 location) {
         if (player.getVehicle() != this && player.isSecondaryUseActive() && player.getItemInHand(hand).isEmpty()) {
             if (level().isClientSide()) return InteractionResult.SUCCESS;
             ShipAssembler.disassemble(this, player);
@@ -122,8 +227,10 @@ public class ShipStructure extends Starship {
     }
 
     /**
-     * Damage wears the hull down but never scatters the blocks: at zero hull the ship is a wreck to repair with iron
-     * ingots, not a lost build. Creative players remove it only by disassembling it.
+     * Damage drains the shields first, then the hull. At zero hull the engines die ({@link #enginesDead}); with
+     * {@code shipDestruction} on (the default) the ship then breaks up ({@link ShipWreck}): crew set down safely, docked
+     * craft released, a share of the blocks and every container's contents dropped. With it off the ship stays a
+     * wreck to repair with iron ingots. Creative players never wreck a ship by hitting it.
      */
     @Override
     public boolean hurtServer(ServerLevel level, DamageSource source, float amount) {
@@ -132,8 +239,27 @@ public class ShipStructure extends Starship {
         setHurtDir(-getHurtDir());
         setHurtTime(10);
         markHurt();
-        if (!(source.getEntity() instanceof Player p && p.getAbilities().instabuild)) setHull(hull() - amount * 5F);
+        if (source.getEntity() instanceof Player p && p.getAbilities().instabuild) return true;
+        setHull(hull() - absorbByShield(amount * 5F));
+        if (hull() <= 0 && dev.galactica.config.GalacticaConfigs.get().shipDestruction()) ShipWreck.breakUp(this, level);
         return true;
+    }
+
+    /**
+     * Using the ship from outside: sneak with an empty hand disassembles; a click whose ray meets a container block of
+     * the hull ({@link ShipCargo#raycast}) opens that container; anything else boards or services as usual.
+     */
+    @Override
+    public InteractionResult interact(Player player, InteractionHand hand, Vec3 location) {
+        if (player.getVehicle() != this && !player.isSecondaryUseActive() && player.getItemInHand(hand).isEmpty()) {
+            int index = ShipCargo.raycast(this, player.getEyePosition(), player.getViewVector(1F), 8.0);
+            if (index >= 0 && ShipCargo.isContainer(blocks, index)) {
+                if (level().isClientSide()) return InteractionResult.SUCCESS;
+                ShipCargo.open((ServerPlayer) player, this, index);
+                return InteractionResult.SUCCESS_SERVER;
+            }
+        }
+        return interactBase(player, hand, location);
     }
 
     @Override

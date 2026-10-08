@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "C": "minecraft:compass",
+    "I": "minecraft:iron_ingot",
+    "R": "minecraft:redstone"
+  },
+  "pattern": [
+    " C ",
+    "IRI",
+    "III"
+  ],
+  "result": {
+    "id": "galactica:ship_scanner"
+  }
+}

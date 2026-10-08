@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "Y": "minecraft:yellow_dye",
+    "B": "minecraft:black_dye",
+    "I": "minecraft:iron_ingot"
+  },
+  "pattern": [
+    "YBY",
+    "III"
+  ],
+  "result": {
+    "id": "galactica:ship_hangar_bay",
+    "count": 3
+  }
+}

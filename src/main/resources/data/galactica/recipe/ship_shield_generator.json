@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "D": "minecraft:diamond",
+    "Q": "minecraft:quartz",
+    "R": "minecraft:redstone_block"
+  },
+  "pattern": [
+    "IDI",
+    "QRQ",
+    "IDI"
+  ],
+  "result": {
+    "id": "galactica:ship_shield_generator"
+  }
+}

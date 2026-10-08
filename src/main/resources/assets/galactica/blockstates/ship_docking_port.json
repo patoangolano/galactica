@@ -1,0 +1,27 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "galactica:block/ship_docking_port"
+    },
+    "facing=east": {
+      "model": "galactica:block/ship_docking_port",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "galactica:block/ship_docking_port",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "galactica:block/ship_docking_port",
+      "y": 270
+    },
+    "facing=up": {
+      "model": "galactica:block/ship_docking_port",
+      "x": 270
+    },
+    "facing=down": {
+      "model": "galactica:block/ship_docking_port",
+      "x": 90
+    }
+  }
+}

@@ -26,7 +26,8 @@ import org.jspecify.annotations.Nullable;
  *   <li>{@link Facing#NONE}: tanks, RCS, cores, gear, plating;</li>
  *   <li>{@link Facing#HORIZONTAL} (helm, crew seat): faces where the player looks, so a pilot sitting on it looks the
  *       way the builder did; the helm's facing is the ship's nose;</li>
- *   <li>{@link Facing#ALL} (thruster): the nozzle points back at the player who places it against the hull.</li>
+ *   <li>{@link Facing#ALL} (thruster, docking port): the nozzle (or the port's mating face) points back at the player
+ *       who places it against the hull.</li>
  * </ul>
  * Right-clicking the helm assembles the ship ({@link ShipAssembler}).
  */

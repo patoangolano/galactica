@@ -36,7 +36,15 @@ public final class ShipTemplate {
         RCS("galactica:ship_rcs", 3F, ShipPart.RCS, -1),
         TANK("galactica:ship_hydrogen_tank", 3F, ShipPart.HYDROGEN_TANK, -1),
         CORE("galactica:ship_hyperdrive_core", 5F, ShipPart.HYPERDRIVE_CORE, -1),
-        GEAR("galactica:ship_landing_gear", 3F, ShipPart.LANDING_GEAR, -1);
+        GEAR("galactica:ship_landing_gear", 3F, ShipPart.LANDING_GEAR, -1),
+        /** Docking port, mating face up (dorsal). */
+        DOCK_UP("galactica:ship_docking_port", 4F, ShipPart.DOCKING_PORT, 1),
+        /** Docking port, mating face down (ventral). */
+        DOCK_DOWN("galactica:ship_docking_port", 4F, ShipPart.DOCKING_PORT, 0),
+        HANGAR("galactica:ship_hangar_bay", 4F, ShipPart.HANGAR_BAY, -1),
+        SHIELD("galactica:ship_shield_generator", 4F, ShipPart.SHIELD_GENERATOR, -1),
+        REACTOR("galactica:ship_reactor", 5F, ShipPart.REACTOR, -1),
+        SCANNER("galactica:ship_scanner", 3F, ShipPart.SCANNER, -1);
 
         public final String block;
         public final float hardness;
@@ -181,6 +189,8 @@ public final class ShipTemplate {
         t.put(-2, -1, -4, Mat.LIFT).put(2, -1, -4, Mat.LIFT).put(-2, -1, 2, Mat.LIFT).put(2, -1, 2, Mat.LIFT);
         t.put(-3, 3, -7, Mat.RCS).put(3, 3, -7, Mat.RCS).put(-3, 3, 5, Mat.RCS).put(3, 3, 5, Mat.RCS);
         t.put(-2, -2, -5, Mat.GEAR).put(2, -2, -5, Mat.GEAR).put(-2, -2, 3, Mat.GEAR).put(2, -2, 3, Mat.GEAR);
+        // A docking port in the belly, between the gear: it mates with a freighter's dorsal port.
+        t.put(0, -1, -1, Mat.DOCK_DOWN);
         return t.rebase();
     }
 
@@ -211,6 +221,20 @@ public final class ShipTemplate {
                 .put(-7, -2, -16, Mat.RCS).put(7, -2, 16, Mat.RCS);
         t.put(0, 0, 17, Mat.BRAKE).put(-3, 0, 17, Mat.BRAKE).put(3, 0, 17, Mat.BRAKE);
         for (int x = -5; x <= 5; x += 10) for (int z = -13; z <= 13; z += 13) t.put(x, -3, z, Mat.GEAR);
+        // Hangar: bay floor down the middle of the hold, open to the sky through a hatch in the roof, so a shuttle
+        // settles in from above; the barrels stay along the walls.
+        t.box(-4, -1, -11, 4, -1, 7, Mat.HANGAR);
+        t.clear(-4, 6, -11, 4, 6, 7);
+        t.box(-5, 6, -12, 5, 6, -12, Mat.TRIM).box(-5, 6, 8, 5, 6, 8, Mat.TRIM);
+        // The hold lamps move off the hangar's ceiling, onto the walls.
+        t.clear(0, 5, -8, 0, 5, 8);
+        t.put(-6, 5, -8, Mat.LAMP).put(6, 5, -8, Mat.LAMP).put(-6, 5, 4, Mat.LAMP).put(6, 5, 4, Mat.LAMP);
+        // Systems: a dorsal docking port aft of the hatch, two shield generators, a reactor and a scanner forward.
+        t.put(0, 6, -14, Mat.DOCK_UP);
+        t.put(-6, 3, 12, Mat.SHIELD).put(6, 3, 12, Mat.SHIELD);
+        t.put(0, 0, -12, Mat.REACTOR);
+        t.put(0, 5, 14, Mat.SCANNER);
+        t.put(0, -1, 12, Mat.CARGO);
         return t.rebase();
     }
 
@@ -237,6 +261,9 @@ public final class ShipTemplate {
         t.put(0, 0, 11, Mat.TRIM).put(0, 0, 12, Mat.BRAKE);
         t.put(-2, -2, -12, Mat.GEAR).put(2, -2, -12, Mat.GEAR).put(-2, -2, 4, Mat.GEAR).put(2, -2, 4, Mat.GEAR);
         t.box(-2, -1, -12, 2, -1, -12, Mat.HULL);
+        // A scanner pair on the nose module's roof, the reactor that feeds them and one shield generator in the spine.
+        t.put(-1, 3, 6, Mat.SCANNER).put(1, 3, 6, Mat.SCANNER);
+        t.put(0, 1, -17, Mat.REACTOR).put(0, 0, -17, Mat.SHIELD);
         return t.rebase();
     }
 

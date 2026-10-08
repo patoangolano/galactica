@@ -152,6 +152,11 @@ public final class CockpitDisplay {
                 .append('|').append(Math.round(att[0])).append('|').append(Math.round(Math.toDegrees(att[1])));
         String[] tgt = targetLine();
         b.append('|').append(tgt[0]).append('|').append(tgt[1]);
+        b.append('|').append(Math.round(ship.shield())).append('|').append(ShipSystemsClient.page());
+        if (ShipSystemsClient.page() == 1) {
+            b.append('|').append(ship.isDocked()).append('|').append(ship.dockKind());
+            for (String s : ShipSystemsClient.lines(mc, SCAN_ROWS)) b.append('|').append(s);
+        }
         // A painted ball moves with every tenth of a degree; a GPU ball leaves the canvas still.
         if (!gpuBall) b.append('|').append(Math.round(att[0] * 10)).append('|').append(Math.round(att[1] * 1000));
         return b.toString();
@@ -184,6 +189,10 @@ public final class CockpitDisplay {
         if (r == null) return new String[] {"NONE", ""};
         String name = r.target().name();
         if (name.length() > 8) name = name.substring(0, 8);
+        var on = r.onTarget();
+        if (on != dev.galactica.client.nav.TargetReadout.OnTarget.NO) {
+            return new String[] {name, on == dev.galactica.client.nav.TargetReadout.OnTarget.LANDED ? "LANDED" : "ON TARGET"};
+        }
         String left = name + " " + dev.galactica.client.nav.TargetReadout.distanceText(Math.max(0, r.surface())).replace(",", "");
         String right;
         if (r.state().engaged()) right = "AP " + r.state().phase().name();
@@ -216,6 +225,10 @@ public final class CockpitDisplay {
         line(BALL_CX + BALL_R + 18, 12, BALL_CX + BALL_R + 18, H - 12, FRAME);
 
         int x = BALL_CX + BALL_R + 36, y = 12, row = 29, val = x + 90, barX = x + 380, barW = 230;
+        if (ShipSystemsClient.page() == 1) {
+            paintSystems(mc, ship, x, val, barX, barW, row);
+            return;
+        }
         boolean assist = ship.coupled();
         text(x, y, "MODE", DIM);
         text(val, y, assist ? "ASSIST" : "FREE", assist ? GOOD : AMBER);
@@ -241,7 +254,10 @@ public final class CockpitDisplay {
         float hull = ship.hull();
         int hullColour = hull < 25 ? WARN : hull < 60 ? AMBER : GOOD;
         text(x, y, "HULL", DIM);
-        text(val, y, String.format(Locale.ROOT, "%d%%", Math.round(hull / ship.maxHull() * 100F)), hullColour);
+        String hullText = String.format(Locale.ROOT, "%d%%", Math.round(hull / ship.maxHull() * 100F));
+        if (ship.maxShield() > 0) hullText += String.format(Locale.ROOT, " S%d%%", Math.round(ship.shield() / ship.maxShield() * 100F));
+        if (ship.enginesDead()) hullText = "WRECK";
+        text(val, y, hullText, hullColour);
         bar(barX, y + 3, barW, 14, hull / ship.maxHull(), hullColour);
         y += row;
         text(x, y, "GEAR", DIM);
@@ -254,6 +270,48 @@ public final class CockpitDisplay {
         text(x, y, "TGT", DIM);
         text(val, y, tgt[0], tgt[0].equals("NONE") ? DIM : 0xFFFFD54F);
         if (!tgt[1].isEmpty()) text(val + 330, y, tgt[1], tgt[1].startsWith("AP") ? GOOD : DIM);
+    }
+
+    /** Scanner contacts on the systems page. */
+    static final int SCAN_ROWS = 5;
+
+    /**
+     * The systems page (key N): shields and their recharge, the docking state, and the scanner's contacts (ships,
+     * derelicts, ore, the nearest bodies), nearest first.
+     */
+    private static void paintSystems(Minecraft mc, Starship ship, int x, int val, int barX, int barW, int row) {
+        int y = 12;
+        text(x, y, "SYSTEMS", AMBER);
+        text(val + 200, y, "N: FLIGHT PAGE", DIM);
+        y += row;
+        float max = ship.maxShield(), s = ship.shield();
+        text(x, y, "SHLD", DIM);
+        if (max > 0) {
+            int c = s < 0.25F * max ? WARN : TEXT;
+            text(val, y, String.format(Locale.ROOT, "%.0f/%.0f", s, max), c);
+            bar(barX, y + 3, barW, 14, s / max, 0xFF6FD8FF);
+        } else {
+            text(val, y, "NONE", DIM);
+        }
+        y += row;
+        text(x, y, "PWR", DIM);
+        float rate = ship.shieldRecharge();
+        text(val, y, rate > 0 ? String.format(Locale.ROOT, "REACTOR +%.0f/S", rate) : "NO REACTOR", rate > 0 ? GOOD : DIM);
+        y += row;
+        text(x, y, "DOCK", DIM);
+        String dock = ship.isDocked() ? (ship.dockKind() == dev.galactica.ship.ShipDocking.Kind.HANGAR ? "IN HANGAR  G: RELEASE" : "DOCKED  G: UNDOCK")
+                : "FREE  G: DOCK";
+        text(val, y, dock, ship.isDocked() ? GOOD : DIM);
+        y += row;
+        var scan = ShipSystemsClient.scan();
+        text(x, y, "SCAN", DIM);
+        text(val, y, scan == null ? "NO SCANNER" : String.format(Locale.ROOT, "RANGE %.0fM", scan.range()), scan == null ? DIM : TEXT);
+        y += row;
+        for (String line : ShipSystemsClient.lines(mc, SCAN_ROWS)) {
+            if (y > H - 28) break;
+            text(x, y, line.length() > 34 ? line.substring(0, 34) : line, line.startsWith("DERELICT") ? AMBER : line.startsWith("ORE") ? 0xFFFFD54F : TEXT);
+            y += row - 4;
+        }
     }
 
     /**

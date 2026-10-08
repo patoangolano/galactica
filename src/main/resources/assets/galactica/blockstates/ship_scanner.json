@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "galactica:block/ship_scanner"
+    }
+  }
+}
