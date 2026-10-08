@@ -20,10 +20,12 @@ public final class ShipOccupancy {
     /** Brick edge, cells. */
     static final int B = 8;
 
-    private final int minX, minY, minZ, bx, by, bz;
+    private final int minX, minY, minZ, bx, by, bz, endX, endY, endZ;
     /** One long[8] (512 bits) per brick, null where a brick is empty. */
     private final long[][] bricks;
     private final int count;
+    /** Every occupied cell, packed ({@link ShipCell#pack}), each once. */
+    private final int[] packed;
 
     /** World points sampled per block: its centre and its corners pulled in by {@link #INSET} towards the centre. */
     public static final double INSET = 0.05;
@@ -39,22 +41,45 @@ public final class ShipOccupancy {
         minX = x0;
         minY = y0;
         minZ = z0;
+        endX = x1 + 1;
+        endY = y1 + 1;
+        endZ = z1 + 1;
         bx = (x1 - x0) / B + 1;
         by = (y1 - y0) / B + 1;
         bz = (z1 - z0) / B + 1;
         bricks = new long[bx * by * bz][];
         int n = 0;
+        it.unimi.dsi.fastutil.ints.IntArrayList list = new it.unimi.dsi.fastutil.ints.IntArrayList(cells.size());
         for (ShipCell c : cells) {
             int lx = c.x() - minX, ly = c.y() - minY, lz = c.z() - minZ;
             int brick = (lx / B * by + ly / B) * bz + lz / B;
             long[] words = bricks[brick];
             if (words == null) words = bricks[brick] = new long[B * B * B / 64];
             int bit = ((lx % B) * B + ly % B) * B + lz % B;
-            if ((words[bit >>> 6] & 1L << bit) == 0) n++;
+            if ((words[bit >>> 6] & 1L << bit) == 0) {
+                n++;
+                list.add(c.packed());
+            }
             words[bit >>> 6] |= 1L << bit;
         }
         count = n;
+        packed = list.toIntArray();
     }
+
+    /** Every occupied cell, packed ({@link ShipCell#pack}); do not modify. */
+    public int[] packedCells() {
+        return packed;
+    }
+
+    /** Lowest occupied cell corner, cell coordinates. */
+    public int minX() { return minX; }
+    public int minY() { return minY; }
+    public int minZ() { return minZ; }
+
+    /** One past the highest occupied cell, cell coordinates. */
+    public int maxX() { return endX; }
+    public int maxY() { return endY; }
+    public int maxZ() { return endZ; }
 
     public int size() {
         return count;

@@ -80,6 +80,7 @@ Qualquer construção vira nave. Os blocos de peça (aba Galactica, receitas no 
 | Gerador de Escudo | 60 pontos de escudo cada; o escudo absorve o dano antes do casco |
 | Reator de Fusão | recarrega o escudo (4 pontos/s cada, 1 célula de H₂ a cada 200 pontos) e alimenta os sensores |
 | Conjunto de Sensores | lista naves, destroços (naves sem ninguém), minério e corpos próximos; 1 024 m, +512 m por conjunto extra (até 4 096); precisa de reator |
+| Gerador de Gravidade | no espaço, 1 g no convés (para baixo da nave) enquanto um reator o alimenta e há H₂ a bordo |
 
 Os demais blocos (concreto, vidro, tábuas, barris…) são o casco: a massa vem da dureza do bloco. Baús e barris guardam o conteúdo.
 
@@ -97,6 +98,16 @@ Sistemas a bordo:
 - **Casco a 0**: motores, jatos de sustentação, dobra e hipersalto param. Com `shipDestruction` ligado (padrão, na configuração) a nave se desfaz: a tripulação sai ao lado com queda lenta num planeta, naves acopladas ficam livres, os contêineres se esvaziam e `wreckDropShare` (25 %) dos blocos caem como itens. Desligado, ela fica um destroço para consertar com barras de ferro.
 - Os propulsores virados para baixo (sustentação) queimam H₂ como o motor principal: no pulo, ou na parte do pairar que o RCS não segura sozinho. Sem H₂ só o RCS sustenta.
 - Naves de 256 blocos ou mais também colidem com o terreno por uma grade de ocupação (todo bloco sólido dentro da caixa do casco é testado contra os blocos da nave), além das sondas.
+
+Andar no convés:
+- Os blocos de uma nave construída são sólidos: dá para subir nela, entrar por portas e aberturas e andar por dentro e por cima, com a nave parada, voando, girando, acoplada, atravessando recentragens, saltos e entradas em planetas. Quem pisa na nave passa a andar no referencial dela (é levado com velocidade e rotação, sem escorregar). O cargueiro pronto tem uma porta a bombordo no nível do convés e degraus até o chão.
+- Gravidade no convés: num planeta, a do planeta (a nave inclinada até 50° ainda segura você no piso); no espaço, 1 g com um Gerador de Gravidade alimentado; sem ele, flutua (pulo sobe, agachar desce), a menos que esteja com as botas EVA, cujos ímãs prendem ao piso (V liga e desliga).
+- Botão direito no leme pilota (se estiver livre), num assento senta, num contêiner abre; numa nave acoplada no hangar, embarca nela. Agachar sentado faz levantar no convés, ao lado do assento (se não houver espaço, sai da nave como antes).
+- Sair: ande para fora do casco (ou da borda). No espaço você mantém a velocidade da nave (EVA); agachar freia esse embalo. Itens soltos no convés ficam a bordo.
+
+Colisão entre naves:
+- Naves construídas e a Kestrel colidem entre si pelos blocos (a Kestrel pelos blocos do modelo dela): impulso com restituição e atrito pela massa e inércia de cada uma, empurrão para fora da sobreposição, giro num golpe de raspão, e dano ao escudo e ao casco acima de 3 m/s de aproximação, proporcional à energia do impacto. O servidor resolve e avisa o piloto; uma nave rápida não atravessa outra (a varredura é subdividida a cada 0,5 bloco).
+- Uma nave que pousa por cima de outra mais pesada fica apoiada nela e, parada por 2 s, estaciona: passa a ser levada por ela até o piloto decolar (pulo ou W/S) ou apertar G. Naves acopladas ou no hangar não colidem entre si.
 
 Naves prontas (as mesmas peças, desmontáveis): `/galactica ship <kestrel|shuttle|freighter|explorer>` implanta, abastece e embarca; os itens "Planta de Nave" implantam onde você olha; `/galactica shipblocks <classe>` coloca a nave como blocos para modificar. `/galactica ship` sem classe continua implantando a Kestrel modelada.
 
@@ -206,6 +217,7 @@ Desenvolvimento: `./gradlew runAutotestTectonic` (mundo em `runs/client-tectonic
 - `./gradlew build`: compila e roda os testes científicos.
 - `./gradlew runClient`: abre o jogo com o mod.
 - `./gradlew runAutotest`: teste visual automático, sem entrada de mouse ou teclado. Os screenshots vão para `runs/client/screenshots/`.
+- `./gradlew runAutotestDeck`: só andar no convés e colisão entre naves (o `runAutotestShips` termina com eles). `./gradlew runGameTest`: testes de servidor (naves, convés, colisões) com jogadores falsos.
 - Diário técnico e armadilhas do 26.3: `MODLOG.md`. Recon das referências e da API: `docs/recon/`.
 
 ## Roteiro

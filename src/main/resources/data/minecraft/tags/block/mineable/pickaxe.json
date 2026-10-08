@@ -12,6 +12,7 @@
     "galactica:ship_hangar_bay",
     "galactica:ship_shield_generator",
     "galactica:ship_reactor",
-    "galactica:ship_scanner"
+    "galactica:ship_scanner",
+    "galactica:ship_gravity_generator"
   ]
 }

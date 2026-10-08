@@ -16,9 +16,10 @@ import java.util.List;
  * @param shieldGenerators shield generator blocks
  * @param reactors         reactor blocks
  * @param scanners         scanner arrays
+ * @param gravityGenerators artificial-gravity generators
  */
-public record ShipSystems(List<Port> ports, @Nullable Hangar hangar, int shieldGenerators, int reactors, int scanners) {
-    public static final ShipSystems NONE = new ShipSystems(List.of(), null, 0, 0, 0);
+public record ShipSystems(List<Port> ports, @Nullable Hangar hangar, int shieldGenerators, int reactors, int scanners, int gravityGenerators) {
+    public static final ShipSystems NONE = new ShipSystems(List.of(), null, 0, 0, 0, 0);
 
     /** Tallest hangar a bay floor reaches up into, blocks. */
     public static final int MAX_HANGAR_HEIGHT = 16;
@@ -74,12 +75,17 @@ public record ShipSystems(List<Port> ports, @Nullable Hangar hangar, int shieldG
         return Math.min(ShipPart.MAX_SCANNER_RANGE, ShipPart.SCANNER_RANGE + ShipPart.EXTRA_SCANNER_RANGE * (scanners - 1));
     }
 
+    /** Whether the ship can make artificial gravity: a generator and a reactor to power it (hydrogen is checked aboard). */
+    public boolean artificialGravity() {
+        return gravityGenerators > 0 && reactors > 0;
+    }
+
     public static ShipSystems compute(Collection<ShipCell> cells) {
         IntOpenHashSet occupied = new IntOpenHashSet();
         for (ShipCell c : cells) occupied.add(c.packed());
         List<Port> ports = new ArrayList<>();
         List<ShipCell> bays = new ArrayList<>();
-        int shields = 0, reactors = 0, scanners = 0;
+        int shields = 0, reactors = 0, scanners = 0, gravity = 0;
         for (ShipCell c : cells) {
             switch (c.part()) {
                 case DOCKING_PORT -> ports.add(new Port(c.x(), c.y(), c.z(), c.facing() < 0 ? 1 : c.facing()));
@@ -87,10 +93,11 @@ public record ShipSystems(List<Port> ports, @Nullable Hangar hangar, int shieldG
                 case SHIELD_GENERATOR -> shields++;
                 case REACTOR -> reactors++;
                 case SCANNER -> scanners++;
+                case GRAVITY_GENERATOR -> gravity++;
                 default -> { }
             }
         }
-        return new ShipSystems(List.copyOf(ports), hangar(bays, occupied), shields, reactors, scanners);
+        return new ShipSystems(List.copyOf(ports), hangar(bays, occupied), shields, reactors, scanners, gravity);
     }
 
     /**

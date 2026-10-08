@@ -8,3 +8,7 @@ out/
 .claude/
 logs/
 dist/
+bin/
+.classpath
+.project
+.settings/

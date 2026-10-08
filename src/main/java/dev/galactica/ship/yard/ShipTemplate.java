@@ -44,7 +44,10 @@ public final class ShipTemplate {
         HANGAR("galactica:ship_hangar_bay", 4F, ShipPart.HANGAR_BAY, -1),
         SHIELD("galactica:ship_shield_generator", 4F, ShipPart.SHIELD_GENERATOR, -1),
         REACTOR("galactica:ship_reactor", 5F, ShipPart.REACTOR, -1),
-        SCANNER("galactica:ship_scanner", 3F, ShipPart.SCANNER, -1);
+        SCANNER("galactica:ship_scanner", 3F, ShipPart.SCANNER, -1),
+        GRAVITY("galactica:ship_gravity_generator", 4F, ShipPart.GRAVITY_GENERATOR, -1),
+        /** A bottom half slab: a boarding step half a block high. */
+        STEP("minecraft:smooth_stone_slab", 2F, ShipPart.STRUCTURE, -1);
 
         public final String block;
         public final float hardness;
@@ -235,6 +238,14 @@ public final class ShipTemplate {
         t.put(0, 0, -12, Mat.REACTOR);
         t.put(0, 5, 14, Mat.SCANNER);
         t.put(0, -1, 12, Mat.CARGO);
+        // Deck life: a gravity generator beside the reactor (artificial gravity in space), and a door in the port side
+        // wall between the hold's barrels and the bridge, at deck level.
+        t.put(1, 0, -12, Mat.GRAVITY);
+        t.clear(7, 0, 10, 7, 1, 10);
+        // Boarding steps from the ground (the gear's feet) up to the door, half a block at a time: walkable without
+        // jumping. Each step stands on the one below it, so the ramp is one connected piece with the hull.
+        t.put(8, -1, 10, Mat.GREY).put(9, -1, 10, Mat.STEP).put(9, -2, 10, Mat.GREY).put(10, -2, 10, Mat.GREY)
+                .put(11, -2, 10, Mat.STEP).put(11, -3, 10, Mat.GREY).put(12, -3, 10, Mat.GREY).put(13, -3, 10, Mat.STEP);
         return t.rebase();
     }
 

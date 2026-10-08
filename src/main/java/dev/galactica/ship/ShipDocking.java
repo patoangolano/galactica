@@ -41,7 +41,16 @@ import java.util.Locale;
 public final class ShipDocking {
     private ShipDocking() {}
 
-    public enum Kind { NONE, PORT, HANGAR }
+    /**
+     * How a craft is held: at a docking port, in a hangar, or parked on another craft's top ({@link #DECK}: it settled
+     * there and stays, carried, until its pilot lifts off or presses the dock key).
+     */
+    public enum Kind { NONE, PORT, HANGAR, DECK }
+
+    /** A craft resting on another's top this many server ticks, slower than {@link #PARK_SPEED}, is parked on it. */
+    public static final int PARK_TICKS = 40;
+    /** Relative speed below which a craft resting on another counts as parked, m/s. */
+    public static final double PARK_SPEED = 0.5;
 
     /** Largest gap between two ports' mating faces that still docks, blocks. */
     public static final double PORT_RANGE = 4.0;
@@ -120,7 +129,7 @@ public final class ShipDocking {
      */
     public static Vec3 releasePush(Starship carrier, Starship child) {
         Vector3f dir;
-        if (child.dockKind() == Kind.HANGAR) {
+        if (child.dockKind() == Kind.HANGAR || child.dockKind() == Kind.DECK) {
             dir = new Vector3f(0, 1, 0);
         } else {
             dir = new Vector3f(child.dockOffset());
@@ -195,6 +204,43 @@ public final class ShipDocking {
             }
         }
         return best;
+    }
+
+    // ------------------------------------------------------------------ parked on another craft's top
+
+    /**
+     * Server, every tick for a free craft: one that has rested on top of a heavier craft ({@link
+     * dev.galactica.ship.collide.ShipCollisions#supporter}) for {@link #PARK_TICKS} ticks, at rest relative to it and
+     * with its pilot (if any) not thrusting, is parked there: it rides the other craft at its pose, so it stays put
+     * whatever the carrier does (turns, climbs, recentres, jumps).
+     */
+    public static void parkOnTop(Starship ship) {
+        if (ship.level().isClientSide() || ship.isPassenger() || ship.tickCount - ship.undockedTick < RECAPTURE_TICKS) {
+            ship.parkedTicks = 0;
+            return;
+        }
+        Starship under = dev.galactica.ship.collide.ShipCollisions.supporter(ship);
+        boolean still = under != null && under.spec().massKg() > ship.spec().massKg()
+                && ship.getDeltaMovement().subtract(under.getDeltaMovement()).length() / ShipFlightModel.TICK < PARK_SPEED;
+        if (still && ship.getControllingPassenger() instanceof ServerPlayer pilot) {
+            var in = pilot.getLastClientInput();
+            if (in.forward() || in.backward() || in.jump() || in.left() || in.right()) still = false;
+        }
+        if (!still) {
+            ship.parkedTicks = 0;
+            return;
+        }
+        if (++ship.parkedTicks < PARK_TICKS) return;
+        ship.parkedTicks = 0;
+        if (dock(under, ship, Kind.DECK, Vec3.ZERO) && ship.getControllingPassenger() instanceof ServerPlayer p)
+            p.sendOverlayMessage(Component.translatable("hud.galactica.dock.parked", under.getDisplayName()));
+    }
+
+    /** Server: a craft parked on another's top lifts off as soon as its pilot asks for lift or thrust. */
+    public static void liftOffIfAsked(Starship child, ServerPlayer pilot) {
+        if (child.dockKind() != Kind.DECK) return;
+        var in = pilot.getLastClientInput();
+        if (in.jump() || in.forward() || in.backward()) undock(child);
     }
 
     // ------------------------------------------------------------------ hangars

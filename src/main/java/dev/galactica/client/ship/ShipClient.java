@@ -90,6 +90,12 @@ public final class ShipClient {
             if (ctx.client().level != null && ctx.client().level.getEntity(msg.entityId()) instanceof Starship ship)
                 ship.applyCorrection(msg.seq(), msg.velocity());
         });
+        // A collision the server resolved for the ship this client flies: applied to the prediction, then acknowledged.
+        ClientPlayNetworking.registerGlobalReceiver(dev.galactica.ship.collide.ShipImpulsePayload.TYPE, (msg, ctx) -> {
+            if (ctx.client().level != null && ctx.client().level.getEntity(msg.entityId()) instanceof Starship ship && ship.isLocalInstanceAuthoritative())
+                ship.applyImpulse(msg.dv(), msg.nudge(), msg.spin());
+            ClientPlayNetworking.send(new dev.galactica.ship.collide.ShipImpulsePayload.Ack(msg.entityId(), msg.id()));
+        });
         ClientTickEvents.START_CLIENT_TICK.register(ShipClient::beforeTick);
         ClientTickEvents.END_CLIENT_TICK.register(ShipClient::afterTick);
         // The cockpit display repaints and uploads here, between frames, never while a render pass is open.

@@ -94,6 +94,9 @@ public class ShipStructure extends Starship {
             com = new org.joml.Vector3d(0.5, 0.5, 0.5);
             systems = ShipSystems.NONE;
             occupancy = null;
+            grid = null;
+            cellMin = new int[3];
+            cellMax = new int[] {1, 1, 1};
         } else {
             ShipStats.Result r = ShipStats.compute(blocks.shipCells());
             spec = r.spec();
@@ -108,6 +111,9 @@ public class ShipStructure extends Starship {
             }
             bodyMin = new org.joml.Vector3d(x0, y0, z0).sub(com);
             bodyMax = new org.joml.Vector3d(x1, y1, z1).sub(com);
+            cellMin = new int[] {x0, y0, z0};
+            cellMax = new int[] {x1, y1, z1};
+            grid = new ShipOccupancy(blocks.shipCells());
         }
         blocksVersion++;
         refreshDimensions();
@@ -126,6 +132,47 @@ public class ShipStructure extends Starship {
     private ShipSystems systems = ShipSystems.NONE;
     private @org.jspecify.annotations.Nullable ShipOccupancy occupancy;
     private org.joml.Vector3d bodyMin = new org.joml.Vector3d(), bodyMax = new org.joml.Vector3d();
+    /** The blocks' extent in the ship grid: lowest cell, and one past the highest. */
+    private int[] cellMin = new int[3], cellMax = {1, 1, 1};
+    /** Every block's cell, for ship-to-ship contact ({@link dev.galactica.ship.collide.ShipCollisions}); null while empty. */
+    private @org.jspecify.annotations.Nullable ShipOccupancy grid;
+
+    /** Lowest occupied cell of the ship grid (x, y, z); do not modify. */
+    public int[] cellMin() {
+        return cellMin;
+    }
+
+    /** One past the highest occupied cell (x, y, z); do not modify. */
+    public int[] cellMax() {
+        return cellMax;
+    }
+
+    /** All blocks as an occupancy grid (every ship, whatever its size), or null before the blocks arrive. */
+    public @org.jspecify.annotations.Nullable ShipOccupancy grid() {
+        return grid;
+    }
+
+    /**
+     * Artificial gravity on deck in space: a gravity generator, a reactor to power it, hydrogen aboard for the
+     * reactor and a working hull.
+     */
+    public boolean artificialGravityOn() {
+        return systems.artificialGravity() && hydrogen() > 0 && !enginesDead();
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (isRemoved()) return;
+        dev.galactica.ship.deck.ShipVoxelCollision.track(this);
+        if (!level().isClientSide()) dev.galactica.ship.deck.Deck.serverTick(this);
+    }
+
+    /** Hulls are solid through their blocks ({@link dev.galactica.ship.deck.ShipVoxelCollision}), not a box. */
+    @Override
+    public boolean canBeCollidedWith(net.minecraft.world.entity.@org.jspecify.annotations.Nullable Entity other) {
+        return false;
+    }
     /** Dev counters: occupancy tests run, and world blocks examined by them. */
     public static long occupancyTests, occupancyBlocks;
 
@@ -139,10 +186,15 @@ public class ShipStructure extends Starship {
      * whole, so in open space or high above the ground the test costs a handful of section lookups.
      */
     @Override
-    public boolean hullClearAt(Level level, Vec3 origin, org.joml.Quaternionfc q) {
-        if (!super.hullClearAt(level, origin, q)) return false;
+    protected boolean terrainClearBeyondProbes(Level level, Vec3 origin, org.joml.Quaternionfc q) {
         ShipOccupancy occ = occupancy;
         return occ == null || occupancyClear(level, origin, q, occ);
+    }
+
+    /** A wreck breaks up ({@link ShipWreck}) instead of dropping a beacon. */
+    @Override
+    protected void wreck(ServerLevel level) {
+        ShipWreck.breakUp(this, level);
     }
 
     private boolean occupancyClear(Level level, Vec3 origin, org.joml.Quaternionfc q, ShipOccupancy occ) {

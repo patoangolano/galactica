@@ -82,6 +82,9 @@ public abstract class ServerGamePacketListenerOriginMixin implements OriginShift
     private void galactica$translateVehicleMove(ServerboundMoveVehiclePacket packet, CallbackInfo ci) {
         if (galactica$redispatching) return;
         Vec3 d = FloatingOrigin.pendingDelta(player);
+        // A collision push the pilot has not applied yet is missing from this move too (ShipCollisions).
+        Vec3 push = dev.galactica.ship.collide.ShipCollisions.pendingNudge(player);
+        if (push != null) d = d == null ? push : d.add(push);
         if (d == null) return;
         PositionAndRotation at = packet.movingTo();
         ci.cancel();
