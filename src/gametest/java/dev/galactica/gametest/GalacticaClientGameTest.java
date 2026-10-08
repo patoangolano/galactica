@@ -30,7 +30,8 @@ public final class GalacticaClientGameTest implements FabricClientGameTest {
 
             // Second leg: force-land on Earth and wait out the terrain (and DH LODs when DH is on the run).
             world.getServer().runCommand("execute as @a run galactica land Earth");
-            context.waitFor(mc -> mc.level != null && mc.level.dimension().identifier().getPath().startsWith("surface_"), 20 * 60);
+            // Earth is the Overworld itself (other bodies get a galactica:surface_N slot).
+            context.waitFor(mc -> mc.level != null && mc.level.dimension() != Galactica.SPACE, 20 * 60);
             context.waitTicks(SURFACE_SETTLE_TICKS);
             context.takeScreenshot("galactica_surface_smoke");
         }
