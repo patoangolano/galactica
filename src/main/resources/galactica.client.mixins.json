@@ -12,6 +12,7 @@
     "nav.KeyboardInputAutopilotMixin",
     "ship.EntityRenderStateShipMixin",
     "ship.LivingRendererShipMixin",
+    "ship.ClientLevelShipTrackingMixin",
     "earthsky.EarthSkyMixin",
     "eva.LightingAccessor",
     "planet.LoadingScreenMixin"
