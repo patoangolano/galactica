@@ -142,6 +142,12 @@ public final class ShipDocking {
             player.sendOverlayMessage(Component.translatable("hud.galactica.dock.released"));
             return;
         }
+        // The carrier's pilot releases whatever it carries (port and hangar alike).
+        if (!ship.dockedCraft().isEmpty()) {
+            for (Starship child : ship.dockedCraft()) undock(child);
+            player.sendOverlayMessage(Component.translatable("hud.galactica.dock.released"));
+            return;
+        }
         Match m = bestPortMatch(ship);
         if (m == null) {
             player.sendOverlayMessage(Component.translatable("hud.galactica.dock.no_port", (int) PORT_RANGE));

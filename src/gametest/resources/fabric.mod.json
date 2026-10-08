@@ -7,7 +7,7 @@
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
-    "fabric-gametest": ["dev.galactica.gametest.GalacticaServerGameTest"],
+    "fabric-gametest": ["dev.galactica.gametest.GalacticaServerGameTest", "dev.galactica.gametest.GalacticaShipGameTest"],
     "fabric-client-gametest": ["dev.galactica.gametest.GalacticaClientGameTest"]
   },
   "depends": {

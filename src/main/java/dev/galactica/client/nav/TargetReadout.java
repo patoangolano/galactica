@@ -60,8 +60,7 @@ public record TargetReadout(NavTarget target, double distance, double surface, d
 
     /** The player whose course this client shows: the pilot of the ship it rides in, else itself. */
     public static Player courseOwner(Player self) {
-        if (self.getVehicle() instanceof Starship s && s.getControllingPassenger() instanceof Player pilot) return pilot;
-        return self;
+        return Starship.courseOwner(self);
     }
 
     public static void tick(Minecraft mc) {

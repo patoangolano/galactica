@@ -1217,6 +1217,16 @@ public class Starship extends VehicleEntity {
         return p.getVehicle() instanceof Starship s && s.getControllingPassenger() == p && !s.isDocked();
     }
 
+    /**
+     * The player whose course (target, autopilot) {@code self} follows: the pilot of the craft they ride, else
+     * themselves. A docked craft's crew follow their own craft's pilot. Both attachments are synced to everyone
+     * tracking the pilot, so every client aboard reads the same course.
+     */
+    public static Player courseOwner(Player self) {
+        if (self.getVehicle() instanceof Starship s && s.getControllingPassenger() instanceof Player pilot) return pilot;
+        return self;
+    }
+
     /** The craft at the root of what {@code p} rides (the carrier, when their own ship is docked), or null. */
     public static @Nullable Starship rootCraft(Player p) {
         return p.isPassenger() && p.getRootVehicle() instanceof Starship s ? s : null;
