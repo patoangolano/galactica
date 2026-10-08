@@ -859,6 +859,15 @@ public class Starship extends VehicleEntity {
         entityData.set(DATA_COUPLED, assist);
         setDeltaMovement(v.x * ShipFlightModel.TICK, v.y * ShipFlightModel.TICK, v.z * ShipFlightModel.TICK);
         syncRotationFields();
+        // The pilot's move packets keep moving the craft even while its chunk is not ticking yet (a fast flight through
+        // space chunks still loading); its riders are only seated when it ticks. Seat them now, so the server-side crew
+        // (and the chunks streamed around them) never fall behind their own ship.
+        if (level() instanceof ServerLevel sl) {
+            for (Entity e : getPassengers()) {
+                positionRider(e);
+                if (e instanceof ServerPlayer sp) sl.getChunkSource().move(sp);
+            }
+        }
     }
 
     /** Per axis, what a collision could have left of {@code prev} given the reported {@code v}. */

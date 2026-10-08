@@ -68,10 +68,10 @@ final class BuiltShipAutoTest {
         AutoTest.cmd(2, "setblock -1 202 11 minecraft:orange_concrete");
         AutoTest.cmd(2, "setblock 1 202 12 minecraft:barrel");
         AutoTest.clearChat(20);
-        AutoTest.shot(10, "30_built_ship_blocks");
+        AutoTest.shot(10, "ships_30_built_ship_blocks");
         AutoTest.cmd(5, "galactica shipassemble " + HX + " " + HY + " " + HZ);
         AutoTest.step(40, BuiltShipAutoTest::checkAssembled);
-        AutoTest.shot(5, "31_built_ship_assembled");
+        AutoTest.shot(5, "ships_31_built_ship_assembled");
         AutoTest.cmd(5, "ride @s mount @e[type=galactica:built_ship,sort=nearest,limit=1]");
         AutoTest.server(10, "fuel the built ship", sp -> {
             if (sp.getVehicle() instanceof Starship s) {
@@ -80,7 +80,7 @@ final class BuiltShipAutoTest {
             }
         });
         AutoTest.camera(20, CameraType.THIRD_PERSON_BACK);
-        AutoTest.shot(20, "32_built_ship_boarded");
+        AutoTest.shot(20, "ships_32_built_ship_boarded");
         // Hover: a short lift burst off the pad, then hands off with flight assist on: it holds altitude. Level first,
         // as a pilot would: flight assist nulls drift across the nose and along the dorsal axis, not along the nose,
         // so a hull pitched down would slide down its own nose under gravity.
@@ -112,7 +112,7 @@ final class BuiltShipAutoTest {
                     moved, speed, s == null ? 0 : s.spec().mainAccel()));
         });
         AutoTest.camera(5, CameraType.FIRST_PERSON);
-        AutoTest.shot(20, "33_built_ship_cockpit");
+        AutoTest.shot(20, "ships_33_built_ship_cockpit");
         // Out to space through the take-off switch: ten rows under it, nose up, main engine.
         AutoTest.step(5, () -> {
             Minecraft mc = Minecraft.getInstance();
@@ -140,7 +140,7 @@ final class BuiltShipAutoTest {
         AutoTest.step(270, OriginShiftAutoTest::finish);
         AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
         AutoTest.step(5, () -> ShipCamera.orbit(150, 20, 14F));
-        AutoTest.shot(20, "34_built_ship_space");
+        AutoTest.shot(20, "ships_34_built_ship_space");
         AutoTest.step(5, ShipCamera::clearOrbit);
         AutoTest.camera(5, CameraType.FIRST_PERSON);
         // Hyperjump with the ship's own core (tier 10 ly), to the nearest star.
@@ -173,8 +173,8 @@ final class BuiltShipAutoTest {
         AutoTest.key(1, "keyShift", false);
         AutoTest.traceShip(40);
         AutoTest.shipOnGround(1, "Mars (built ship)");
-        AutoTest.shot(20, "35_built_ship_mars_cockpit");
-        AutoTest.landedExterior("36_built_ship_mars_exterior");
+        AutoTest.shot(20, "ships_35_built_ship_mars_cockpit");
+        AutoTest.landedExterior("ships_36_built_ship_mars_exterior");
         // Take off on the lift jets, then come back down and settle again.
         AutoTest.step(5, () -> takeOffY = ship() != null ? ship().getY() : Double.NaN);
         AutoTest.key(1, "keyJump", true);
@@ -207,7 +207,7 @@ final class BuiltShipAutoTest {
                     "%d blocks set down on Mars, helm back at %s: %s", blocks, helm.toShortString(), helmBack));
         });
         AutoTest.camera(10, CameraType.THIRD_PERSON_BACK);
-        AutoTest.shot(20, "37_built_ship_disassembled_mars");
+        AutoTest.shot(20, "ships_37_built_ship_disassembled_mars");
         AutoTest.camera(5, CameraType.FIRST_PERSON);
         prefabs();
         autopilot();
@@ -235,10 +235,10 @@ final class BuiltShipAutoTest {
                 float d = s == null ? 20F : 2.2F * s.spec().hullReach() + 4F;
                 ShipCamera.orbit(145, 22, d);
             });
-            AutoTest.shot(30, "38_prefab_" + name + "_exterior");
+            AutoTest.shot(30, "ships_38_prefab_" + name + "_exterior");
             AutoTest.step(5, ShipCamera::clearOrbit);
             AutoTest.camera(5, CameraType.FIRST_PERSON);
-            AutoTest.shot(20, "38_prefab_" + name + "_cockpit");
+            AutoTest.shot(20, "ships_38_prefab_" + name + "_cockpit");
             AutoTest.server(5, "remove the prefab", sp -> {
                 if (sp.getVehicle() instanceof ShipStructure s) {
                     sp.stopRiding();
@@ -287,9 +287,9 @@ final class BuiltShipAutoTest {
         });
         AutoTest.clearChat(20);
         AutoTest.step(1, () -> watch(true));
-        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT, 20 * 900, "39_built_autopilot_hud");
+        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.ORBIT, 20 * 900, "ships_39_built_autopilot_hud");
         AutoTest.verdictOrbit(5, "Mars");
-        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.LAND, 20 * 900, "39b_built_autopilot_descent");
+        AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.LAND, 20 * 900, "ships_39b_built_autopilot_descent");
         AutoTest.verdictLanded(5, "Mars");
         AutoTest.step(5, () -> {
             Minecraft mc = Minecraft.getInstance();
@@ -302,7 +302,7 @@ final class BuiltShipAutoTest {
         });
         AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
         AutoTest.step(5, () -> ShipCamera.orbit(150, 20, 24F));
-        AutoTest.shot(30, "39c_built_autopilot_landed_mars");
+        AutoTest.shot(30, "ships_39c_built_autopilot_landed_mars");
         AutoTest.step(5, ShipCamera::clearOrbit);
         AutoTest.camera(5, CameraType.FIRST_PERSON);
         AutoTest.server(10, "leave the shuttle", sp -> {

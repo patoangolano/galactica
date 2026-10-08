@@ -27,4 +27,18 @@ public abstract class TrackedEntityRiderMixin {
         return original.call(map, player, chunkX, chunkZ)
                 || (player.getRootVehicle() != player && entity.getRootVehicle() == player.getRootVehicle());
     }
+
+    /**
+     * The same for the distance test. A craft's rider is placed at their seat only when the craft ticks on the server,
+     * while the pilot's move packets keep moving the craft itself; in a fast descent through space chunks still loading
+     * that left the server-side pilot up to ~160 blocks behind their own ship, past the tracking range, and the ship was
+     * removed from the pilot's client mid-flight. A rider of the same root vehicle is measured as standing on it.
+     */
+    @WrapOperation(method = "updatePlayer", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/world/entity/Entity;position()Lnet/minecraft/world/phys/Vec3;"))
+    private net.minecraft.world.phys.Vec3 galactica$riderRange(Entity tracked, Operation<net.minecraft.world.phys.Vec3> original,
+                                                               @com.llamalad7.mixinextras.sugar.Local(argsOnly = true) ServerPlayer player) {
+        if (player.getRootVehicle() != player && tracked.getRootVehicle() == player.getRootVehicle()) return player.position();
+        return original.call(tracked);
+    }
 }
