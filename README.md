@@ -75,6 +75,11 @@ Qualquer construção vira nave. Os blocos de peça (aba Galactica, receitas no 
 | Trem de Pouso | os pés tocam o chão primeiro |
 | Assento de Tripulante | um passageiro por assento |
 | Blindagem do Casco | pesada, dá pontos de casco |
+| Porta de Acoplamento | a face amarela (aponta para você ao colocar) se acopla à porta de outra nave |
+| Piso de Hangar | o espaço vazio acima destes blocos (até o teto, 3 a 16 de altura) é um hangar |
+| Gerador de Escudo | 60 pontos de escudo cada; o escudo absorve o dano antes do casco |
+| Reator de Fusão | recarrega o escudo (4 pontos/s cada, 1 célula de H₂ a cada 200 pontos) e alimenta os sensores |
+| Conjunto de Sensores | lista naves, destroços (naves sem ninguém), minério e corpos próximos; 1 024 m, +512 m por conjunto extra (até 4 096); precisa de reator |
 
 Os demais blocos (concreto, vidro, tábuas, barris…) são o casco: a massa vem da dureza do bloco. Baús e barris guardam o conteúdo.
 
@@ -82,6 +87,16 @@ Os demais blocos (concreto, vidro, tábuas, barris…) são o casco: a massa vem
 2. Clique com o botão direito no leme: os blocos viram uma entidade (`galactica:built_ship`) com massa, centro de massa, inércia, empuxo por direção, tanques, alcance de salto, caixa e sondas de colisão calculados das peças. Se algo faltar, a mensagem diz o quê e onde.
 3. Abasteça com células de hidrogênio e matéria exótica (até 64 por clique), embarque com o botão direito e voe como a Kestrel: W/S, mouse, Q/E, pulo/agachar, C assistência, J hipersalto, M mapa. O mostrador do cockpit aparece à frente do leme.
 4. Para desmontar: pouse (ou pare, no espaço), desembarque todos e use a nave agachado com a mão vazia. Os blocos voltam à grade alinhados ao ponto cardeal mais próximo; H₂ e matéria exótica saem como itens.
+
+Sistemas a bordo:
+- **Acoplamento (G)**: com as faces das portas de duas naves a até 4 blocos e menos de 4 m/s de diferença, o piloto de qualquer uma aperta G; a nave mais leve é puxada até as portas se encontrarem e passa a ser levada pela mais pesada (recentragens, entrada e saída de planeta, órbita e hipersalto incluídos). G de novo (o piloto da nave acoplada, ou o da nave que carrega) solta: ela sai com a velocidade da outra e um empurrão de 1,5 m/s.
+- **Hangar**: uma nave mais leve (a Kestrel também) que entra devagar (menos de 4 m/s em relação) no volume acima do Piso de Hangar é presa no piso, nivelada, e carregada. G solta; por 5 s o hangar não a pega de novo. O casco da nave grande não tem colisão com a outra: o hangar prende quem entra no volume.
+- **Escudo e reator**: HUD (terceira pessoa) e o painel do cockpit mostram o escudo; N troca o painel para a página de sistemas (escudo, reator, acoplamento, sensores).
+- **Sensores**: a cada 2 s, para quem está a bordo (ou numa nave acoplada nela); página de sistemas do cockpit e painel do mapa (M).
+- **Carga em voo (B)**: abre o próximo contêiner da nave (baú, barril, caixa de shulker, dispensador…); clicar num contêiner do casco por fora também abre. O conteúdo fica salvo na nave.
+- **Casco a 0**: motores, jatos de sustentação, dobra e hipersalto param. Com `shipDestruction` ligado (padrão, na configuração) a nave se desfaz: a tripulação sai ao lado com queda lenta num planeta, naves acopladas ficam livres, os contêineres se esvaziam e `wreckDropShare` (25 %) dos blocos caem como itens. Desligado, ela fica um destroço para consertar com barras de ferro.
+- Os propulsores virados para baixo (sustentação) queimam H₂ como o motor principal: no pulo, ou na parte do pairar que o RCS não segura sozinho. Sem H₂ só o RCS sustenta.
+- Naves de 256 blocos ou mais também colidem com o terreno por uma grade de ocupação (todo bloco sólido dentro da caixa do casco é testado contra os blocos da nave), além das sondas.
 
 Naves prontas (as mesmas peças, desmontáveis): `/galactica ship <kestrel|shuttle|freighter|explorer>` implanta, abastece e embarca; os itens "Planta de Nave" implantam onde você olha; `/galactica shipblocks <classe>` coloca a nave como blocos para modificar. `/galactica ship` sem classe continua implantando a Kestrel modelada.
 

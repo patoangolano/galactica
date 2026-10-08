@@ -35,7 +35,7 @@ public final class AutoTest {
     private static final String MODE = System.getProperty("galactica.autotest.mode", "");
     /** -Dgalactica.autotest.perf=true: the default run ends with the {@link PerfBench} scenes. */
     private static final boolean PERF = Boolean.getBoolean("galactica.autotest.perf");
-    private static int index, countdown = 200;
+    private static int index, countdown = 200, guiScaleBefore;
     private static Consumer<Minecraft> perTick = mc -> {};
     /** While set and false, the script waits (up to {@link #holdLeft} ticks) before counting down to the next step. */
     private static java.util.function.BooleanSupplier hold;
@@ -420,6 +420,21 @@ public final class AutoTest {
                 s -> s.autotestOrbitLines() >= 8 && s.autotestDrawn("Jupiter"), "32_map3d_solar_system");
         mapView(5, "inner system", Frames.SOL_POS, 3.2 * dev.galactica.science.Units.AU, 100, 50, 60,
                 s -> s.autotestDrawn("Earth") && s.autotestDrawn("Mars"), "32b_map3d_inner_system");
+        // A narrow GUI: scale 3 on the 1600 px window leaves 533 units; every button label must still fit.
+        STEPS.add(new Step(5, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            guiScaleBefore = mc.options.guiScale().get();
+            mc.options.guiScale().set(3);
+            mc.resizeGui();
+        }));
+        STEPS.add(new Step(20, () -> withMap(s -> Galactica.LOG.info("[autotest] {} map buttons at GUI scale 3 ({} wide): {}",
+                s.autotestButtonsFit() ? "PASS" : "FAIL", s.width, s.autotestButtons()))));
+        shot(1, "32c_map3d_buttons_gui_scale3");
+        STEPS.add(new Step(5, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            mc.options.guiScale().set(guiScaleBefore);
+            mc.resizeGui();
+        }));
         STEPS.add(new Step(5, () -> withMap(s -> {
             boolean ok = s.searchAndFocus("Earth");
             Galactica.LOG.info("[autotest] map search Earth: {}", ok);
@@ -488,6 +503,13 @@ public final class AutoTest {
         }));
         STEPS.add(new Step(10, () -> withMap(s -> s.searchAndFocus("Mars"))));
         STEPS.add(new Step(90, () -> withMap(s -> Galactica.LOG.info("[autotest] map around Mars in orbit: {}", s.autotestSummary()))));
+        // Close in: the selection ring round Mars sits where the low orbit runs; the orbit must still be drawn over it.
+        STEPS.add(new Step(5, () -> withMap(s -> {
+            var sel = s.selected();
+            if (sel != null) s.autotestView(sel.pos(), 4 * sel.body().radiusMetres(), 120, 35);
+        })));
+        STEPS.add(new Step(40, () -> withMap(s -> Galactica.LOG.info("[autotest] {} map own orbit drawn over the selection ring at close range: {} points, selected {}",
+                s.trajectoryDrawn > 20 && s.selected() != null ? "PASS" : "FAIL", s.trajectoryDrawn, s.selected() == null ? "nothing" : s.selected().name()))));
         shot(1, "36_map3d_mars_orbit_trajectory");
         STEPS.add(new Step(5, () -> Minecraft.getInstance().gui.setScreen(null)));
 
@@ -495,6 +517,7 @@ public final class AutoTest {
         clearChat(10);
         autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.LAND, 20 * 600, "37_autopilot_mars_descent");
         verdictLanded(5, "Mars");
+        verdictTargetHere(10, "Mars");
         shot(20, "37b_autopilot_mars_landed");
 
         // A star of another system, 10.5 ly away: beyond one jump, so a chain of hyperjumps.
@@ -607,6 +630,20 @@ public final class AutoTest {
             Galactica.LOG.info("[autotest] {} autopilot {} landing in {} s ({}, vehicle {}, alive {})", ok ? "PASS" : "FAIL", body, secs,
                     sp.level().dimension().identifier(), sp.getVehicle() == null ? "none" : sp.getVehicle().getType().toShortString(), sp.isAlive());
         });
+    }
+
+    /**
+     * Client: landed on the target body, the HUD's target readout says "landed" with no centre distance and no ETA
+     * (it used to show the distance to the body's centre and a meaningless warp ETA).
+     */
+    static void verdictTargetHere(int wait, String body) {
+        STEPS.add(new Step(wait, () -> {
+            var r = dev.galactica.client.nav.TargetReadout.current();
+            boolean ok = r != null && body.equals(r.target().name()) && r.onTarget() == dev.galactica.client.nav.TargetReadout.OnTarget.LANDED
+                    && r.eta() < 0 && r.dirMc() == null;
+            Galactica.LOG.info("[autotest] {} target HUD on {}'s surface: {}", ok ? "PASS" : "FAIL", body,
+                    r == null ? "no readout" : String.format(java.util.Locale.ROOT, "%s, height %.1f m, eta %s", r.onTarget(), r.surface(), r.eta()));
+        }));
     }
 
     /** Arrived in the star's system at a safe distance, through more than one hyperjump (the matter spent shows it). */
@@ -1165,6 +1202,13 @@ public final class AutoTest {
         mc.options.tutorialStep = net.minecraft.client.tutorial.TutorialSteps.NONE;
         mc.options.pauseOnLostFocus = false; // the run must not stall when the window is in the background
         if (mc.player == null || mc.level == null || index >= STEPS.size()) return;
+        // A world saved by an earlier run can put the player back inside a wall (or a death mid-script): respawn at
+        // once instead of running the rest of the script from the death screen.
+        if (mc.player.isDeadOrDying() && mc.player.deathTime > 10) {
+            Galactica.LOG.warn("[autotest] player died at step {} ({}): respawning", index, mc.player.position());
+            mc.player.respawn();
+            if (mc.gui.screen() instanceof net.minecraft.client.gui.screens.DeathScreen) mc.gui.setScreen(null);
+        }
         perTick.accept(mc);
         if (hold != null) {
             if (!hold.getAsBoolean() && holdLeft-- > 0) return;

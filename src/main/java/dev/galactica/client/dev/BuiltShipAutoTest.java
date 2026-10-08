@@ -40,7 +40,9 @@ final class BuiltShipAutoTest {
     private static dev.galactica.nav.GalacticPos originBefore;
 
     static void run() {
-        AutoTest.cmd(0, "galactica kit");
+        // Out of wherever the last run left the player (it suffocated once inside a planet's terrain), into open air.
+        AutoTest.cmd(0, "execute in minecraft:overworld run tp @s 0.5 260 0.5");
+        AutoTest.cmd(20, "galactica kit");
         AutoTest.cmd(5, "execute in minecraft:overworld run forceload add -16 -8 16 40");
         // The pad first, then the player onto it (teleported first, the player fell past the pad into the sea).
         AutoTest.cmd(80, "execute in minecraft:overworld run fill -14 199 -4 14 199 34 minecraft:stone");
@@ -210,7 +212,257 @@ final class BuiltShipAutoTest {
         AutoTest.shot(20, "ships_37_built_ship_disassembled_mars");
         AutoTest.camera(5, CameraType.FIRST_PERSON);
         prefabs();
+        systems();
         autopilot();
+    }
+
+    // ------------------------------------------------------------------ ship systems (S7+)
+
+    private static int shuttleId = -1, freighterId = -1;
+    private static org.joml.Vector3d dockedOffset;
+
+    /** The server copy of an entity by id in the player's level (the integrated server). */
+    private static net.minecraft.world.entity.Entity serverEntity(net.minecraft.server.level.ServerPlayer sp, int id) {
+        return sp.level().getEntity(id);
+    }
+
+    private static ShipStructure serverShip(net.minecraft.server.level.ServerPlayer sp, int id) {
+        return serverEntity(sp, id) instanceof ShipStructure s ? s : null;
+    }
+
+    /** The dock key, cargo key: a click on the mapping, as a key press makes (OS input is gated in the autotest). */
+    private static void click(net.minecraft.client.KeyMapping k) {
+        net.minecraft.client.KeyMapping.click(k.getDefaultKey());
+    }
+
+    /**
+     * Hangar, docking ports, the docked pair through recentres and through planet entry and exit, the systems page of
+     * the cockpit display and the scanner on the map, cargo opened in flight, shields and the wreck.
+     */
+    static void systems() {
+        AutoTest.cmd(20, "galactica goto Sol");
+        AutoTest.cmd(20, "galactica ship freighter");
+        AutoTest.step(20, () -> {
+            ShipStructure f = ship();
+            freighterId = f != null ? f.getId() : -1;
+            log(f != null && f.systems().hangar() != null && f.maxShield() > 0 && f.systems().scannerRange() > 0, "freighter systems",
+                    f == null ? "not aboard" : String.format(Locale.ROOT, "hangar %s, %d ports, shield %.0f (+%.0f/s), scanner %.0f m, %d containers, occupancy grid %s",
+                            f.systems().hangar(), f.systems().ports().size(), f.maxShield(), f.shieldRecharge(), f.systems().scannerRange(),
+                            dev.galactica.ship.ShipCargo.containers(f.blocks()).length, f.usesOccupancyGrid()));
+        });
+        // A shuttle settles into the hangar (placed there, moving with the freighter): clamped on the bay floor.
+        AutoTest.server(5, "a shuttle in the freighter's hangar", sp -> {
+            ShipStructure f = serverShip(sp, sp.getVehicle() != null ? sp.getVehicle().getId() : -1);
+            if (f == null || f.systems().hangar() == null) return;
+            var h = f.systems().hangar();
+            var com = f.centreOfMass();
+            ShipStructure s = dev.galactica.ship.yard.ShipTemplates.spawn(sp.level(), "shuttle", f.position().add(0, 40, 0), net.minecraft.core.Direction.SOUTH);
+            if (s == null) return;
+            org.joml.Vector3d pivot = dev.galactica.ship.ShipDocking.toWorld(f, new org.joml.Vector3d((h.minX() + h.maxX() + 1) / 2.0 - com.x(),
+                    h.floorY() + 1.5 + s.pivot() - com.y(), (h.minZ() + h.maxZ() + 1) / 2.0 - com.z()));
+            s.setAttitude(f.attitude());
+            s.snapTo(pivot.x, pivot.y - s.pivot(), pivot.z);
+            s.setDeltaMovement(f.getDeltaMovement());
+            shuttleId = s.getId();
+        });
+        AutoTest.step(40, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            var s = mc.level.getEntity(shuttleId);
+            boolean ok = s instanceof Starship st && st.getVehicle() == ship() && st.dockKind() == dev.galactica.ship.ShipDocking.Kind.HANGAR;
+            log(ok, "hangar capture", s == null ? "no shuttle on the client" : String.format(Locale.ROOT, "shuttle rides %s, %s",
+                    s.getVehicle() == null ? "nothing" : s.getVehicle().getType().toShortString(), s instanceof Starship st ? st.dockKind() : "?"));
+        });
+        AutoTest.server(1, "remember the docked pose", sp -> {
+            ShipStructure f = serverShip(sp, freighterId), s = serverShip(sp, shuttleId);
+            if (f != null && s != null) dockedOffset = dev.galactica.ship.ShipDocking.toBody(f, dev.galactica.ship.ShipDocking.pivotWorld(s));
+        });
+        AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
+        AutoTest.orientShip(5, -60, 40);
+        AutoTest.step(5, () -> ShipCamera.orbit(150, 35, 70F));
+        AutoTest.shot(30, "ships_40_hangar_shuttle_carried");
+        AutoTest.step(5, ShipCamera::clearOrbit);
+        // Recentres with the shuttle in the hangar: the freighter at ~14 blocks a tick through three of them.
+        AutoTest.step(5, () -> OriginShiftAutoTest.start("hangar-carrier", new Vec3(0, 0, 14)));
+        AutoTest.step(270, OriginShiftAutoTest::finish);
+        AutoTest.step(5, () -> stop(Minecraft.getInstance(), ship()));
+        AutoTest.server(20, "hangar pose after the recentres", sp -> {
+            ShipStructure f = serverShip(sp, freighterId), s = serverShip(sp, shuttleId);
+            double drift = f == null || s == null || dockedOffset == null ? Double.NaN
+                    : dev.galactica.ship.ShipDocking.toBody(f, dev.galactica.ship.ShipDocking.pivotWorld(s)).distance(dockedOffset);
+            log(s != null && s.getVehicle() == f && drift < 0.01, "hangar ship carried through recentres",
+                    String.format(Locale.ROOT, "still in the hangar %s, pose drift %.4f blocks", s != null && s.getVehicle() == f, drift));
+        });
+        // The freighter's pilot releases the shuttle with the dock key: it leaves with the freighter's velocity, pushed up.
+        AutoTest.step(5, () -> click(dev.galactica.client.ship.ShipSystemsClient.DOCK));
+        AutoTest.step(30, () -> {
+            var s = Minecraft.getInstance().level.getEntity(shuttleId);
+            boolean free = s != null && !s.isPassenger();
+            double up = s == null || ship() == null ? 0 : (s.getY() - ship().getY());
+            log(free, "hangar release by the dock key", String.format(Locale.ROOT, "free %s, %.2f blocks above the freighter's origin", free, up));
+        });
+        AutoTest.server(40, "remove the released shuttle", sp -> {
+            var s = serverEntity(sp, shuttleId);
+            if (s != null) s.discard();
+        });
+        // Port to port: a second shuttle hovers with its belly port 2 blocks over the freighter's dorsal port; the player
+        // moves to its helm and presses the dock key.
+        AutoTest.server(5, "a shuttle over the dorsal port, the player at its helm", sp -> {
+            ShipStructure f = serverShip(sp, freighterId);
+            if (f == null) return;
+            ShipStructure s = dev.galactica.ship.yard.ShipTemplates.spawn(sp.level(), "shuttle", f.position().add(0, 30, 0), net.minecraft.core.Direction.SOUTH);
+            if (s == null) return;
+            s.setAttitude(f.attitude());
+            var fp = f.systems().ports().getFirst();
+            var spPort = s.systems().ports().getFirst();
+            org.joml.Vector3d want = dev.galactica.ship.ShipDocking.portWorld(f, fp).add(new org.joml.Quaternionf(f.attitude()).transform(new org.joml.Vector3d(0, 2, 0)));
+            org.joml.Vector3d now = dev.galactica.ship.ShipDocking.portWorld(s, spPort);
+            s.snapTo(s.getX() + want.x - now.x, s.getY() + want.y - now.y, s.getZ() + want.z - now.z);
+            s.setDeltaMovement(f.getDeltaMovement());
+            shuttleId = s.getId();
+        });
+        // Boarded only once the client has the shuttle's pose: at the helm its client owns the attitude and position,
+        // and a pose still in flight would be reported back over the placed one.
+        AutoTest.server(30, "the player to the shuttle's helm", sp -> {
+            ShipStructure s = serverShip(sp, shuttleId);
+            if (s == null) return;
+            sp.stopRiding();
+            sp.startRiding(s, true, true);
+        });
+        AutoTest.step(30, () -> click(dev.galactica.client.ship.ShipSystemsClient.DOCK));
+        AutoTest.step(30, () -> {
+            Minecraft mc = Minecraft.getInstance();
+            var v = mc.player.getVehicle();
+            boolean ok = v instanceof Starship s && s.getId() == shuttleId && s.isDocked() && s.dockKind() == dev.galactica.ship.ShipDocking.Kind.PORT
+                    && s.getVehicle() != null && s.getVehicle().getId() == freighterId;
+            log(ok, "port docking by the dock key", v == null ? "not aboard" : String.format(Locale.ROOT, "aboard #%d, docked %s (%s) to #%s",
+                    v.getId(), v instanceof Starship s && s.isDocked(), v instanceof Starship s ? s.dockKind() : "?",
+                    v.getVehicle() == null ? "-" : String.valueOf(v.getVehicle().getId())));
+        });
+        AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
+        AutoTest.step(5, () -> ShipCamera.orbit(150, 25, 60F));
+        AutoTest.shot(30, "ships_41_port_docked");
+        AutoTest.step(5, ShipCamera::clearOrbit);
+        // The cockpit display's systems page in the docked shuttle (the freighter's scanner serves everyone aboard).
+        AutoTest.camera(5, CameraType.FIRST_PERSON);
+        AutoTest.step(5, () -> click(dev.galactica.client.ship.ShipSystemsClient.PAGE));
+        AutoTest.step(80, () -> {
+            var scan = dev.galactica.client.ship.ShipSystemsClient.scan();
+            var lines = dev.galactica.client.ship.ShipSystemsClient.lines(Minecraft.getInstance(), 5);
+            log(dev.galactica.client.ship.ShipSystemsClient.page() == 1 && scan != null && !lines.isEmpty(), "scanner on the cockpit systems page",
+                    String.format(Locale.ROOT, "page %d, scan %s, contacts %s", dev.galactica.client.ship.ShipSystemsClient.page(),
+                            scan == null ? "none" : String.format(Locale.ROOT, "%.0f m", scan.range()), lines));
+        });
+        AutoTest.shot(5, "ships_42_cockpit_systems_page");
+        AutoTest.step(5, () -> dev.galactica.client.ship.ShipSystemsClient.setPage(0));
+        AutoTest.step(5, dev.galactica.client.map.GalaxyMapClient::open);
+        AutoTest.step(60, () -> {
+            if (Minecraft.getInstance().gui.screen() instanceof dev.galactica.client.map.GalaxyMapScreen s) {
+                log(s.scannerRows > 0, "scanner in the map panel", "panel rows with the scanner section: " + s.scannerRows);
+            } else log(false, "scanner in the map panel", "the map did not open");
+        });
+        AutoTest.shot(1, "ships_43_map_scanner_panel");
+        AutoTest.step(5, () -> Minecraft.getInstance().gui.setScreen(null));
+        // Planet entry with the pair docked: the freighter (nobody at its helm; the player, docked, leads) is carried
+        // down to Mars with the shuttle on its port, then lifted back over the exit row to space.
+        AutoTest.server(5, "remember the port pose", sp -> {
+            ShipStructure f = serverShip(sp, freighterId), s = serverShip(sp, shuttleId);
+            if (f != null && s != null) dockedOffset = dev.galactica.ship.ShipDocking.toBody(f, dev.galactica.ship.ShipDocking.pivotWorld(s));
+        });
+        AutoTest.cmd(5, "galactica land Mars");
+        AutoTest.await(1, 600, () -> Minecraft.getInstance().level != null && Minecraft.getInstance().level.dimension() != Galactica.SPACE);
+        AutoTest.server(60, "the docked pair on Mars", sp -> {
+            var v = sp.getVehicle();
+            boolean ok = v instanceof Starship s && s.isDocked() && s.dockKind() == dev.galactica.ship.ShipDocking.Kind.PORT
+                    && s.getVehicle() instanceof ShipStructure f && f.blocks().size() == ShipTemplate.freighter().size();
+            double drift = Double.NaN;
+            if (ok) {
+                shuttleId = v.getId();
+                freighterId = v.getVehicle().getId();
+                drift = dev.galactica.ship.ShipDocking.toBody((Starship) v.getVehicle(), dev.galactica.ship.ShipDocking.pivotWorld((Starship) v)).distance(dockedOffset);
+                ok = drift < 0.01;
+            }
+            log(ok, "docked pair through planet entry", String.format(Locale.ROOT, "in %s aboard %s, pose drift %.4f",
+                    sp.level().dimension().identifier(), v == null ? "nothing" : v.getType().toShortString(), drift));
+        });
+        AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
+        AutoTest.step(5, () -> ShipCamera.orbit(150, 25, 70F));
+        AutoTest.shot(40, "ships_44_docked_pair_mars");
+        AutoTest.step(5, ShipCamera::clearOrbit);
+        AutoTest.server(5, "lift the pair over the exit row", sp -> {
+            ShipStructure f = serverShip(sp, freighterId);
+            if (f == null) return;
+            f.setPos(f.getX(), dev.galactica.planet.PlanetEntry.exitY(sp.level()) + 10, f.getZ());
+            f.setDeltaMovement(new Vec3(0, 0.5, 0));
+        });
+        AutoTest.await(1, 600, () -> Minecraft.getInstance().level != null && Minecraft.getInstance().level.dimension() == Galactica.SPACE);
+        AutoTest.server(40, "the docked pair back in space", sp -> {
+            var v = sp.getVehicle();
+            boolean ok = sp.level().dimension() == Galactica.SPACE && v instanceof Starship s && s.isDocked()
+                    && s.getVehicle() instanceof ShipStructure;
+            double drift = Double.NaN;
+            if (ok) {
+                shuttleId = v.getId();
+                freighterId = v.getVehicle().getId();
+                drift = dev.galactica.ship.ShipDocking.toBody((Starship) v.getVehicle(), dev.galactica.ship.ShipDocking.pivotWorld((Starship) v)).distance(dockedOffset);
+                ok = drift < 0.01;
+            }
+            log(ok, "docked pair through planet exit", String.format(Locale.ROOT, "in %s, pose drift %.4f", sp.level().dimension().identifier(), drift));
+        });
+        AutoTest.camera(5, CameraType.FIRST_PERSON);
+        AutoTest.step(5, () -> click(dev.galactica.client.ship.ShipSystemsClient.DOCK));
+        AutoTest.step(30, () -> {
+            var v = Minecraft.getInstance().player.getVehicle();
+            log(v instanceof Starship s && !s.isDocked() && ShipClient.piloted(Minecraft.getInstance()) == s, "undock by the dock key",
+                    v == null ? "not aboard" : "aboard #" + v.getId() + ", docked " + (v instanceof Starship s && s.isDocked()));
+        });
+        // Cargo in flight: back at the freighter's helm, a stack in its first container, the cargo key opens it.
+        AutoTest.server(5, "the player to the freighter's helm, diamonds in its cargo", sp -> {
+            ShipStructure f = serverShip(sp, freighterId);
+            var old = sp.getVehicle();
+            if (f == null) return;
+            sp.stopRiding();
+            if (old != null) old.discard();
+            sp.startRiding(f, true, true);
+            int box = dev.galactica.ship.ShipCargo.containers(f.blocks())[0];
+            dev.galactica.ship.ShipCargo.store(f, box, java.util.List.of(new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.DIAMOND, 5)));
+        });
+        AutoTest.step(20, () -> click(dev.galactica.client.ship.ShipSystemsClient.CARGO));
+        AutoTest.step(20, () -> {
+            var screen = Minecraft.getInstance().gui.screen();
+            boolean open = screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?> c
+                    && c.getMenu().slots.getFirst().getItem().is(net.minecraft.world.item.Items.DIAMOND);
+            log(open, "cargo opened in flight by the cargo key", screen == null ? "no screen" : screen.getTitle().getString());
+        });
+        AutoTest.shot(1, "ships_45_cargo_in_flight");
+        AutoTest.step(5, () -> Minecraft.getInstance().player.closeContainer());
+        // Shields: a hit drains the shield, not the hull; the ship HUD (third person) shows it.
+        AutoTest.server(10, "hit the freighter", sp -> {
+            ShipStructure f = serverShip(sp, freighterId);
+            if (f == null) return;
+            f.setShield(f.maxShield());
+            float hull = f.hull();
+            f.hurtServer(sp.level(), sp.level().damageSources().generic(), 6F);
+            log(f.hull() == hull && f.shield() < f.maxShield(), "shield absorbs a hit", String.format(Locale.ROOT, "hull %.1f -> %.1f, shield %.1f/%.0f",
+                    hull, f.hull(), f.shield(), f.maxShield()));
+        });
+        AutoTest.camera(5, CameraType.THIRD_PERSON_BACK);
+        AutoTest.shot(20, "ships_46_shield_hud");
+        // The wreck: everyone set down safely in space (EVA), blocks and cargo scattered.
+        AutoTest.server(5, "destroy the freighter", sp -> {
+            ShipStructure f = serverShip(sp, freighterId);
+            if (f == null) return;
+            f.hurtServer(sp.level(), sp.level().damageSources().generic(), 1e6F);
+            var drops = sp.level().getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, sp.getBoundingBox().inflate(80));
+            log(f.isRemoved() && !sp.isPassenger() && sp.isAlive() && drops.size() > 5, "ship destroyed at hull 0",
+                    String.format(Locale.ROOT, "removed %s, player aboard %s alive %s, %d item stacks scattered", f.isRemoved(), sp.isPassenger(), sp.isAlive(), drops.size()));
+        });
+        AutoTest.step(5, () -> ShipCamera.orbit(150, 20, 30F));
+        AutoTest.shot(30, "ships_47_wreck");
+        AutoTest.step(5, ShipCamera::clearOrbit);
+        AutoTest.camera(5, CameraType.FIRST_PERSON);
+        AutoTest.server(10, "clear the wreck", sp -> {
+            for (var e : sp.level().getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, sp.getBoundingBox().inflate(120))) e.discard();
+        });
     }
 
     /** Every prefab, deployed and boarded in space near the Sun: outside in the chase view and from the helm. */
@@ -273,7 +525,8 @@ final class BuiltShipAutoTest {
      * margin read from the shuttle's own lift).
      */
     static void autopilot() {
-        AutoTest.cmd(20, "galactica goto Sol");
+        AutoTest.cmd(20, "galactica launch");
+        AutoTest.cmd(60, "galactica goto Sol");
         AutoTest.cmd(20, "galactica ship shuttle");
         AutoTest.cmd(10, "galactica target Mars");
         AutoTest.camera(5, CameraType.FIRST_PERSON);
@@ -291,6 +544,7 @@ final class BuiltShipAutoTest {
         AutoTest.verdictOrbit(5, "Mars");
         AutoTest.autopilot(5, dev.galactica.nav.autopilot.AutopilotState.Mode.LAND, 20 * 900, "ships_39b_built_autopilot_descent");
         AutoTest.verdictLanded(5, "Mars");
+        AutoTest.verdictTargetHere(10, "Mars");
         AutoTest.step(5, () -> {
             Minecraft mc = Minecraft.getInstance();
             ShipStructure s = ship();

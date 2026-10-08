@@ -136,7 +136,11 @@ public final class ShipDocking {
 
     /** The dock key from {@code player}: undocks their craft, or docks it port to port with the best match in range. */
     public static void toggle(ServerPlayer player) {
-        if (!(player.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != player) return;
+        if (!(player.getVehicle() instanceof Starship ship) || ship.getControllingPassenger() != player) {
+            Galactica.LOG.info("Dock key from {} ignored: not at a ship's helm (vehicle {})", player.getName().getString(),
+                    player.getVehicle() == null ? "none" : player.getVehicle().getId());
+            return;
+        }
         if (ship.isDocked()) {
             undock(ship);
             player.sendOverlayMessage(Component.translatable("hud.galactica.dock.released"));
@@ -149,6 +153,8 @@ public final class ShipDocking {
             return;
         }
         Match m = bestPortMatch(ship);
+        Galactica.LOG.info("Dock key from {} in ship {}: {}", player.getName().getString(), ship.getId(), m == null ? "no port in range"
+                : String.format(Locale.ROOT, "ship %d carries %d, gap %.2f, closing %.2f m/s", m.carrier.getId(), m.child.getId(), m.gap, m.speed));
         if (m == null) {
             player.sendOverlayMessage(Component.translatable("hud.galactica.dock.no_port", (int) PORT_RANGE));
             return;
