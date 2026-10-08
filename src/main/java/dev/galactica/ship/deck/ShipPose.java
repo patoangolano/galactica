@@ -53,7 +53,7 @@ public record ShipPose(Vector3dc pivot, Quaterniondc attitude, Vector3dc com) {
     }
 
     /** Minecraft yaw of the ship's nose, radians: atan2(−x, z) of +Z in the world. */
-    static double heading(Quaterniondc q) {
+    public static double heading(Quaterniondc q) {
         Vector3d f = q.transform(new Vector3d(0, 0, 1));
         return Math.atan2(-f.x, f.z);
     }

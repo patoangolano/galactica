@@ -136,6 +136,8 @@ public class Starship extends VehicleEntity {
      * hull on top of the pilot's own control and dies away ({@link #SPIN_DECAY} per tick, the RCS damping it).
      */
     private final Vector3d spin = new Vector3d();
+    /** Server: impacts this craft took ({@link dev.galactica.ship.collide.ShipCollisions}), for tests and logs. */
+    public int impacts;
     /** Share of the collision spin left after each tick. */
     public static final double SPIN_DECAY = 0.95;
     // Client-side visual state (gear, canopy, gimbal), ticked for every ship the client sees.

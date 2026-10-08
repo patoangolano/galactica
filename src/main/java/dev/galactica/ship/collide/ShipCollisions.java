@@ -54,7 +54,7 @@ import java.util.WeakHashMap;
 public final class ShipCollisions {
     private ShipCollisions() {}
 
-    /** Closing speed below which craft are each other's terrain (no impulse), m/s. */
+    /** Sinking speed below which a craft settling onto another's top is held like on the ground (no impulse), m/s. */
     public static final double RESTING_SPEED = 3.0;
     /** Largest hull-point travel between two voxel tests of a sweep, blocks. */
     public static final double SWEEP_STEP = 0.5;
@@ -149,8 +149,10 @@ public final class ShipCollisions {
     // ------------------------------------------------------------------ gentle contact: other craft as terrain
 
     /**
-     * True if {@code self} at {@code origin} and attitude {@code q} overlaps no other craft that closes on it slower than
-     * {@link #RESTING_SPEED} (faster ones are the server's impact business).
+     * True unless {@code self}, at {@code origin} and attitude {@code q}, would rest on another craft: overlap it from
+     * above (the contact normal points up, within {@link #SUPPORT_COS}) while sinking onto it slower than
+     * {@link #RESTING_SPEED}. Such a contact is the mover's own business, like the ground. Side contacts and faster
+     * ones are left to the server's impulses, which conserve momentum.
      */
     public static boolean clearOfShips(Starship self, Level level, Vec3 origin, Quaternionfc q) {
         List<Starship> all = craft(level);
@@ -161,17 +163,22 @@ public final class ShipCollisions {
             if (related(self, o) || o.isRemoved()) continue;
             double r = myReach + reach(o);
             if (o.position().add(0, o.pivot(), 0).distanceToSqr(origin.add(0, self.pivot(), 0)) > r * r) continue;
-            double closing = self.getDeltaMovement().subtract(o.getDeltaMovement()).length() / dev.galactica.ship.ShipFlightModel.TICK;
-            if (closing > RESTING_SPEED) continue;
+            double sinking = (o.getDeltaMovement().y - self.getDeltaMovement().y) / dev.galactica.ship.ShipFlightModel.TICK;
+            if (sinking > RESTING_SPEED) continue;
             if (me == null) {
                 me = posed(self, origin, q);
                 if (me == null) return true;
             }
             VoxelContact.Posed other = posed(o);
-            if (other != null && VoxelContact.overlaps(me, other)) return false;
+            if (other == null) continue;
+            VoxelContact.Contact c = VoxelContact.find(me, other);
+            if (c != null && c.normal().y > SUPPORT_COS) return false;
         }
         return true;
     }
+
+    /** A contact whose normal is within ~50° of vertical is a support (one hull resting on the other). */
+    public static final double SUPPORT_COS = 0.64;
 
     // ------------------------------------------------------------------ impacts (server)
 
@@ -232,7 +239,9 @@ public final class ShipCollisions {
         RigidImpulse.Body ba = RigidImpulse.Body.of(ma, a.spec().inertia(), a1.pose().attitude(), a1.pose().pivot(), va, wa);
         RigidImpulse.Body bb = RigidImpulse.Body.of(mb, b.spec().inertia(), b1.pose().attitude(), b1.pose().pivot(), vb, wb);
         double closingBefore = -ba.pointVelocity(c.point()).sub(bb.pointVelocity(c.point())).dot(c.normal());
-        if (closingBefore < 1.0 && c.depth() <= SLOP) return; // resting: the movers' own contact handles it
+        // One hull resting on the other: the mover's own contact handles it (clearOfShips), no impulse.
+        boolean support = Math.abs(c.normal().y) > SUPPORT_COS && closingBefore < RESTING_SPEED;
+        if (support && c.depth() <= SLOP || closingBefore < 0.05 && c.depth() <= SLOP) return;
         double e = closingBefore > 2.0 ? RESTITUTION : 0.0;
         RigidImpulse.Result res = RigidImpulse.resolve(ba, bb, c.point(), c.normal(), e, FRICTION);
         // Positional: back to just before the contact this tick (a fast hit), then out of any overlap left, shared by
@@ -255,6 +264,8 @@ public final class ShipCollisions {
         double closing = res == null ? 0 : res.closingSpeed();
         double damage = RigidImpulse.hullDamage(ma, mb, closing);
         impacts++;
+        a.impacts++;
+        b.impacts++;
         if (damage > 0) {
             damageDealt += 2 * damage;
             a.collisionDamage(level, (float) damage);
