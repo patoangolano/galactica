@@ -443,5 +443,6 @@
   "hud.galactica.deck.gravity_on": "Gravidade artificial",
   "hud.galactica.deck.helm_taken": "O leme está ocupado",
   "hud.galactica.deck.no_seat": "Nenhum assento livre",
-  "hud.galactica.ship.collision": "Colisão: %s de casco perdido"
+  "hud.galactica.ship.collision": "Colisão: %s de casco perdido",
+  "hud.galactica.dock.parked": "Estacionada sobre %s (decole, ou a tecla de acoplar, para sair)"
 }

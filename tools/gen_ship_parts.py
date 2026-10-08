@@ -581,6 +581,7 @@ LANG = {
         "hud.galactica.deck.helm_taken": "The helm is taken",
         "hud.galactica.deck.no_seat": "No free seat",
         "hud.galactica.ship.collision": "Collision: %s hull lost",
+        "hud.galactica.dock.parked": "Parked on %s (lift off, or the dock key, to leave)",
     },
     "pt_br": {
         "block.galactica.ship_helm": "Leme da Nave",
@@ -658,6 +659,7 @@ LANG = {
         "hud.galactica.deck.helm_taken": "O leme está ocupado",
         "hud.galactica.deck.no_seat": "Nenhum assento livre",
         "hud.galactica.ship.collision": "Colisão: %s de casco perdido",
+        "hud.galactica.dock.parked": "Estacionada sobre %s (decole, ou a tecla de acoplar, para sair)",
     },
 }
 for lang, keys in LANG.items():

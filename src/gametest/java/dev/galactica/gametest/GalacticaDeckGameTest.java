@@ -267,8 +267,17 @@ public final class GalacticaDeckGameTest {
                 h.assertTrue(Math.abs(ys[1] - ys[0]) < 0.05, "stays put: " + ys[0] + " -> " + ys[1]);
                 h.assertTrue(shuttle.getDeltaMovement().length() * 20 < 0.5, "at rest");
                 h.assertTrue(bottom > roofTop - 0.6, "on top of the roof, not through it: " + bottom + " vs " + roofTop);
-                h.assertTrue(shuttle.restingContact(), "resting contact on the other hull");
-                h.succeed();
+                h.assertTrue(shuttle.isDocked() && shuttle.getVehicle() == freighter
+                        && shuttle.dockKind() == dev.galactica.ship.ShipDocking.Kind.DECK, "parked on the freighter's top");
+                // The carrier climbs and turns: the parked shuttle goes with it.
+                Vector3d rel = Deck.pose(freighter).toLocal(new Vector3d(shuttle.getX(), shuttle.getY(), shuttle.getZ()));
+                freighter.setPos(freighter.position().add(3, 10, -2));
+                freighter.setAttitude(new Quaternionf(freighter.attitude()).rotateY(0.5F));
+                h.runAfterDelay(2, () -> {
+                    Vector3d after = Deck.pose(freighter).toLocal(new Vector3d(shuttle.getX(), shuttle.getY(), shuttle.getZ()));
+                    h.assertTrue(after.distance(rel) < 0.05, "carried on the roof: " + rel + " -> " + after);
+                    h.succeed();
+                });
             }
         });
     }

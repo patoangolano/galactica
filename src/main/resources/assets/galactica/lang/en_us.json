@@ -443,5 +443,6 @@
   "hud.galactica.deck.gravity_on": "Artificial gravity",
   "hud.galactica.deck.helm_taken": "The helm is taken",
   "hud.galactica.deck.no_seat": "No free seat",
-  "hud.galactica.ship.collision": "Collision: %s hull lost"
+  "hud.galactica.ship.collision": "Collision: %s hull lost",
+  "hud.galactica.dock.parked": "Parked on %s (lift off, or the dock key, to leave)"
 }

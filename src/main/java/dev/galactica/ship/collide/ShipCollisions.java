@@ -177,6 +177,27 @@ public final class ShipCollisions {
         return true;
     }
 
+    /**
+     * The craft {@code self} rests on (its hull, 1/16 block lower, would sink into the top of that craft), or null.
+     */
+    public static @Nullable Starship supporter(Starship self) {
+        Level level = self.level();
+        List<Starship> all = craft(level);
+        if (all.size() < 2) return null;
+        VoxelContact.Posed me = posed(self, self.position().add(0, -0.2, 0), self.attitude());
+        if (me == null) return null;
+        for (Starship o : all) {
+            if (related(self, o) || o.isRemoved()) continue;
+            double r = reach(self) + reach(o);
+            if (o.position().distanceToSqr(self.position()) > r * r) continue;
+            VoxelContact.Posed other = posed(o);
+            if (other == null) continue;
+            VoxelContact.Contact c = VoxelContact.find(me, other);
+            if (c != null && c.normal().y > SUPPORT_COS) return o;
+        }
+        return null;
+    }
+
     /** A contact whose normal is within ~50° of vertical is a support (one hull resting on the other). */
     public static final double SUPPORT_COS = 0.64;
 

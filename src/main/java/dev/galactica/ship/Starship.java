@@ -350,6 +350,8 @@ public class Starship extends VehicleEntity {
 
     /** Server tick of the last undock: a craft just released is not caught by the same hangar straight away. */
     int undockedTick = Integer.MIN_VALUE / 2;
+    /** Server: ticks this craft has rested still on another craft's top ({@link ShipDocking#parkOnTop}). */
+    int parkedTicks;
 
     /**
      * Seats a docked craft at its pose in this carrier: pivot at {@code q · offset} from this pivot, attitude
@@ -918,6 +920,8 @@ public class Starship extends VehicleEntity {
         entityData.set(DATA_GRAVITY, computeGravity(pilot));
         rechargeShield();
         if (!docked && tickCount % 10 == 0) ShipDocking.captureIntoHangar(this);
+        if (!docked) ShipDocking.parkOnTop(this);
+        else if (getControllingPassenger() instanceof ServerPlayer parkedPilot) ShipDocking.liftOffIfAsked(this, parkedPilot);
         if (pilot != null) {
             Input in = pilot.getLastClientInput();
             float throttle = (in.forward() ? 1F : 0F) - (in.backward() ? 1F : 0F);
