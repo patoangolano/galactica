@@ -35,7 +35,22 @@ import org.jspecify.annotations.Nullable;
  * @param viaJump  the estimate assumes hyperjumps (another system and the exotic matter for it)
  */
 public record TargetReadout(NavTarget target, double distance, double surface, double eta, AutopilotState state,
-                            double @Nullable [] dirMc, boolean viaJump, boolean fromPilot) {
+                            double @Nullable [] dirMc, boolean viaJump, boolean fromPilot, OnTarget onTarget) {
+
+    /**
+     * Whether the craft is already on the target body's own surface level: then a distance and an ETA from the body's
+     * centre mean nothing, and the readouts say "landed" (resting on the ground) or "on target" (flying over it),
+     * with the height above the ground in {@link #surface}.
+     */
+    public enum OnTarget { NO, FLYING, LANDED }
+
+    /** The body whose surface level the client is on, by name ("Earth" for the Overworld), or null in space. */
+    static @Nullable String surfaceBody(Minecraft mc) {
+        if (mc.level == null || mc.level.dimension() == Galactica.SPACE) return null;
+        if (mc.level.dimension() == net.minecraft.world.level.Level.OVERWORLD) return "Earth";
+        var b = dev.galactica.client.planet.SurfaceSkyOverlay.currentBody();
+        return b != null ? b.name() : null;
+    }
 
     private static @Nullable TargetReadout current;
 
@@ -60,6 +75,19 @@ public record TargetReadout(NavTarget target, double distance, double surface, d
         boolean space = mc.level.dimension() == Galactica.SPACE;
         Entity root = mc.player.getRootVehicle();
         GalacticPos here = space ? Frames.playerPos(nav, root.getX(), root.getY(), root.getZ()) : nav.origin();
+        AutopilotState apState = AutopilotServer.state(owner);
+        // On the target body's own surface: no centre distance, no ETA, just "landed" or "on target" and the height.
+        String bodyHere = surfaceBody(mc);
+        if (bodyHere != null && (t.kind() == NavTarget.Kind.PLANET || t.kind() == NavTarget.Kind.MOON) && bodyHere.equals(t.name())) {
+            Entity craft = mc.player.getRootVehicle();
+            boolean landed = craft.onGround() || craft instanceof Starship s && s.restingContact() || craft == mc.player && mc.player.onGround();
+            int ground = mc.level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING,
+                    net.minecraft.util.Mth.floor(craft.getX()), net.minecraft.util.Mth.floor(craft.getZ()));
+            double agl = Math.max(0, craft.getY() - ground);
+            current = new TargetReadout(t, agl, agl, -1, apState, null, false, owner != mc.player,
+                    landed ? OnTarget.LANDED : OnTarget.FLYING);
+            return;
+        }
         TargetGeometry.Resolved r = TargetGeometry.resolve(Galactica.GALAXY, t, nav.timeSeconds());
         if (r == null) return;
         double[] d = r.pos().metresFrom(here);
@@ -84,7 +112,7 @@ public record TargetReadout(NavTarget target, double distance, double surface, d
             double[] m = Frames.galacticToMc(d[0] / dist, d[1] / dist, d[2] / dist);
             dir = m;
         }
-        current = new TargetReadout(t, dist, surface, eta, ap, dir, viaJump, owner != mc.player);
+        current = new TargetReadout(t, dist, surface, eta, ap, dir, viaJump, owner != mc.player, OnTarget.NO);
     }
 
     /** "1.52 AU", "4.24 ly", "8,200 km". */

@@ -29,10 +29,19 @@ public final class TargetHud {
         Font font = mc.font;
         int w = g.guiWidth(), h = g.guiHeight();
 
-        Component l1 = Component.translatable("hud.galactica.target.line", r.target().name(),
-                Component.translatable(r.target().kind().translationKey()), TargetReadout.distanceText(Math.max(0, r.surface())));
-        Component l2 = r.eta() >= 0 ? Component.translatable(r.viaJump() ? "hud.galactica.target.eta_jump" : "hud.galactica.target.eta",
-                AutopilotMath.formatDuration(r.eta())) : null;
+        Component l1, l2;
+        if (r.onTarget() != TargetReadout.OnTarget.NO) {
+            // On the target's own surface: "landed", or "on target" and the height above the ground; no ETA.
+            l1 = Component.translatable("hud.galactica.target.line_here", r.target().name(),
+                    Component.translatable(r.target().kind().translationKey()));
+            l2 = r.onTarget() == TargetReadout.OnTarget.LANDED ? Component.translatable("hud.galactica.target.landed")
+                    : Component.translatable("hud.galactica.target.on_target", TargetReadout.distanceText(r.surface()));
+        } else {
+            l1 = Component.translatable("hud.galactica.target.line", r.target().name(),
+                    Component.translatable(r.target().kind().translationKey()), TargetReadout.distanceText(Math.max(0, r.surface())));
+            l2 = r.eta() >= 0 ? Component.translatable(r.viaJump() ? "hud.galactica.target.eta_jump" : "hud.galactica.target.eta",
+                    AutopilotMath.formatDuration(r.eta())) : null;
+        }
         AutopilotState ap = r.state();
         Component l3 = ap.engaged() ? Component.translatable(r.fromPilot() ? "hud.galactica.autopilot.line.pilot" : "hud.galactica.autopilot.line",
                 Component.translatable(ap.phase().translationKey()), ap.hops() > 0
