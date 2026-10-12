@@ -3,7 +3,7 @@
 **Sources checked**
 - **Minecraft.** The decompiled sources folder `26.3-vanilla-26.3-sources` is incomplete. It has only 288 `.java` files and no `SkyRenderer` or `LevelRenderer`. I decompiled from `~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-clientonly-deobf/26.3/minecraft-clientonly-deobf-26.3.jar` with Vineflower 1.10.1 and javap from JDK 25 (`C:/Program Files/Eclipse Adoptium/jdk-25.0.4.101-hotspot`). JDK 21's javap cannot read these classes.
 - **Iris.** The scratchpad `iris/iris.jar` has the same MD5 as `~/.gradle/caches/modules-2/files-2.1/maven.modrinth/iris/1.11.7+26.3-fabric/.../iris-1.11.7+26.3-fabric.jar`. Its version is `1.11.7+mc26.3`, and it depends on `sodium 0.9.x`.
-- **Decompiled output.** It is in `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/mixdec/out/minecraft/client/renderer/{SkyRenderer,LevelRenderer,RenderPipelines}.java`.
+- **Decompiled output.** It is in `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/mixdec/out/minecraft/client/renderer/{SkyRenderer,LevelRenderer,RenderPipelines}.java`.
 
 **Package changes in 26.3**
 - GPU API classes are now `com.mojang.renderpearl.api.*`, not `com.mojang.blaze3d.*`:

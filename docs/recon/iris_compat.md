@@ -12,7 +12,7 @@ I traced the dimension path through Iris and Complementary. Switching galactica:
 
 ## TASK 1: how Iris 1.11.7 picks the dimension profile
 
-Decompiles are in `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/irisdec2/src` and `src2`. The full extracted jar is in `irisdec2/all`.
+Decompiles are in `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/irisdec2/src` and `src2`. The full extracted jar is in `irisdec2/all`.
 
 **The resolver.** `net.irisshaders.iris.Iris.getCurrentDimension()`, descriptor `()Lnet/irisshaders/iris/shaderpack/materialmap/NamespacedId;` (Iris.java:528):
 ```java
@@ -232,7 +232,7 @@ The levers left on our side:
 
 Main finding: on the Iris path, depth is not reversed. During `LevelRenderer.render`, Iris rewrites the depth clear from 0.0 to 1.0. So after Iris finishes, empty sky in the main depth texture reads **1.0**, not 0.0. The overlay below is built around that.
 
-Decompiles are in `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/irisdec2/`. Iris classes are in `out/`, `out2/` and `out3/`, Fabric rendering-v1 27.0.14 is in `fab/out`, and the raw Iris classes are in `all/`. Vanilla 26.3 is from `scratchpad/dec` and the client jar.
+Decompiles are in `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/irisdec2/`. Iris classes are in `out/`, `out2/` and `out3/`, Fabric rendering-v1 27.0.14 is in `fab/out`, and the raw Iris classes are in `all/`. Vanilla 26.3 is from `scratchpad/dec` and the client jar.
 
 ## (a) Where the final pass writes, and whether depth survives
 

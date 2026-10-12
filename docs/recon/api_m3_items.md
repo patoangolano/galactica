@@ -3,7 +3,7 @@ Cheat-sheet: MC 26.3 Fabric items, blocks, recipes, keys and screens (adversaria
 **Compile check result: PASSED on the Loom-transformed classpath, as expected FAILED on the raw merged jar.**
 
 - **Command:** `javac --release 25 -proc:none` using JDK `C:/Program Files/Eclipse Adoptium/jdk-25.0.4.101-hotspot`. The classpath has 114 jars from `m3dec/cp.txt`: Fabric API 0.161.0 modules, fabric-loader 0.19.5, DFU, brigadier, joml, guava, slf4j, netty, fastutil, gson, authlib and logging.
-- **Probe sources:** `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/apicheck_items/src/dev/galactica/probe/`. These are the original 6 files plus a new `Extra.java`, which covers every remaining signature in this sheet.
+- **Probe sources:** `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/apicheck_items/src/dev/galactica/probe/`. These are the original 6 files plus a new `Extra.java`, which covers every remaining signature in this sheet.
 - **Against `minecraft-merged-7e9a32a5b8-26.3.jar` (Loom-transformed, access-widened): exit 0.** Output is in `apicheck_items/outL`.
 - **Against the raw `minecraft-merged-deobf-26.3.jar`: exit 1, with 3 errors.** All 3 are access errors that Fabric's classtweaker fixes, so they are expected:
   - `CreativeModeTabs.TOOLS_AND_UTILITIES has private access`

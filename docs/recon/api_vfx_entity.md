@@ -281,9 +281,9 @@ I re-ran every check against the real jars: the compile, shaderc, javap and byte
 - The custom-UBO alternative, which was not compiled.
 
 ## Files
-- Probe sources (recompiled, unchanged): `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxcheck/src/dev/galactica/probe/vfx/`
-- Recompiled classes: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxre/`
-- Raw-jar control output: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxraw/`
-- Extended shader checker (adds `EXPL=1`): `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxre_tool/ShaderCheck.java`
-- Extracted vanilla shaders: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vshaders/assets/minecraft/shaders/`
-- Iris mixin evidence: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/irisx/net/irisshaders/iris/mixin/fabulous/MixinDisableFabulousGraphics.class`
+- Probe sources (recompiled, unchanged): `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxcheck/src/dev/galactica/probe/vfx/`
+- Recompiled classes: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxre/`
+- Raw-jar control output: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxraw/`
+- Extended shader checker (adds `EXPL=1`): `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxre_tool/ShaderCheck.java`
+- Extracted vanilla shaders: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vshaders/assets/minecraft/shaders/`
+- Iris mixin evidence: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/irisx/net/irisshaders/iris/mixin/fabulous/MixinDisableFabulousGraphics.class`

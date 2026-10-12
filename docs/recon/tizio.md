@@ -1,6 +1,6 @@
 **TizioSpaceProject v3.4: design reference report**
 
-Extracted to `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/ref/tizio`. I only disassembled class signatures and bytecode constants with `javap`; nothing from the jar was run.
+Extracted to `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/ref/tizio`. I only disassembled class signatures and bytecode constants with `javap`; nothing from the jar was run.
 
 **1. Loader and metadata**
 - Forge, loader `javafml [47.,)`, Forge `[47.4.20,)`, MC `[1.20.1,1.21)`.

@@ -11,9 +11,9 @@ Mod de exploração espacial em escala real da Via Láctea para Minecraft Fabric
 ## Stack local encontrada
 - Prism: instância `Voxyris` = MC 26.2 + Fabric Loader 0.19.5. Nenhuma instância 26.3 ainda.
 - JDKs: Microsoft 21 (PATH), Temurin 17/25 em `C:\Program Files\Eclipse Adoptium\`, JBR 21/25 via scoop.
-- `C:\Users\Manec\minecraft-claude\repos\MultiLoader-Template` tem branch 26.3.
+- `~\minecraft-claude\repos\MultiLoader-Template` tem branch 26.3.
 - MCPs: modlens, mcdev, minecraft-modding, mcpfabric (teste in-game 1.21.1–26.3), blockbench.
-- Docs da stack: `C:\Users\Manec\minecraft-claude\STACK-MODDING-2026.md`, `LEIAME.md`.
+- Docs da stack: `~\minecraft-claude\STACK-MODDING-2026.md`, `LEIAME.md`.
 
 ## Rota
 Loader API (Fabric) + Mixins pontuais no render do céu. O núcleo científico (galáxia, estrelas, planetas, órbitas) é Java puro, sem dependência do Minecraft, testado com JUnit.

@@ -3,7 +3,7 @@
 Two lines were wrong in the earlier sheet: the module list and two package paths. `fabric-dimensions-v1` does ship in 0.161.0, and it changes three conclusions.
 
 **Compile check: PASSED.** javac 25.0.4 with `--release 25 -proc:none` exited 0. It compiled 8 source files (10 classes) against the merged-deobf 26.3 jar, the fabric-api 0.161.0 module jars at the versions in its pom (dimensions-v1 included), fabric-loader 0.19.5, sponge-mixin and mixinextras, and the vanilla libraries (DFU 10.0.21, brigadier, joml, guava, fastutil, gson, authlib, logging, slf4j, netty, log4j).
-- Directory: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/apicheck_worldgen/`
+- Directory: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/apicheck_worldgen/`
 - Classpath list: `libs.txt`
 - Sources: `src/dev/galactica/surface/{PlanetChunkGenerator,PlanetBiomeSource,PlanetParams,SurfaceSlots,SurfaceSlotData,SurfaceWipe,Probe,Probe2}.java` and `src/dev/galactica/mixin/client/ClientLevelAttributesMixin.java`
 - `Probe.java` covers the signatures not in the main snippets: teleport, heightmaps, section fast path, SavedData, DimensionArgument, attributes, DimensionEvents. `Probe2.java` covers event phase ordering.

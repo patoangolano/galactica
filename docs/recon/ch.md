@@ -1,6 +1,6 @@
 CosmicHorizons-0.1.0.0.jar: design-reference report
 
-Extracted to `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/ref/cosmichorizons`. Inspection was read-only, using `javap -p/-c` and the text assets. Nothing from the jar was executed.
+Extracted to `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/ref/cosmichorizons`. Inspection was read-only, using `javap -p/-c` and the text assets. Nothing from the jar was executed.
 
 **1. Loader, version, ID and dependencies**
 - Forge (`javafml`, loaderVersion `[47,)`), Minecraft `[1.20.1]`. modId is `cosmos`, display name "Cosmic Horizons", author GHO__ST, license All Rights Reserved. Source: `META-INF/mods.toml`.

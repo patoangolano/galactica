@@ -413,4 +413,4 @@ ServerTickEvents.END_LEVEL_TICK.register(level -> {
 
 That `needsSync=true` triggers the velocity packet the way `hurtMarked` used to is UNCONFIRMED. The explicit packet is confirmed to exist.
 
-The decompiled classes are in `C:\Users\Manec\AppData\Local\Temp\claude\C--Users-Manec\00f1c288-802c-470c-9e12-011d6cf62811\scratchpad\dec`, `dec2` and `dec3`, and the extracted Fabric module jars are in `...\scratchpad\fab\META-INF\jars`.
+The decompiled classes are in `~\AppData\Local\Temp\claude\<claude-project>\00f1c288-802c-470c-9e12-011d6cf62811\scratchpad\dec`, `dec2` and `dec3`, and the extracted Fabric module jars are in `...\scratchpad\fab\META-INF\jars`.

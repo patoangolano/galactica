@@ -3,7 +3,7 @@
 Every claim below was checked against the real files:
 
 - **Minecraft 26.3:** javap from JDK 25 on `~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-clientonly-deobf/26.3/minecraft-clientonly-deobf-26.3.jar` and `minecraft-common-deobf/26.3`.
-- **Iris:** Vineflower 1.10.1 and javap on `iris.jar`, extracted to `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/check/irisx`. Decompiled output is in `.../scratchpad/check/irisdec`.
+- **Iris:** Vineflower 1.10.1 and javap on `iris.jar`, extracted to `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/check/irisx`. Decompiled output is in `.../scratchpad/check/irisdec`.
 - **Mixin and Loom:** sponge-mixin `0.17.4+mixin.0.8.7`, fabric-loader `0.19.5` and fabric-loom `1.18.1/1.18.2` jars.
 
 Each item is marked **CONFIRMED**, **FIXED** (with the fix) or **UNCONFIRMED**.

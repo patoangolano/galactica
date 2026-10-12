@@ -1,7 +1,7 @@
 # 26.3 Fabric toolchain report
 
 ## a) MultiLoader-Template
-- **Path and branch:** `C:/Users/Manec/minecraft-claude/repos/MultiLoader-Template`. The checked-out branch is `26.3`, up to date with `origin/26.3`. HEAD is `bc8c34e`, "Port to 26.3", dated 2026-09-16.
+- **Path and branch:** `~/minecraft-claude/repos/MultiLoader-Template`. The checked-out branch is `26.3`, up to date with `origin/26.3`. HEAD is `bc8c34e`, "Port to 26.3", dated 2026-09-16.
 - **Other branches:** 1.17 through 1.21.11, plus 26.1, 26.1.1, 26.1.2, 26.2 and 26.3. `origin/HEAD` points to `origin/26.3`.
 - **gradle.properties:**
   - `minecraft_version=26.3`, `minecraft_version_range=[26.3, 26.4)`, `java_version=25`, `version=26.3.0.0`
@@ -44,7 +44,7 @@
 ## c) JDK and Gradle properties
 - **Temurin JDKs:** `C:/Program Files/Eclipse Adoptium/jdk-25.0.4.101-hotspot` and `C:/Program Files/Eclipse Adoptium/jdk-17.0.20.101-hotspot`.
 - **`~/.gradle/gradle.properties`:**
-  - `org.gradle.java.installations.paths` lists five JDKs: Temurin 17, `C:/Program Files/Microsoft/jdk-21.0.12.101-hotspot`, Temurin 25, `C:/Users/Manec/scoop/apps/intellij-jbr21-sdk/current` and `C:/Users/Manec/scoop/apps/intellij-jbr25-sdk/current`.
+  - `org.gradle.java.installations.paths` lists five JDKs: Temurin 17, `C:/Program Files/Microsoft/jdk-21.0.12.101-hotspot`, Temurin 25, `~/scoop/apps/intellij-jbr21-sdk/current` and `~/scoop/apps/intellij-jbr25-sdk/current`.
   - `org.gradle.java.installations.auto-download=true`, `org.gradle.caching=true`, `org.gradle.parallel=true`, `org.gradle.jvmargs=-Xmx4G -Dfile.encoding=UTF-8`.
   - JBR 25 is available for hotswap.
 
@@ -144,24 +144,24 @@ Custom sky therefore has to be done with a Mixin on `SkyRenderer.render` or its 
   - Also `MixinLevelRenderer_Sky`, `mixin/sky/MixinClientLevelData_DisableVoidPlane` and `mixin/sky/MixinDimensionSpecialEffects`.
   - Use `@Inject` or MixinExtras rather than `@Overwrite`, and avoid cancelling those methods outright.
   - `MixinDimensionSpecialEffects` targets a class that is missing in 26.3. It is presumably a leftover or a pseudo mixin. This is unverified.
-- **Downloaded jar:** `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/iris/iris.jar` (1.11.7+26.3). For a compile dependency, use Modrinth Maven: `maven.modrinth:iris:1.11.7+26.3-fabric` as compileOnly.
+- **Downloaded jar:** `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/iris/iris.jar` (1.11.7+26.3). For a compile dependency, use Modrinth Maven: `maven.modrinth:iris:1.11.7+26.3-fabric` as compileOnly.
 
 ## f) Decompiled or remapped 26.3 sources available locally
 - **Full decompiled 26.3 sources (Vineflower 1.12.0, Mojang names, NeoForm pipeline):**
-  - `C:/Users/Manec/minecraft-claude/data/mcdev-mcp/home/.neoformruntime/intermediate_results/decompile_215c1b7e56e36fa1381dc449b2a38522641cd49d_output.jar` (23.7 MB)
-  - Also unpacked at `C:/Users/Manec/minecraft-claude/data/mcdev-mcp/tmp/mcdev-mcp/26.3-vanilla-26.3-sources/` (com, net, assets, data)
+  - `~/minecraft-claude/data/mcdev-mcp/home/.neoformruntime/intermediate_results/decompile_215c1b7e56e36fa1381dc449b2a38522641cd49d_output.jar` (23.7 MB)
+  - Also unpacked at `~/minecraft-claude/data/mcdev-mcp/tmp/mcdev-mcp/26.3-vanilla-26.3-sources/` (com, net, assets, data)
   - Raw jars: `.../mcdev-mcp/home/.neoformruntime/artifacts/minecraft_26.3_client.jar` and `minecraft_26.3_server.jar`
   - These sources carry NeoForge `@OnlyIn` annotations from NeoForm; the code is otherwise vanilla.
-- **Extracted key files:** `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/src263/`. Contents: `SkyRenderer.java`, `SkyRenderState.java`, `RenderPipeline.java`, `GpuDevice.java`, `RenderSystem.java`, `RenderPipelines.java`, `DimensionType.java`, `LevelRenderer.java`.
+- **Extracted key files:** `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/src263/`. Contents: `SkyRenderer.java`, `SkyRenderState.java`, `RenderPipeline.java`, `GpuDevice.java`, `RenderSystem.java`, `RenderPipelines.java`, `DimensionType.java`, `LevelRenderer.java`.
 - **Loom cache:**
-  - `C:/Users/Manec/.gradle/caches/fabric-loom/26.3/`: `minecraft-client.jar`, `minecraft-client-only.jar`, `minecraft-common.jar`, `minecraft-server.jar`, `minecraft-extracted_server.jar`, `mojang_minecraft_info.json`
+  - `~/.gradle/caches/fabric-loom/26.3/`: `minecraft-client.jar`, `minecraft-client-only.jar`, `minecraft-common.jar`, `minecraft-server.jar`, `minecraft-extracted_server.jar`, `mojang_minecraft_info.json`
   - `.../fabric-loom/minecraftMaven/net/minecraft/minecraft-common-deobf/26.3/` and `minecraft-clientonly-deobf/26.3/`
   - No Loom `genSources` output was found.
 - **Gradle dependency cache:**
   - `fabric-api 0.161.0+26.3`, `fabric-loader 0.19.5`, `fabric-loom` plugin
   - Gradle distributions 8.11, 9.2.0, 9.2.1, 9.5.0, 9.6.0 and 9.7.1. The wrapper's 9.7.1 is cached.
-- **minecraft-modding-mcp:** decompile cache at `C:/Users/Manec/minecraft-claude/data/minecraft-modding-mcp/cache/decompiled/` with 9 hash directories. Hash `15845ed7…` is Tizio Space Project (it contains `tizio/` and `tsp.mixins.json`). The other 8 were not identified and may include CosmicHorizons and CH-Spheromatic.
-- **mcpfabric (in-game MCP bridge mod):** `C:/Users/Manec/minecraft-claude/data/mcpfabric/mods/mcpfabric-0.5.0+26.3.jar`, plus 26.2 and 26.1.2 builds and NeoForge variants.
+- **minecraft-modding-mcp:** decompile cache at `~/minecraft-claude/data/minecraft-modding-mcp/cache/decompiled/` with 9 hash directories. Hash `15845ed7…` is Tizio Space Project (it contains `tizio/` and `tsp.mixins.json`). The other 8 were not identified and may include CosmicHorizons and CH-Spheromatic.
+- **mcpfabric (in-game MCP bridge mod):** `~/minecraft-claude/data/mcpfabric/mods/mcpfabric-0.5.0+26.3.jar`, plus 26.2 and 26.1.2 builds and NeoForge variants.
 - **Other MCP data folders:** `mcmodding-mcp` and `modlens` have no 26.x data. I did not load the mcdev and minecraft-modding MCP tools themselves; only their data folders were checked.
 
 ## Uncertain or worth flagging

@@ -5,8 +5,8 @@ I checked every claim against the merged 26.3 jar (javap), Vineflower decompiles
 # MC 26.3 Fabric: custom sky rendering cheat-sheet (verified)
 
 **Sources used**
-- CONFIRMED: the decompiled sources dir `C:/Users/Manec/minecraft-claude/data/mcdev-mcp/tmp/mcdev-mcp/26.3-vanilla-26.3-sources` is partial. It has 667 .java files and none of RenderPipelines, SkyRenderer, Minecraft, GameRenderer or LevelRenderer.
-- CONFIRMED: authoritative jar is `C:/Users/Manec/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged-deobf/26.3/minecraft-merged-deobf-26.3.jar`.
+- CONFIRMED: the decompiled sources dir `~/minecraft-claude/data/mcdev-mcp/tmp/mcdev-mcp/26.3-vanilla-26.3-sources` is partial. It has 667 .java files and none of RenderPipelines, SkyRenderer, Minecraft, GameRenderer or LevelRenderer.
+- CONFIRMED: authoritative jar is `~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged-deobf/26.3/minecraft-merged-deobf-26.3.jar`.
 - CONFIRMED: Vineflower 1.11.2 decompiles are in `.../scratchpad/dec/`.
   - New backend decompiles from this pass are in `.../scratchpad/check/xo/`: FrontendRenderPass, GlRenderPipeline, GlCommandEncoder, GlTransientMemory, Camera, Projection.
   - Vulkan: `.../scratchpad/check/xo2/VulkanRenderPipeline.java`.

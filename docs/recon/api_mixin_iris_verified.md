@@ -447,6 +447,6 @@ Still UNCONFIRMED:
 - The exact frame timing of `syncVelocity` against `END_LEVEL_TICK`. Entity tracking runs in the chunk-map tick, so the packet goes out the same tick or the next one.
 - Whether server-side play handlers run on the server thread (the server addon's `isOnReceiveThread` was not decompiled).
 
-Files are in `C:\Users\Manec\AppData\Local\Temp\claude\C--Users-Manec\00f1c288-802c-470c-9e12-011d6cf62811\scratchpad\`:
+Files are in `~\AppData\Local\Temp\claude\<claude-project>\00f1c288-802c-470c-9e12-011d6cf62811\scratchpad\`:
 - `check\mc.txt` holds the vanilla javap dump.
 - `dec4\` holds the new decompiled classes.

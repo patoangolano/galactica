@@ -5,6 +5,11 @@
   "name": "${mod_name}",
   "description": "${description}",
   "authors": ["${mod_author}"],
+  "contact": {
+    "homepage": "https://github.com/patoangolano/galactica",
+    "sources": "https://github.com/patoangolano/galactica",
+    "issues": "https://github.com/patoangolano/galactica/issues"
+  },
   "license": "${license}",
   "icon": "assets/galactica/icon.png",
   "environment": "*",

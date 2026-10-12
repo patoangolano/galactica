@@ -4,7 +4,7 @@ The compile check passed, and two items in the sheet needed fixing. All 10 ship 
 
 **What I did differently from the task text:** I did not use "every jar under net.fabricmc.fabric-api". The cache holds several versions of some modules, for example `fabric-rendering-v1` 3.0.8, which is for 1.20.1. So I pinned the 46 module jars to the versions in the `fabric-api-0.161.0+26.3` pom. The rest of the classpath is the newest cached jar of each Minecraft library, plus fabric-loader 0.19.5 and sponge-mixin 0.17.4. That makes 74 entries in total.
 
-**Files** (all in `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/apicheck_entity/`):
+**Files** (all in `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/apicheck_entity/`):
 - `cp.txt` — the classpath
 - `src/` — the 10 ship sources
 - `probe/dev/galactica/probe/ApiProbe.java` — checks the remaining API claims
@@ -12,7 +12,7 @@ The compile check passed, and two items in the sheet needed fixing. All 10 ship 
 - `cls/` — output against the raw jar
 - `clsL/` — output against the Loom jar
 
-The Loom-processed jar is `C:/Users/Manec/MODS CLAUDE/galactica/.gradle/loom-cache/minecraftMaven/net/minecraft/minecraft-merged-7e9a32a5b8/26.3/minecraft-merged-7e9a32a5b8-26.3.jar`.
+The Loom-processed jar is `~/MODS CLAUDE/galactica/.gradle/loom-cache/minecraftMaven/net/minecraft/minecraft-merged-7e9a32a5b8/26.3/minecraft-merged-7e9a32a5b8-26.3.jar`.
 
 ---
 

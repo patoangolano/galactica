@@ -8,7 +8,7 @@ Every item below was re-run against the 26.3 jars. Most of the sheet holds. Five
 - **javap** on the Loom jar `minecraft-merged-7e9a32a5b8-26.3.jar`, which was also fully extracted to `vfxverify/jar/`, on fabric-api 0.161.0+26.3 and on `iris-1.11.7+26.3-fabric.jar`.
   - The decompiled sources in `vfxdec/out*` and `iris_out*` were cross-read, but every load-bearing claim was confirmed against bytecode.
 - **Java compile:** I recompiled `probe/src` from scratch with JDK 25.0.4 `javac --release 25` against `cpL.txt`, giving **EXIT 0**, 7 classes, only joml warnings.
-  - Output is in `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxverify/cls/`.
+  - Output is in `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxverify/cls/`.
 - **Runtime:** I re-ran `BuildCheck` with commons-lang3 added to the classpath (it is missing from `cpL.txt`, so the class init needs it). All three pipelines built and `SIZE=48`. Observed states:
   - `STAR_PLASMA`: depth=null.
   - `PLASMA_PLUME`: GEQUAL with no write.
@@ -220,9 +220,9 @@ Every item below was re-run against the 26.3 jars. Most of the sheet holds. Five
 - Iris NPE catch path at runtime. It is compiled only.
 
 ## Files
-- Recompiled probe classes: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxverify/cls/`
-- New verified register helper: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxverify/reg/dev/galactica/vfx/VfxRegister.java`
-- Runtime checks: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxverify/rt/RegCheck.java` and `.../vfxdec/probe/rt/BuildCheck.java`
+- Recompiled probe classes: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxverify/cls/`
+- New verified register helper: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxverify/reg/dev/galactica/vfx/VfxRegister.java`
+- Runtime checks: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/vfxverify/rt/RegCheck.java` and `.../vfxdec/probe/rt/BuildCheck.java`
   - Run them with `commons-lang3-3.12.0.jar` added to `cpL.txt`.
 - Extracted jars: `.../scratchpad/vfxverify/jar/` (MC 26.3 merged) and `.../scratchpad/vfxverify/iris/` (Iris 1.11.7)
 - The original probe sources and shaders are unchanged: `.../scratchpad/vfxdec/probe/src/dev/galactica/...` and `.../scratchpad/vfxdec/probe/assets/galactica/shaders/...`

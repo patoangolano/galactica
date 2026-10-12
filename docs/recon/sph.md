@@ -1,6 +1,6 @@
 Spheromatic is not a space mod on its own. It is a small Forge add-on that turns Cosmic Horizons (`cosmos`) planets from rounded cubes into spheres. It contains one Java class and works by overriding assets: same-path resource files (shaders, mesh "shards", textures) plus a few static fields set at startup. Nothing from the jar was executed; the one class was only disassembled with `javap`.
 
-Extracted to: `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/ref/spheromatic`
+Extracted to: `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/ref/spheromatic`
 
 ## 1. Loader, version, ID, dependencies
 - **Source:** `META-INF/mods.toml`.

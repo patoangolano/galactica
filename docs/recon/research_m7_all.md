@@ -63,7 +63,7 @@ The model is cube-based, which changes the evaluation. Any model we get or make 
 - https://api.sketchfab.com/v3/models/59f4983154d8494890eafe08819a5d62
 - https://api.modrinth.com/v2/project/{geckolib,azurelib,blockbench-import-library,easy-model-entities}/version?game_versions=["26.3"]&loaders=["fabric"]
 
-The only source file I read was `C:\Users\Manec\MODS CLAUDE\galactica\src\main\java\dev\galactica\client\ship\StarshipRenderer.java`, and I changed nothing.
+The only source file I read was `~\MODS CLAUDE\galactica\src\main\java\dev\galactica\client\ship\StarshipRenderer.java`, and I changed nothing.
 
 ---
 
@@ -156,7 +156,7 @@ dependencies {
     compileOnly("maven.modrinth:modmenu:21.0.0")                 // runtime: localRuntime same coord
     localRuntime("maven.modrinth:modmenu:21.0.0")
     localRuntime("maven.modrinth:spark:1.10.187-fabric")
-    localRuntime("maven.modrinth:mcpfabric:0.5.1+26.3")          // or files('C:/Users/Manec/minecraft-claude/data/mcpfabric/mods/mcpfabric-0.5.0+26.3.jar') (SHA-verified)
+    localRuntime("maven.modrinth:mcpfabric:0.5.1+26.3")          // or files('~/minecraft-claude/data/mcpfabric/mods/mcpfabric-0.5.0+26.3.jar') (SHA-verified)
 }
 fabricApi {
     configureDataGeneration { client = true }
@@ -174,16 +174,16 @@ fabricApi {
 ## mcpfabric setup
 1. Put the jar in the dev run's mods (the `localRuntime` line above).
 2. Write `runs/client/config/mcpfabric.config.json` as `{"token":"<data/mcpfabric/token.txt>"}`.
-3. Register the server: `claude mcp add mcpfabric -- node C:/Users/Manec/minecraft-claude/repos/mcpfabric/mcp-server/dist/index.js`, passing the token through env.
+3. Register the server: `claude mcp add mcpfabric -- node ~/minecraft-claude/repos/mcpfabric/mcp-server/dist/index.js`, passing the token through env.
    - Check the server README in that folder for the exact env var name and entry file; neither was verified.
    - Keep the server on loopback with `MCPFABRIC_AGENT=0`, as LEIAME requires.
 
 ## Key paths
-- `C:/Users/Manec/MODS CLAUDE/galactica/build.gradle`
-- `C:/Users/Manec/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/dev/AutoTest.java`
-- `C:/Users/Manec/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/planet/PlanetAutoTest.java`
-- `C:/Users/Manec/minecraft-claude/repos/mcpfabric/README.md`
-- `C:/Users/Manec/minecraft-claude/data/mcpfabric/mods/mcpfabric-0.5.0+26.3.jar`
+- `~/MODS CLAUDE/galactica/build.gradle`
+- `~/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/dev/AutoTest.java`
+- `~/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/planet/PlanetAutoTest.java`
+- `~/minecraft-claude/repos/mcpfabric/README.md`
+- `~/minecraft-claude/data/mcpfabric/mods/mcpfabric-0.5.0+26.3.jar`
 
 Suggested order: GameTest first, then datagen, then GeckoLib once the ship model's license is cleared.
 
@@ -360,14 +360,14 @@ Also found:
 The Sketchfab model in the request (https://skfb.ly/ppM8X) was not part of this task. The ship model in `client/ship/StarshipModel` is unchanged.
 
 **Files**
-- C:/Users/Manec/MODS CLAUDE/galactica/src/main/java/dev/galactica/planet/PlanetEntry.java
-- C:/Users/Manec/MODS CLAUDE/galactica/src/main/java/dev/galactica/planet/TerrainSampler.java
-- C:/Users/Manec/MODS CLAUDE/galactica/src/main/java/dev/galactica/sky/PlanetImager.java
-- C:/Users/Manec/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/planet/SurfaceSkyOverlay.java
-- C:/Users/Manec/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/planet/EntryHeatingHud.java
-- C:/Users/Manec/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/sky/SpaceSkyRenderer.java
-- C:/Users/Manec/MODS CLAUDE/galactica/src/main/resources/data/galactica/dimension_type/surface.json
-- Decompiled 26.3 sources, for reference: C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/{CPL.java, LLT.java, SP.java, SCC.java, MC.java}
+- ~/MODS CLAUDE/galactica/src/main/java/dev/galactica/planet/PlanetEntry.java
+- ~/MODS CLAUDE/galactica/src/main/java/dev/galactica/planet/TerrainSampler.java
+- ~/MODS CLAUDE/galactica/src/main/java/dev/galactica/sky/PlanetImager.java
+- ~/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/planet/SurfaceSkyOverlay.java
+- ~/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/planet/EntryHeatingHud.java
+- ~/MODS CLAUDE/galactica/src/main/java/dev/galactica/client/sky/SpaceSkyRenderer.java
+- ~/MODS CLAUDE/galactica/src/main/resources/data/galactica/dimension_type/surface.json
+- Decompiled 26.3 sources, for reference: ~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/{CPL.java, LLT.java, SP.java, SCC.java, MC.java}
 
 **Sources**
 - https://modrinth.com/mod/immersiveportals
@@ -492,7 +492,7 @@ All checked with the minecraft-modding MCP; all exist as described.
 - GeckoLib's lack of support for Blockbench mesh elements.
 - The Loom `fabricApi { configureTests / configureDataGeneration }` block names.
 
-Scratch output is in `C:\Users\Manec\AppData\Local\Temp\claude\C--Users-Manec\00f1c288-802c-470c-9e12-011d6cf62811\scratchpad\verify`. I changed no project files.
+Scratch output is in `~\AppData\Local\Temp\claude\<claude-project>\00f1c288-802c-470c-9e12-011d6cf62811\scratchpad\verify`. I changed no project files.
 
 ---
 
@@ -518,9 +518,9 @@ Verified against: the Sketchfab v3 API, the Modrinth v2 API and maven (queried 2
    - redistribution inside a free mod published on Modrinth and CurseForge, which pay creators per download;
    - modification, retexturing and an emissive layer.
 3. If the author agrees, save the files here:
-   - `C:/Users/Manec/MODS CLAUDE/galactica/art/ship/licensed/space_ship.bbmodel`
-   - `C:/Users/Manec/MODS CLAUDE/galactica/art/ship/licensed/space_ship.png`
-   - `C:/Users/Manec/MODS CLAUDE/galactica/art/ship/licensed/PERMISSION.txt` (a copy of the written grant, with date and author handle)
+   - `~/MODS CLAUDE/galactica/art/ship/licensed/space_ship.bbmodel`
+   - `~/MODS CLAUDE/galactica/art/ship/licensed/space_ship.png`
+   - `~/MODS CLAUDE/galactica/art/ship/licensed/PERMISSION.txt` (a copy of the written grant, with date and author handle)
 4. Add a credit line in the README and the mod description: "Starship model by W'Projects, used with permission."
 5. A glTF or OBJ export is not needed. The model is a Blockbench cube model (`source: "blockbench"`, 2126 faces), so the `.bbmodel` is the lossless format.
 
@@ -753,14 +753,14 @@ Add `distanthorizons` only together with Phase 2 (mod id **UNVERIFIED**, see B.4
 
 **mcpfabric provenance gate:** Modrinth's `source_url` is `github.com/denfry/mcpfabric`, but the local README says `Etoryx/mcpfabric`. Until that is resolved, keep using the local SHA-verified jar:
 ```groovy
-localRuntime(files('C:/Users/Manec/minecraft-claude/data/mcpfabric/mods/mcpfabric-0.5.0+26.3.jar'))
+localRuntime(files('~/minecraft-claude/data/mcpfabric/mods/mcpfabric-0.5.0+26.3.jar'))
 ```
-Registering the MCP server (`claude mcp add`) is for the user to do. The env var name and entry file are unverified; see `C:/Users/Manec/minecraft-claude/repos/mcpfabric/README.md`.
+Registering the MCP server (`claude mcp add`) is for the user to do. The env var name and entry file are unverified; see `~/minecraft-claude/repos/mcpfabric/README.md`.
 
 ---
 
 ## Files touched or created (summary)
-Root: `C:/Users/Manec/MODS CLAUDE/galactica/`
+Root: `~/MODS CLAUDE/galactica/`
 
 - **Ship (A):**
   - `art/ship/starship.bbmodel`

@@ -6,9 +6,9 @@ I checked the 26.3 rendering API against the merged jar, decompiled with Vineflo
 
 **Sources used**
 - The decompiled sources dir is **partial**: 667 files, with no RenderPipelines, SkyRenderer, Minecraft, GameRenderer or LevelRenderer.
-- Authoritative jar: `C:/Users/Manec/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged-deobf/26.3/minecraft-merged-deobf-26.3.jar`
-- Decompiled copies (Vineflower 1.11.2): `C:/Users/Manec/AppData/Local/Temp/claude/C--Users-Manec/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/dec/` (SkyRenderer, RenderPipelines, RenderSystem, DynamicGpuData, DynamicTexture, LevelRenderer, GameRenderer, Camera, GuiGraphicsExtractor, ShaderManager, PipelineCache in `dec/pc/`)
-- Fabric rendering-v1 inside fabric-api 0.161.0+26.3 is version 27.0.14: `C:/Users/Manec/.gradle/caches/modules-2/files-2.1/net.fabricmc.fabric-api/fabric-rendering-v1/27.0.14+901a437c5d/b7b356249f2c16fa58410e8c7694c75f0468a403/fabric-rendering-v1-27.0.14+901a437c5d.jar`
+- Authoritative jar: `~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged-deobf/26.3/minecraft-merged-deobf-26.3.jar`
+- Decompiled copies (Vineflower 1.11.2): `~/AppData/Local/Temp/claude/<claude-project>/00f1c288-802c-470c-9e12-011d6cf62811/scratchpad/dec/` (SkyRenderer, RenderPipelines, RenderSystem, DynamicGpuData, DynamicTexture, LevelRenderer, GameRenderer, Camera, GuiGraphicsExtractor, ShaderManager, PipelineCache in `dec/pc/`)
+- Fabric rendering-v1 inside fabric-api 0.161.0+26.3 is version 27.0.14: `~/.gradle/caches/modules-2/files-2.1/net.fabricmc.fabric-api/fabric-rendering-v1/27.0.14+901a437c5d/b7b356249f2c16fa58410e8c7694c75f0468a403/fabric-rendering-v1-27.0.14+901a437c5d.jar`
 - `ResourceLocation` is now **`net.minecraft.resources.Identifier`**. Factories: `fromNamespaceAndPath(String,String)`, `withDefaultNamespace(String)`, `parse(String)`, `tryParse(String)`.
 
 ---

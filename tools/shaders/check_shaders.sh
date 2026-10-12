@@ -5,9 +5,9 @@
 #        tools/shaders/check_shaders.sh galactica:core/star_plasma.fsh ...
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd -W)"
-JDK="C:/Program Files/Eclipse Adoptium/jdk-25.0.4.101-hotspot/bin"
+JDK="$(cygpath -m "${JAVA_HOME:-C:/Program Files/Eclipse Adoptium/jdk-25.0.4.101-hotspot}")/bin"
 OUT="$ROOT/build/shader-check"
-L="C:/Users/Manec/.gradle/caches/modules-2/files-2.1/org.lwjgl"
+L="$(cygpath -m "${GRADLE_USER_HOME:-$HOME/.gradle}")/caches/modules-2/files-2.1/org.lwjgl"
 CP="$(ls $L/lwjgl/3.4.3/*/lwjgl-3.4.3*.jar $L/lwjgl-shaderc/3.4.3/*/*.jar $L/lwjgl-spvc/3.4.3/*/*.jar | tr '\n' ';')"
 mkdir -p "$OUT/cls" "$OUT/assets/galactica"
 # Vanilla includes (globals.glsl, dynamictransforms.glsl, projection.glsl, fog.glsl ...) from the 26.3 client jar.

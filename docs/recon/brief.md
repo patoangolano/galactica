@@ -246,4 +246,4 @@
 - **Multiplayer time warp:** only allowed when every player in the system agrees and none is in an atmosphere. Otherwise it is capped at 1×.
 - **Fun vs realism:** time compression, quantum and jump drives, and auto-landing assist keep travel minutes, not hours, without faking the underlying physics.
 
-Existing code location: `C:\Users\Manec\MODS CLAUDE\galactica\src\main\java\dev\galactica\system`.
+Existing code location: `~\MODS CLAUDE\galactica\src\main\java\dev\galactica\system`.

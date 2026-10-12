@@ -1,6 +1,6 @@
 # Galactica
 
-A Via Láctea inteira, em escala real, dentro do Minecraft Fabric 26.3: cerca de 1,4 × 10¹¹ estrelas geradas de forma procedural e determinística, um céu fisicamente integrado e compatível com shaderpacks, e um motor de dobra para cruzar a galáxia.
+A Via Láctea inteira, em escala real, dentro do Minecraft Fabric 26.3: cerca de 1,4 × 10¹¹ estrelas geradas de forma procedural e determinística, um céu fisicamente integrado e um motor de dobra para cruzar a galáxia.
 
 ## O que já funciona (M1)
 
@@ -23,7 +23,7 @@ A Via Láctea inteira, em escala real, dentro do Minecraft Fabric 26.3: cerca de
   - luas.
 
   O Sistema Solar real usa elementos orbitais J2000.
-- **Compatível com shaders.** Todo o céu é desenhado pelo pipeline vanilla `END_SKY`, e o Iris o trata como `gbuffers_skytextured`. Não há shader próprio para quebrar.
+- **Shaderpacks (Iris): adiado, ainda não testado.** O céu usa o pipeline vanilla `END_SKY`, que o Iris trata como `gbuffers_skytextured`, mas o mod também tem shaders próprios (plasma das estrelas, planetas) e a compatibilidade com shaderpacks não foi verificada.
 - **Precisão em qualquer ponto da galáxia.** As posições são células de 1 UA (`long`) mais metros (`double`), com resolução de ~0,03 mm. A origem flutuante recentraliza o jogador a cada 1.024 blocos.
 
 ## Como jogar
@@ -113,9 +113,9 @@ Naves prontas (as mesmas peças, desmontáveis): `/galactica ship <kestrel|shutt
 
 ## Instalação
 
-1. Fabric Loader 0.19.5+ e Fabric API para Minecraft 26.3.
+1. Java 25, Fabric Loader 0.19.5+ e Fabric API para Minecraft 26.3. Nenhum outro mod é obrigatório.
 2. Coloque `galactica-<versão>.jar` em `mods/`.
-3. Opcional: Sodium e Iris 26.3 com qualquer shaderpack.
+3. Opcionais (todos `suggests` no `fabric.mod.json`): os pacotes testados estão em [Desempenho](#desempenho) e em [Mods de renderização](#mods-de-renderização). Shaderpacks (Iris) ainda não têm suporte.
 
 ## Desempenho
 
